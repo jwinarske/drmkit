@@ -1,0 +1,15 @@
+[package]
+name = "tests-integration"
+description = "drmkit integration suite (T5): tests requiring a real modeset card, run under virtme-ng with VKMS."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+
+[lints]
+workspace = true

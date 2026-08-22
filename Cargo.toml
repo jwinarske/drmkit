@@ -10,6 +10,7 @@ members = [
     "crates/drmkit",
     "crates/drmkit-log",
     "crates/drmkit-time",
+    "tests-integration",
     "xtask",
 ]
 

@@ -50,9 +50,16 @@ jobs:
       # virtme-ng boots the host kernel under KVM in ~2-3s, loads vkms, and
       # runs the suite against a real modeset card. `--verbose` surfaces boot
       # failures that would otherwise look like a silent test skip.
+      #
+      # cargo is invoked by absolute path: the guest runs the script with a
+      # minimal environment that does not carry rustup's ~/.cargo/bin, and a
+      # bare `cargo` there fails with "command not found" after a successful
+      # boot -- which reads as a virtme problem rather than a PATH one.
       - name: run suite under vkms
         run: |
+          CARGO_BIN="$(command -v cargo)"
+          echo "using cargo at $CARGO_BIN"
           vng --run --verbose --cpus 2 --memory 2G \
-              --exec "modprobe vkms && cargo test --workspace -- --include-ignored"
+              --exec "modprobe vkms && $CARGO_BIN test --workspace -- --include-ignored"
         env:
           DRMKIT_TEST_CARD: /dev/dri/card0

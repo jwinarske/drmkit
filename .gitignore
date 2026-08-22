@@ -10,6 +10,8 @@
 # xtask scratch + vkms lane artifacts
 /.drmkit-work/
 /parity/out/
+/test-binaries.txt
+/run-in-vm.sh
 
 # Editors
 /.idea/

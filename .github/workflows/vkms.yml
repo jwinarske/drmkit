@@ -44,22 +44,44 @@ jobs:
       - name: make the host kernel image readable
         run: sudo chmod +r "/boot/vmlinuz-$(uname -r)"
 
-      - name: build integration tests
-        run: cargo test --workspace --no-run
-
-      # virtme-ng boots the host kernel under KVM in ~2-3s, loads vkms, and
-      # runs the suite against a real modeset card. `--verbose` surfaces boot
-      # failures that would otherwise look like a silent test skip.
-      #
-      # cargo is invoked by absolute path: the guest runs the script with a
-      # minimal environment that does not carry rustup's ~/.cargo/bin, and a
-      # bare `cargo` there fails with "command not found" after a successful
-      # boot -- which reads as a virtme problem rather than a PATH one.
-      - name: run suite under vkms
+      # Build on the host, run the resulting binaries in the guest. The obvious
+      # alternative -- calling cargo inside the VM -- means dragging the whole
+      # toolchain into an environment with no HOME, no PATH, and a read-only
+      # root, and it failed for exactly those reasons before this replaced it.
+      # The guest needs a kernel and a card, not a build system.
+      - name: build test binaries
         run: |
-          CARGO_BIN="$(command -v cargo)"
-          echo "using cargo at $CARGO_BIN"
-          vng --run --verbose --cpus 2 --memory 2G \
-              --exec "modprobe vkms && $CARGO_BIN test --workspace -- --include-ignored"
-        env:
-          DRMKIT_TEST_CARD: /dev/dri/card0
+          cargo test --workspace --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .executable != null) | .executable' \
+            > test-binaries.txt
+          echo "built $(wc -l < test-binaries.txt) test binaries"
+          test -s test-binaries.txt
+
+      # Generated on the host so the guest needs no environment passed in:
+      # every path and variable is already baked in by the time it boots.
+      - name: write guest runner
+        run: |
+          {
+            echo '#!/bin/bash'
+            echo '# Runs inside the virtme-ng guest. No cargo, no rustup, no network.'
+            echo 'export DRMKIT_TEST_CARD=/dev/dri/card0'
+            echo 'modprobe vkms || { echo "FATAL: cannot load vkms"; exit 1; }'
+            echo 'udevadm settle || true'
+            echo 'test -e /dev/dri/card0 || { echo "FATAL: vkms loaded but no card node"; exit 1; }'
+            echo 'rc=0'
+            while read -r bin; do
+              echo "echo \"===== $(basename "$bin") =====\""
+              echo "\"$bin\" --include-ignored || rc=1"
+            done < test-binaries.txt
+            echo 'echo "guest runner exiting with $rc"'
+            echo 'exit "$rc"'
+          } > run-in-vm.sh
+          chmod +x run-in-vm.sh
+          cat run-in-vm.sh
+
+      # virtme-ng boots the host kernel under KVM in a few seconds and shares
+      # the host filesystem, so the binaries built above are visible at the
+      # same absolute paths. `--verbose` surfaces boot failures that would
+      # otherwise look like a silent test skip.
+      - name: run suite under vkms
+        run: vng --run --verbose --cpus 2 --memory 2G --exec "$PWD/run-in-vm.sh"

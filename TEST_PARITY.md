@@ -31,7 +31,7 @@ and runs in the vkms lane (plan §6, §13).
 | C++ test | Rust test(s) | Status | Inv. |
 |---|---|---|---|
 | `tests/unit/test_acquire_fence.cpp` | _drmkit-scene-sources_ (phase 3) | pending |  |
-| `tests/unit/test_atomic_builder.cpp` | _drmkit-core_ (phase 1) | pending |  |
+| `tests/unit/test_atomic_builder.cpp` | `drmkit-core` `src/tests.rs` | ported |  |
 | `tests/unit/test_buffer_mapping.cpp` | _drmkit-dumb_ (phase 1) | pending | 6 |
 | `tests/unit/test_buffer_ring.cpp` | _drmkit-present_ (phase 6+) | pending |  |
 | `tests/unit/test_canvas_format.cpp` | _drmkit-scene_ (phase 3) | pending |  |
@@ -53,7 +53,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_csd_theme.cpp` | _drmkit-csd_ (phase 6+) | pending |  |
 | `tests/unit/test_cursor_cursor.cpp` | _drmkit-cursor_ (phase 4) | pending |  |
 | `tests/unit/test_cursor_theme.cpp` | _drmkit-cursor_ (phase 4) | pending |  |
-| `tests/unit/test_device.cpp` | _drmkit-core_ (phase 1) | pending |  |
+| `tests/unit/test_device.cpp` | `drmkit-core` `src/tests.rs` | ported |  |
 | `tests/unit/test_display.cpp` | _drmkit-display_ (phase 4) | pending |  |
 | `tests/unit/test_dma_buf_source_cache.cpp` | _drmkit-scene-sources_ (phase 3) | pending |  |
 | `tests/unit/test_driver_profile.cpp` | _drmkit-display_ (phase 4) | pending |  |
@@ -86,7 +86,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_page_flip.cpp` | _drmkit-modeset_ (phase 1) | pending | 3 |
 | `tests/unit/test_plane_allocator.cpp` | _drmkit-planes_ (phase 2) | pending |  |
 | `tests/unit/test_playlist.cpp` | — (covers `examples/`, outside the ported `src/` surface) | n/a |  |
-| `tests/unit/test_property_store.cpp` | _drmkit-core_ (phase 1) | pending |  |
+| `tests/unit/test_property_store.cpp` | `drmkit-core` `src/tests.rs` | ported |  |
 | `tests/unit/test_scanout_target.cpp` | _drmkit-present_ (phase 6+) | pending |  |
 | `tests/unit/test_scene.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/unit/test_scene_set.cpp` | _drmkit-scene-set_ (phase 6+) | pending |  |
@@ -130,6 +130,6 @@ and runs in the vkms lane (plan §6, §13).
 
 ## Summary
 
-- `ported`: 4
-- `pending`: 91
+- `ported`: 7
+- `pending`: 88
 - `n/a`: 2

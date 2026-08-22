@@ -1,0 +1,22 @@
+[package]
+name = "drmkit-core"
+description = "Core DRM/KMS device access for drmkit: device handles, property caching, and atomic requests."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["graphics", "os::linux-apis"]
+keywords = ["drm", "kms", "atomic", "modesetting"]
+
+[dependencies]
+drm = { workspace = true }
+drm-ffi = { workspace = true }
+rustix = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
+drmkit-log = { workspace = true }
+
+[lints]
+workspace = true

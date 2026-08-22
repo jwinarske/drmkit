@@ -8,6 +8,7 @@
 resolver = "3"
 members = [
     "crates/drmkit",
+    "crates/drmkit-core",
     "crates/drmkit-fmt",
     "crates/drmkit-log",
     "crates/drmkit-sync",
@@ -28,11 +29,14 @@ keywords = ["drm", "kms", "display", "graphics", "embedded"]
 categories = ["graphics", "os::linux-apis", "no-std"]
 
 [workspace.dependencies]
+drmkit-core = { version = "0.0.0", path = "crates/drmkit-core" }
 drmkit-fmt = { version = "0.0.0", path = "crates/drmkit-fmt" }
 drmkit-log = { version = "0.0.0", path = "crates/drmkit-log" }
 drmkit-sync = { version = "0.0.0", path = "crates/drmkit-sync" }
 drmkit-time = { version = "0.0.0", path = "crates/drmkit-time" }
 
+drm = { version = "0.15" }
+drm-ffi = { version = "0.9" }
 rustix = { version = "1", default-features = false }
 thiserror = { version = "2", default-features = false }
 tracing = { version = "0.1", default-features = false }

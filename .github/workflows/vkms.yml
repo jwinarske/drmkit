@@ -65,6 +65,11 @@ jobs:
             echo '#!/bin/bash'
             echo '# Runs inside the virtme-ng guest. No cargo, no rustup, no network.'
             echo 'export DRMKIT_TEST_CARD=/dev/dri/card0'
+            # Under virtme-ng the suite runs as root with no display server, so
+            # it always holds DRM master. Setting this turns "not master" from a
+            # tolerated local condition into a lane failure, so a card-dependent
+            # test cannot pass here by quietly doing nothing.
+            echo 'export DRMKIT_REQUIRE_MASTER=1'
             echo 'modprobe vkms || { echo "FATAL: cannot load vkms"; exit 1; }'
             echo 'udevadm settle || true'
             echo 'test -e /dev/dri/card0 || { echo "FATAL: vkms loaded but no card node"; exit 1; }'

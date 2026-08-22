@@ -1,0 +1,23 @@
+[package]
+name = "drmkit-fmt"
+description = "DRM format and format-modifier support for drmkit: IN_FORMATS tables, modifier classification, and bandwidth cost."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["graphics", "os::linux-apis", "no-std"]
+keywords = ["drm", "kms", "fourcc", "modifier", "afbc"]
+
+[features]
+default = ["std"]
+# Only gates `std::error::Error` impls and `Display` conveniences; the parser,
+# the tables, and every classifier are `no_std + alloc` regardless.
+std = []
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -64,8 +64,8 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_external_dma_buf_pool.cpp` | _drmkit-scene-sources_ (phase 3) | pending |  |
 | `tests/unit/test_external_dma_buf_ring.cpp` | _drmkit-scene-sources_ (phase 3) | pending |  |
 | `tests/unit/test_external_dma_buf_source.cpp` | _drmkit-scene-sources_ (phase 3) | pending |  |
-| `tests/unit/test_format.cpp` | _drmkit-fmt_ (phase 1) | pending |  |
-| `tests/unit/test_format_mod.cpp` | _drmkit-fmt_ (phase 1) | pending |  |
+| `tests/unit/test_format.cpp` | `drmkit-fmt` `src/tests.rs` | ported |  |
+| `tests/unit/test_format_mod.cpp` | `drmkit-fmt` `src/tests.rs` | ported |  |
 | `tests/unit/test_frame_economy.cpp` | _drmkit-present_ (phase 6+) | pending |  |
 | `tests/unit/test_gbm.cpp` | _drmkit-gbm_ (phase 4) | pending |  |
 | `tests/unit/test_gbm_surface_source.cpp` | _drmkit-scene-gbm_ (phase 6+) | pending |  |
@@ -130,6 +130,6 @@ and runs in the vkms lane (plan §6, §13).
 
 ## Summary
 
-- `ported`: 1
-- `pending`: 94
+- `ported`: 3
+- `pending`: 92
 - `n/a`: 2

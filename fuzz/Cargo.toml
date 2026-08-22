@@ -1,0 +1,28 @@
+[package]
+name = "drmkit-fuzz"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "MIT"
+authors = ["Joel Winarske <joel.winarske@linux.com>"]
+publish = false
+
+# Deliberately outside the workspace. `cargo-fuzz` needs a nightly toolchain
+# for its sanitizer instrumentation, and DR-3 forbids nightly in drmkit itself.
+# This is the same tool exception the miri lane takes: no drmkit crate uses a
+# nightly language feature -- only the harness does.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+drmkit-fmt = { path = "../crates/drmkit-fmt" }
+
+[[bin]]
+name = "in_formats_blob"
+path = "fuzz_targets/in_formats_blob.rs"
+test = false
+doc = false
+bench = false

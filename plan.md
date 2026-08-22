@@ -272,6 +272,7 @@ Phase gates are merge-blocking; each phase ends with its tests in CI green, incl
 - **DR-6 (new):** `SourceError::WouldBlock` as a typed variant is the EAGAIN contract; never `io::ErrorKind::WouldBlock` in the public scene API.
 - **DR-7 (new):** ToneMapper SIMD is aarch64 NEON fp16 only (1.94 stable), runtime-detected; no x86 SIMD lane (target matrix doesn't justify it).
 - **DR-8 (new):** the C++17-polyfill/dual-std machinery is explicitly out of scope — no Rust analogue exists or is needed.
+- **DR-9 (2026-08-22, phase 0 spike B-1):** `AtomicRequest` exposes its accumulated `(object, property, value)` writes through a safe ordered iterator; `drmkit-scene-streams` replays them into a libdrm `drmModeAtomicReq` for the `EGL_DRM_ATOMIC_REQUEST_NV` handoff. Supersedes DR-4's `unsafe fn native_handle() -> *mut drmModeAtomicReq`, which cannot be built on `drm-ffi` (it materializes no libdrm request object). Keeps libdrm out of `drmkit-core` and out of GPU-less builds; the same view feeds T7's property-write trace differ, so it ships live in v0.1.0-minimal rather than dormant.
 
 ---
 

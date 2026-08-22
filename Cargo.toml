@@ -8,6 +8,7 @@
 resolver = "3"
 members = [
     "crates/drmkit",
+    "crates/drmkit-fmt",
     "crates/drmkit-log",
     "crates/drmkit-time",
     "tests-integration",
@@ -26,6 +27,7 @@ keywords = ["drm", "kms", "display", "graphics", "embedded"]
 categories = ["graphics", "os::linux-apis", "no-std"]
 
 [workspace.dependencies]
+drmkit-fmt = { version = "0.0.0", path = "crates/drmkit-fmt" }
 drmkit-log = { version = "0.0.0", path = "crates/drmkit-log" }
 drmkit-time = { version = "0.0.0", path = "crates/drmkit-time" }
 

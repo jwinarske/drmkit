@@ -105,6 +105,23 @@ jobs:
       # per-target .cargo fragment.
       - run: cargo test --workspace --exclude xtask --target ${{ matrix.target }}
 
+  fuzz:
+    name: fuzz smoke (T2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Nightly is a *tool* exception, the same one the miri lane takes:
+      # cargo-fuzz needs it for sanitizer instrumentation, and no drmkit crate
+      # uses a nightly language feature. The fuzz crate is outside the
+      # workspace so its nightly-only dependency cannot leak into a normal
+      # build (DR-3).
+      - run: rustup toolchain install nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-fuzz --locked
+      # Short runs on every PR; the corpus is what makes them cumulative.
+      - run: cargo +nightly fuzz run in_formats_blob -- -max_total_time=60
+        working-directory: fuzz
+
   miri:
     name: miri (pure crates)
     runs-on: ubuntu-latest
@@ -115,4 +132,4 @@ jobs:
       - run: rustup toolchain install nightly --component miri
       - uses: Swatinem/rust-cache@v2
       # Only the fd-free crates. The fd-bound ones are sanitizer territory (T3).
-      - run: cargo +nightly miri test -p drmkit-log -p drmkit-time
+      - run: cargo +nightly miri test -p drmkit-log -p drmkit-time -p drmkit-fmt

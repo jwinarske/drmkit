@@ -64,7 +64,7 @@ on the consumer side.
 
 ## B. `drm-ffi` / `drm` gaps
 
-### B-1 — no libdrm `drmModeAtomicReq` object exists to hand to NVIDIA · **confirmed gap, affects DR-4**
+### B-1 — no libdrm `drmModeAtomicReq` object exists to hand to NVIDIA · **confirmed gap, resolved**
 
 `drm_ffi::mode::atomic_commit` (`src/mode.rs:758`) takes four flat slices and
 builds the kernel `drm_mode_atomic` struct on the stack at call time:
@@ -78,26 +78,51 @@ There is no persistent libdrm-side request object anywhere in the stack —
 `drm::control::atomic::AtomicModeReq` is a pure-Rust accumulator of those
 slices, not a `drmModeAtomicReq`.
 
-`EGL_NV_output_drm_atomic` requires a `drmModeAtomicReq*` for the first-commit
-handoff (plan §4.3). So `AtomicRequest::native_handle()` — the deliberate
-raw-pointer leak DR-4 says must ship dormant in v0.1.0-minimal — **has nothing
-to return**. The hook as specified cannot be built on this stack.
+**What the C++ doc adds.** `src/modeset/atomic.hpp:32-38` is more specific than
+"NVIDIA wants a pointer":
 
-**Decision.** DR-4 stands, but its *shape* changes and this must be settled
-before `drmkit-core` freezes its atomic API in Phase 1, not at month 6. Three
-options, to be chosen at the start of Phase 1:
+> NVIDIA's `eglStreamConsumerAcquireAttribEXT` accepts a `drmModeAtomicReq*`
+> via the `EGL_DRM_ATOMIC_REQUEST_NV` attribute and **submits the commit
+> itself** — there is no equivalent libdrm-side hook.
 
-- **(a)** `drmkit-scene-streams` links libdrm directly and owns a parallel
-  `drmModeAtomicReq` for the handoff commit only. Contained, duplicative, and
-  keeps `drmkit-core` clean. Current preference.
-- **(b)** Upstream a `drmModeAtomicReq`-backed request type into `drm-ffi`.
-  Correct long-term, slow, and a hard sell for a single consumer's NVIDIA path.
-- **(c)** `drmkit-sys-shim` builds the libdrm request. The stopgap DR-2 wants
-  to avoid, and the one v1.0's definition of done forbids leaving behind.
+NVIDIA owns *submission* for that frame. The request therefore has to carry the
+whole frame's property writes — the entire scene's plane programming — not just
+the stream bits. That rules out treating `native_handle()` as a small escape
+hatch bolted onto an otherwise Rust-native request.
 
-Whichever wins, the *dormant surface* Phase 1 must carry is a seam that can
-express (a) — an escape hatch on the request type, not literally
-`native_handle() -> *mut drmModeAtomicReq`.
+**Decision (DR-9): export the accumulated property writes.**
+
+`drmkit-core` keeps its `drm-ffi`-backed accumulator and exposes a read-only,
+ordered view of the `(object, property, value)` triples it has accumulated:
+
+```rust
+impl AtomicRequest {
+    /// Accumulated writes, in submission order.
+    pub fn writes(&self) -> impl Iterator<Item = PropertyWrite> + '_;
+}
+```
+
+`drmkit-scene-streams` replays them into a libdrm `drmModeAtomicReq` it owns,
+attaches `EGL_DRM_ATOMIC_REQUEST_NV`, and lets NVIDIA submit.
+
+Why this one:
+
+- **`drmkit-core` never links libdrm.** The alternative — backing every request
+  with a `drmModeAtomicReq` — would pull libdrm into GPU-less builds, which
+  contradicts DR-2 and defeats `DumbScanoutSink`'s zero-graphics-deps goal.
+- **The dormant surface is safe.** DR-4 budgeted for `unsafe fn native_handle()
+  -> *mut drmModeAtomicReq`, one of the few deliberate raw-pointer leaks in the
+  public API. An iterator of plain values needs no `unsafe` and no libdrm type
+  in `drmkit-core`'s signatures, so nothing about the seam is NVIDIA-specific.
+- **libdrm stays confined to `drmkit-scene-streams`**, which is already
+  quarantined as the highest-quirk-density tier.
+- **It is independently useful.** The same ordered view is what T7's
+  property-write trace differ consumes (plan §9), so the seam earns its keep in
+  the minimal cut instead of sitting dormant until month 6.
+
+The cost is a replay step whose fidelity matters: the triples must reach libdrm
+in the same order `drmkit-core` would have submitted them. That is a testable
+property, and the streams tier pins it.
 
 ### B-2 — no writeback capture or CRC path · **confirmed gap, T7 dependency**
 
@@ -146,9 +171,10 @@ missing.
 
 ## C. Decisions carried into Phase 1
 
-1. **Settle B-1's option (a)/(b)/(c) before `drmkit-core`'s atomic request type
-   is written.** It is the one finding here that changes an API the minimal cut
-   ships.
+1. **B-1 is settled (DR-9): `AtomicRequest` exports its accumulated property
+   writes; `drmkit-core` never links libdrm.** `PropertyWrite` and
+   `AtomicRequest::writes()` ship in phase 1 as live surface, not dormant —
+   T7's trace differ is their second consumer.
 2. `drmkit-input` owns a ~20-line `libinput_log_set_handler` shim with
    `vsnprintf` (A-1); no `input-sys` fork, no upstream PR.
 3. Open the `drm-ffi` writeback/CRC conversation upstream during Phase 3, so

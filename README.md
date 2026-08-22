@@ -4,11 +4,30 @@ A Rust port of [drm-cxx](https://github.com/jwinarske/drm-cxx) — a layered
 Linux DRM/KMS display framework covering modesetting, plane allocation, scene
 composition, and scanout.
 
-> **Status: Phase 0.** The workspace, toolchain pin, CI skeleton, and drift
-> linters are in place, along with the two leaf crates. Nothing here is usable
-> as a display library yet. See [`plan.md`](plan.md) for the full porting plan
-> and [`docs/phase0-spikes.md`](docs/phase0-spikes.md) for the dependency gap
-> list.
+[![ci](https://github.com/jwinarske/drmkit/actions/workflows/ci.yml/badge.svg)](https://github.com/jwinarske/drmkit/actions/workflows/ci.yml)
+[![vkms](https://github.com/jwinarske/drmkit/actions/workflows/vkms.yml/badge.svg)](https://github.com/jwinarske/drmkit/actions/workflows/vkms.yml)
+
+> **Status: Phase 0.** The workspace, toolchain pin, CI, and drift linters are
+> in place, along with the two leaf crates. Nothing here is usable as a display
+> library yet. See [`plan.md`](plan.md) for the full porting plan and
+> [`docs/phase0-spikes.md`](docs/phase0-spikes.md) for the dependency gap list.
+
+### Phase 0 exit gate
+
+| Item | State |
+|---|---|
+| Workspace, toolchain pin, cross fragments | done |
+| CI skeleton, all lanes green | done — lint, test, drift, cross aarch64/riscv64, miri |
+| virtme-ng vkms lane boots and loads VKMS | done |
+| xtask TEST_PARITY + INVARIANTS linters | done, negative-tested |
+| `drmkit-log`, `drmkit-time` | done |
+| Foreign-crate gap list decided | done — [`docs/phase0-spikes.md`](docs/phase0-spikes.md) |
+| **Trivial modeset under vkms** | **not done** — needs `drmkit-core` (phase 1) |
+
+The vkms lane currently asserts that a card node exists, opens, and is a DRM
+device. That makes the lane fail when VKMS is absent instead of passing
+vacuously, but it is not yet a modeset: no drmkit subsystem can perform one
+until `drmkit-core` lands.
 
 **Upstream baseline:** `jwinarske/drm-cxx` @ `dc2915b` (v2.0.1, PR #231).
 

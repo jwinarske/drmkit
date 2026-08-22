@@ -1,0 +1,110 @@
+# Host and cross lanes (plan §10). The vkms lane lives in vkms.yml because it
+# needs a kernel, not just a toolchain.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  lint:
+    name: lint (fmt, clippy, msrv, deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml pins 1.94.1; every component comes from it.
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+
+      - name: rustfmt
+        run: cargo fmt --all --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --all-features
+
+      - name: cargo-msrv verify
+        run: |
+          cargo install cargo-msrv --locked
+          cargo msrv verify --all-features
+
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  test:
+    name: test x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      # T0 unit, T1 property, T4 doctests.
+      - run: cargo test --workspace --all-features
+
+  drift:
+    name: drift (TEST_PARITY + INVARIANTS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The linters compare against upstream, so upstream has to be present.
+      # Pinned to the plan's baseline: a moving reference would make this lane
+      # fail for reasons unrelated to the commit under test. Bumping the pin is
+      # a deliberate, reviewable change.
+      - uses: actions/checkout@v4
+        with:
+          repository: jwinarske/drm-cxx
+          ref: dc2915b9f
+          path: .drm-cxx-ref
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask check --ref .drm-cxx-ref
+
+  cross:
+    name: cross ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-gnu
+            # libc6-dev-*-cross is named explicitly rather than relied on as a
+            # transitive of gcc-*-linux-gnu: without the cross sysroot the
+            # compiler is present but nothing that links can be built, and the
+            # failure reads as a code error rather than a missing package.
+            packages: gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+          - target: riscv64gc-unknown-linux-gnu
+            packages: gcc-riscv64-linux-gnu libc6-dev-riscv64-cross qemu-user
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: install cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.packages }}
+      # `xtask` is host-only repository tooling — it is excluded everywhere in
+      # this lane. Cross-building it proves nothing and only needs a sysroot.
+      - run: cargo build --workspace --exclude xtask --target ${{ matrix.target }}
+      # qemu-user runs T0 under the cross target; the runner comes from the
+      # per-target .cargo fragment.
+      - run: cargo test --workspace --exclude xtask --target ${{ matrix.target }}
+
+  miri:
+    name: miri (pure crates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Nightly here is a *tool* exception, not a code one: no crate may use a
+      # nightly feature (plan §2). Miri simply does not exist on stable.
+      - run: rustup toolchain install nightly --component miri
+      - uses: Swatinem/rust-cache@v2
+      # Only the fd-free crates. The fd-bound ones are sanitizer territory (T3).
+      - run: cargo +nightly miri test -p drmkit-log -p drmkit-time

@@ -1,0 +1,58 @@
+# drmkit — Rust port of drm-cxx (behavioral-parity port; see plan.md).
+#
+# Baseline: jwinarske/drm-cxx @ dc2915b (v2.0.1, PR #231).
+# Phase 0 carries only the leaf crates plus xtask; the crate map in plan.md §5
+# lists the full set and the phase that lands each one.
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/drmkit-log",
+    "crates/drmkit-time",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "MIT"
+authors = ["Joel Winarske <joel.winarske@linux.com>"]
+repository = "https://github.com/jwinarske/drmkit"
+homepage = "https://github.com/jwinarske/drmkit"
+keywords = ["drm", "kms", "display", "graphics", "embedded"]
+categories = ["graphics", "os::linux-apis", "no-std"]
+
+[workspace.dependencies]
+drmkit-log = { version = "0.0.0", path = "crates/drmkit-log" }
+drmkit-time = { version = "0.0.0", path = "crates/drmkit-time" }
+
+rustix = { version = "1", default-features = false }
+tracing = { version = "0.1", default-features = false }
+
+# Workspace-wide lint policy (plan §7). Every crate opts in with
+# `[lints] workspace = true`.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"          # edition 2024 default; kept explicit
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"      # every `unsafe` carries a // SAFETY:
+missing_safety_doc = "deny"
+# `anyhow` is banned in library code; each crate carries a `thiserror` enum
+# whose discriminants mirror the C++ std::error_code paths (plan §5).
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+# Parity ports read closer to the C++ when the module path stays explicit.
+module_name_repetitions = "allow"
+
+[profile.release]
+debug = 1          # HIL + perf lanes need symbols; T6 thresholds are measured here
+overflow-checks = true
+
+[profile.bench]
+debug = 1

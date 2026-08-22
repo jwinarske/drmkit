@@ -1,0 +1,18 @@
+[package]
+name = "drmkit-time"
+description = "Monotonic clock abstraction for drmkit: a swappable presentation clock for animation, pacing, and scheduling."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["date-and-time", "os::linux-apis"]
+keywords = ["drm", "kms", "clock", "monotonic", "vblank"]
+
+[dependencies]
+rustix = { workspace = true, features = ["std", "time"] }
+
+[lints]
+workspace = true

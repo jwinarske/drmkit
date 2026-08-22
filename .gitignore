@@ -1,0 +1,17 @@
+/target/
+**/*.rs.bk
+*.pdb
+
+# cargo-fuzz
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+
+# xtask scratch + vkms lane artifacts
+/.drmkit-work/
+/parity/out/
+
+# Editors
+/.idea/
+/.vscode/
+*.swp

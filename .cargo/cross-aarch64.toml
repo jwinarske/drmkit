@@ -1,0 +1,7 @@
+# aarch64 cross lane. Targets: RK3588, RK3566, SA8155P, Jetson Orin Nano.
+# The ToneMapper NEON fp16 lane (DR-7) is runtime-detected, not baked in here —
+# the same binary must run on cores without fp16.
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
+runner = "qemu-aarch64 -L /usr/aarch64-linux-gnu"
+rustflags = ["-Dwarnings"]

@@ -1,0 +1,24 @@
+[package]
+name = "drmkit-log"
+description = "Diagnostic surface for drmkit: process-wide level, installable sink, and per-category channels."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["development-tools::debugging", "os::linux-apis"]
+keywords = ["drm", "kms", "logging", "tracing"]
+
+[features]
+default = []
+# Forward every admitted record into `tracing` instead of the default
+# stdio sink. Off by default so a leaf consumer pays no tracing cost.
+tracing = ["dep:tracing"]
+
+[dependencies]
+tracing = { workspace = true, optional = true, features = ["std"] }
+
+[lints]
+workspace = true

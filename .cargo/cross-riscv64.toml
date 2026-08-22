@@ -1,0 +1,10 @@
+# riscv64 cross lane. Target: StarFive VisionFive 2 (JH7110).
+#
+# JH7110 is RVA20-ish, so the baseline stays at the target default. The 1.94
+# RISC-V target-feature stabilizations (29 features, much of RVA22U64/RVA23U64)
+# matter for forward targets; the feature-detection story is built now rather
+# than retrofitted (plan §2). Raise `-Ctarget-feature` per-board, never here.
+[target.riscv64gc-unknown-linux-gnu]
+linker = "riscv64-linux-gnu-gcc"
+runner = "qemu-riscv64 -L /usr/riscv64-linux-gnu"
+rustflags = ["-Dwarnings"]

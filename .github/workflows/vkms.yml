@@ -1,0 +1,51 @@
+# The vkms lane (plan §9 T5, §10).
+#
+# This is the structural improvement over drm-cxx's CI, which self-skips its
+# integration tests on hosted runners. Here they boot a real kernel with the
+# VKMS virtual driver under virtme-ng and are merge-blocking on every PR from
+# Phase 0 onward. An integration suite that skips itself in CI is a suite
+# nobody runs.
+name: vkms
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: vkms-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  vkms:
+    name: vkms (virtme-ng)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+
+      - name: install virtme-ng
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y virtme-ng qemu-system-x86 linux-modules-extra-$(uname -r)
+
+      - name: confirm vkms is available
+        run: modinfo vkms
+
+      - name: build integration tests
+        run: cargo test --workspace --no-run
+
+      # virtme-ng boots the host kernel under KVM in ~2-3s, loads vkms, and
+      # runs the suite against a real modeset card. `--verbose` surfaces boot
+      # failures that would otherwise look like a silent test skip.
+      - name: run suite under vkms
+        run: |
+          vng --run --verbose --cpus 2 --memory 2G \
+              --exec "modprobe vkms && cargo test --workspace -- --include-ignored"
+        env:
+          DRMKIT_TEST_CARD: /dev/dri/card0

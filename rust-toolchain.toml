@@ -1,0 +1,12 @@
+# Pinned exactly, per DR-3. Contributor toolchains must not drift: Rust 1.94
+# changed precise-capture details around patterns, and an older local toolchain
+# would silently reintroduce pre-1.94 capture assumptions (plan §2, §12).
+[toolchain]
+channel = "1.94.1"
+components = ["rustfmt", "clippy", "rust-src"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "riscv64gc-unknown-linux-gnu",
+]
+profile = "minimal"

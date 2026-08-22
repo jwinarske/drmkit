@@ -1,0 +1,14 @@
+# Per-target fragments are pulled in via the `include` key (stabilized in Cargo
+# 1.94, plan §2) instead of the copy-paste config drift the sibling emb
+# manifests currently carry. Fragments are shared verbatim across drmkit and
+# sibling ports.
+include = [
+    "cross-aarch64.toml",
+    "cross-riscv64.toml",
+]
+
+[alias]
+xtask = "run --package xtask --"
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-Dwarnings"]

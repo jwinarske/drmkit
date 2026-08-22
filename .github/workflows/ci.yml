@@ -32,10 +32,16 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets --all-features
 
+      # cargo-msrv reads `package.rust-version`, which a virtual workspace root
+      # does not have. Verify each member against its own manifest instead.
       - name: cargo-msrv verify
         run: |
           cargo install cargo-msrv --locked
-          cargo msrv verify --all-features
+          for manifest in crates/*/Cargo.toml; do
+            echo "::group::msrv $manifest"
+            cargo msrv verify --all-features --manifest-path "$manifest"
+            echo "::endgroup::"
+          done
 
       - name: cargo-deny
         uses: EmbarkStudios/cargo-deny-action@v2
@@ -63,7 +69,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: jwinarske/drm-cxx
-          ref: dc2915b9f
+          # Full 40-character SHA: actions/checkout cannot resolve an
+          # abbreviated one.
+          ref: dc2915b9f76856ea5791cb416e9facdef6262678
           path: .drm-cxx-ref
       - uses: Swatinem/rust-cache@v2
       - run: cargo xtask check --ref .drm-cxx-ref

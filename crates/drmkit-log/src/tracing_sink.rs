@@ -22,10 +22,13 @@ use crate::{LogLevel, set_log_level, set_log_sink};
 ///
 /// Installing is idempotent in effect, though each call replaces the sink.
 ///
-/// ```
-/// # #[cfg(feature = "tracing")]
+/// ```no_run
 /// drmkit_log::install_tracing_sink();
 /// ```
+///
+/// Marked `no_run`: this replaces the process-global sink and raises the
+/// global threshold, so actually running it would perturb every other example
+/// in the merged doctest binary. It is still compiled and type-checked.
 pub fn install_tracing_sink() {
     set_log_sink(|level, message| match level {
         LogLevel::Error => tracing::error!(target: "drmkit", "{message}"),

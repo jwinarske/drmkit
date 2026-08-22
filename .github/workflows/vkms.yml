@@ -37,6 +37,13 @@ jobs:
       - name: confirm vkms is available
         run: modinfo vkms
 
+      # virtme-ng boots the host kernel image directly, and GitHub runners ship
+      # /boot/vmlinuz-* readable only by root. Without this the lane fails with
+      # "unable to access /boot/vmlinuz-... (check for read permissions)",
+      # which reads like a virtme bug rather than a permissions one.
+      - name: make the host kernel image readable
+        run: sudo chmod +r "/boot/vmlinuz-$(uname -r)"
+
       - name: build integration tests
         run: cargo test --workspace --no-run
 

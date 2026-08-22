@@ -60,18 +60,14 @@ macro_rules! log_debug {
 ///
 /// ```
 /// use drmkit_log::{LogLevel, log_channel};
-/// # use std::sync::{Arc, Mutex};
-/// # let seen = Arc::new(Mutex::new(Vec::new()));
-/// # let t = Arc::clone(&seen);
-/// # drmkit_log::set_log_sink(move |_, m| t.lock().unwrap().push(m.to_owned()));
-/// drmkit_log::set_log_level(LogLevel::Silent);
 ///
 /// if std::env::var_os("DRM_ALLOC_DEBUG").is_some() {
 ///     log_channel!(LogLevel::Debug, "layer {} -> plane {}", 0, 31);
 /// }
-/// // Silent gates the ordinary macros but not the channel.
+/// // Reaches the sink even at Silent -- the channel's own gate is its
+/// // threshold. Pinned by `channel_bypasses_level_but_not_sink`; not asserted
+/// // here because the level and sink are process-global.
 /// log_channel!(LogLevel::Debug, "always reaches the sink");
-/// # assert_eq!(seen.lock().unwrap().len(), 1);
 /// ```
 #[macro_export]
 macro_rules! log_channel {

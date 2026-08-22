@@ -61,6 +61,16 @@
 //! set_log_level(LogLevel::Warn);
 //! log_warn!("plane {} rejected modifier {:#x}", 31, 0x0100_0000_0000_0001_u64);
 //! ```
+//!
+//! # A note on the examples
+//!
+//! The level and the sink are process-global, and under edition 2024 every
+//! doctest in a crate is merged into one binary and run on parallel threads.
+//! Examples here therefore *demonstrate* the API but never assert on what a
+//! sink received: a concurrently running example would have replaced the sink
+//! or moved the threshold, and the assertion would fail for reasons having
+//! nothing to do with the code. The behavioral assertions live in the unit
+//! tests, which serialize on a mutex the way the C++ gtest fixture does.
 
 use std::fmt;
 use std::io::Write as _;
@@ -239,7 +249,7 @@ pub fn set_log_level(level: LogLevel) {
 /// use std::sync::{Arc, Mutex};
 /// use drmkit_log::{LogLevel, log_error, set_log_level, set_log_sink};
 ///
-/// let captured = Arc::new(Mutex::new(Vec::new()));
+/// let captured: Arc<Mutex<Vec<(LogLevel, String)>>> = Arc::new(Mutex::new(Vec::new()));
 /// let sink_target = Arc::clone(&captured);
 /// set_log_sink(move |level, message| {
 ///     sink_target.lock().unwrap().push((level, message.to_owned()));
@@ -247,7 +257,8 @@ pub fn set_log_level(level: LogLevel) {
 /// set_log_level(LogLevel::Debug);
 ///
 /// log_error!("answer is {}", 42);
-/// assert_eq!(captured.lock().unwrap()[0].1, "answer is 42");
+/// // Not asserted on here: the sink is process-global and a concurrently
+/// // running example may have replaced it. See "A note on the examples".
 /// ```
 pub fn set_log_sink<F>(sink: F)
 where

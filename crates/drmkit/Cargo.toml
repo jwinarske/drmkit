@@ -1,0 +1,22 @@
+[package]
+name = "drmkit"
+description = "A layered Linux DRM/KMS display framework: modesetting, plane allocation, scene composition, and scanout. Rust port of drm-cxx."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/drmkit"
+readme = "README.md"
+categories = ["graphics", "os::linux-apis", "hardware-support"]
+keywords = ["drm", "kms", "display", "graphics", "embedded"]
+
+# Umbrella re-export crate. Intentionally dependency-free for now: the member
+# crates are unpublished, and a path-only dependency cannot be published.
+# Each becomes an optional, feature-gated dependency as it lands.
+[dependencies]
+
+[lints]
+workspace = true

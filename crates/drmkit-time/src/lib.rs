@@ -296,12 +296,24 @@ impl ManualClock {
     /// a test clock that silently stalls pacing instead of failing loudly.
     pub fn advance(&self, delta: Duration) {
         let step = saturating_nanos(delta);
-        // `fetch_add` wraps on overflow, so clamp inside the update instead.
-        let _ = self.nanos.fetch_update(
-            core::sync::atomic::Ordering::Relaxed,
-            core::sync::atomic::Ordering::Relaxed,
-            |current| Some(current.saturating_add(step)),
-        );
+        // `fetch_add` wraps on overflow, so clamp inside a compare-exchange
+        // loop instead. Hand-rolled rather than `fetch_update`, which nightly
+        // has deprecated in favor of `try_update` -- naming the primitives
+        // directly keeps this compiling on stable and nightly alike, which the
+        // miri lane needs.
+        let mut current = self.nanos.load(core::sync::atomic::Ordering::Relaxed);
+        loop {
+            let clamped = current.saturating_add(step);
+            match self.nanos.compare_exchange_weak(
+                current,
+                clamped,
+                core::sync::atomic::Ordering::Relaxed,
+                core::sync::atomic::Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
     }
 
     /// Jump the clock to `at`.

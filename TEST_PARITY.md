@@ -92,7 +92,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_scene_set.cpp` | _drmkit-scene-set_ (phase 6+) | pending |  |
 | `tests/unit/test_select_connector.cpp` | _drmkit-display_ (phase 4) | pending |  |
 | `tests/unit/test_stream_capability.cpp` | _drmkit-scene-streams_ (phase 6+) | pending |  |
-| `tests/unit/test_sync_fence.cpp` | _drmkit-sync_ (phase 1) | pending |  |
+| `tests/unit/test_sync_fence.cpp` | `drmkit-sync` `src/tests.rs` | ported |  |
 | `tests/unit/test_test_patterns.cpp` | — (covers `examples/`, outside the ported `src/` surface) | n/a |  |
 | `tests/unit/test_tone_mapper.cpp` | _drmkit-display_ (phase 4) | pending |  |
 | `tests/unit/test_v4l2_camera_source.cpp` | _drmkit-scene-v4l2_ (phase 6+) | pending |  |
@@ -130,6 +130,6 @@ and runs in the vkms lane (plan §6, §13).
 
 ## Summary
 
-- `ported`: 3
-- `pending`: 92
+- `ported`: 4
+- `pending`: 91
 - `n/a`: 2

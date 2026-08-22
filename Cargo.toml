@@ -10,6 +10,7 @@ members = [
     "crates/drmkit",
     "crates/drmkit-fmt",
     "crates/drmkit-log",
+    "crates/drmkit-sync",
     "crates/drmkit-time",
     "tests-integration",
     "xtask",
@@ -29,9 +30,11 @@ categories = ["graphics", "os::linux-apis", "no-std"]
 [workspace.dependencies]
 drmkit-fmt = { version = "0.0.0", path = "crates/drmkit-fmt" }
 drmkit-log = { version = "0.0.0", path = "crates/drmkit-log" }
+drmkit-sync = { version = "0.0.0", path = "crates/drmkit-sync" }
 drmkit-time = { version = "0.0.0", path = "crates/drmkit-time" }
 
 rustix = { version = "1", default-features = false }
+thiserror = { version = "2", default-features = false }
 tracing = { version = "0.1", default-features = false }
 
 # Workspace-wide lint policy (plan §7). Every crate opts in with

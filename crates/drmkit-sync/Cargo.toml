@@ -1,0 +1,22 @@
+[package]
+name = "drmkit-sync"
+description = "Explicit synchronization primitives for drmkit: sync_file fences for IN_FENCE_FD / OUT_FENCE_PTR."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["graphics", "os::linux-apis"]
+keywords = ["drm", "kms", "fence", "sync-file", "explicit-sync"]
+
+[dependencies]
+rustix = { workspace = true, features = ["std", "event"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+rustix = { workspace = true, features = ["std", "event", "pipe"] }
+
+[lints]
+workspace = true

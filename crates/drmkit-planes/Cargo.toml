@@ -1,0 +1,22 @@
+[package]
+name = "drmkit-planes"
+description = "Display-plane registry, layer model, and the bipartite plane allocator for drmkit."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["graphics", "os::linux-apis"]
+keywords = ["drm", "kms", "plane", "allocator", "compositor"]
+
+[dependencies]
+drmkit-fmt = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true

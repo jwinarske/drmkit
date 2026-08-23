@@ -11,7 +11,24 @@
 //! health checks.
 
 use super::*;
-use std::os::fd::{AsRawFd as _, IntoRawFd as _, OwnedFd};
+use std::os::fd::{AsRawFd as _, OwnedFd};
+
+/// Serializes the card-dependent cases.
+///
+/// `Device::open` acquires DRM master, and master is held per open file
+/// description: only one can have it at a time. Several of these cases open the
+/// same card, so run in parallel they race for it -- one wins and the rest get
+/// `EACCES`, which is indistinguishable from a real permission failure. The
+/// mutex makes each case the only claimant while it runs.
+static CARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Take the card lock, ignoring poisoning: a panicking case has already failed
+/// and must not cascade into every other one.
+fn card_guard() -> std::sync::MutexGuard<'static, ()> {
+    CARD_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// The card the ignored cases use, matching the vkms lane's environment.
 fn test_card() -> String {
@@ -124,26 +141,64 @@ fn moving_a_borrowed_device_keeps_it_borrowed() {
 
 /// An owning device closes on drop. The C++ has no counterpart: `from_fd` is
 /// always non-owning there, because C++ cannot express the transfer in a type.
+///
+/// Probing whether one specific descriptor *number* is closed does not work:
+/// the harness runs cases on parallel threads, and a number freed by this drop
+/// can be handed straight to another case's `open`, making the check report
+/// "still open". That is exactly how an earlier version of this test passed on
+/// x86_64 and failed under qemu-riscv64, where the scheduling differs.
+///
+/// Measuring the descriptor table instead is race-tolerant in the same way the
+/// `drmkit-sync` leak test is: a missing close grows the table once per
+/// iteration, so the signal scales with the loop count while concurrent noise
+/// stays a small constant.
 #[test]
 fn owned_device_closes_on_drop() {
-    let raw = open_dev_null().into_raw_fd();
+    let open_and_drop = |times: usize| {
+        for _ in 0..times {
+            let device = Device::from_owned_fd(open_dev_null());
+            assert!(device.owns_fd());
+            drop(device);
+        }
+    };
 
-    {
-        // SAFETY: `raw` was just produced by `into_raw_fd`, so ownership is
-        // ours to hand over and nothing else holds it.
-        let owned = unsafe { <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(raw) };
-        let device = Device::from_owned_fd(owned);
-        assert!(device.owns_fd());
-        assert_eq!(device.raw_fd(), raw);
-    }
+    let count = || {
+        std::fs::read_dir("/proc/self/fd")
+            .expect("/proc/self/fd")
+            .count()
+    };
 
-    // SAFETY: checking whether a descriptor number is still open. If the drop
-    // closed it, as it must, this reports EBADF.
-    let borrowed = unsafe { std::os::fd::BorrowedFd::borrow_raw(raw) };
+    open_and_drop(16);
+    let after_few = count();
+
+    open_and_drop(240);
+    let after_many = count();
+
+    let growth = after_many.saturating_sub(after_few);
     assert!(
-        rustix::fs::fstat(borrowed).is_err(),
-        "an owning device must close its descriptor on drop"
+        growth < 16,
+        "240 further owning devices grew the fd table by {growth}; \
+         a device that failed to close would grow it by 240"
     );
+}
+
+/// The mirror of the above: a borrowed device must *not* close, so the table
+/// grows by one per iteration when the caller keeps the descriptors alive.
+#[test]
+fn borrowed_device_leaves_the_descriptor_to_the_caller() {
+    let mut kept = Vec::new();
+    for _ in 0..64 {
+        let owned = open_dev_null();
+        let raw = owned.as_raw_fd();
+        // SAFETY: `owned` is pushed to `kept` below and outlives the device.
+        let device = unsafe { Device::from_borrowed_fd(raw) };
+        assert_eq!(device.raw_fd(), raw);
+        drop(device);
+        // Still valid because the device did not close it.
+        assert!(rustix::fs::fstat(&owned).is_ok());
+        kept.push(owned);
+    }
+    assert_eq!(kept.len(), 64);
 }
 
 // `DeviceTest.SetClientCapOnInvalidFdFails` has no Rust counterpart.
@@ -161,6 +216,7 @@ fn owned_device_closes_on_drop() {
 #[test]
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn open_card_and_enable_atomic_vkms() {
+    let _guard = card_guard();
     let device = Device::open(test_card()).expect("open test card");
     device
         .enable_universal_planes()
@@ -215,6 +271,7 @@ fn clear_empties_the_store() {
 #[test]
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn cache_unknown_object_is_an_error_vkms() {
+    let _guard = card_guard();
     let device = Device::open(test_card()).expect("open test card");
     let mut store = PropertyStore::new();
     assert!(
@@ -364,6 +421,7 @@ fn move_transfers_queued_writes() {
 #[test]
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn test_commit_with_empty_request_vkms() {
+    let _guard = card_guard();
     let device = Device::open(test_card()).expect("open test card");
     device.enable_atomic().expect("atomic");
 
@@ -380,6 +438,7 @@ fn test_commit_with_empty_request_vkms() {
 #[test]
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn test_rejects_unknown_objects_vkms() {
+    let _guard = card_guard();
     let device = Device::open(test_card()).expect("open test card");
     device.enable_atomic().expect("atomic");
 
@@ -406,6 +465,7 @@ fn test_rejects_unknown_objects_vkms() {
 #[test]
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn test_masks_page_flip_event_vkms() {
+    let _guard = card_guard();
     let device = Device::open(test_card()).expect("open test card");
     device.enable_atomic().expect("atomic");
 

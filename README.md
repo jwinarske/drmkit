@@ -93,6 +93,9 @@ lived only here would make the two implementations diverge.
 
 | `drmkit-planes` | Registry, layer model, matcher, allocator — **invariant 4** | 2 ✅ |
 
+| `drmkit-scene` | Buffer sources, release ring, commit lifecycle — **invariants 1, 2, 5** | 3 (in progress) |
+| `drmkit-scene-sources` | Tier-1 sources: dumb buffers | 3 (in progress) |
+
 The remaining ~25 crates and the phase that lands each are listed in
 [`plan.md`](plan.md) §5 and §8.
 

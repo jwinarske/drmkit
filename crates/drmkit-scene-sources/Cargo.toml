@@ -1,0 +1,26 @@
+[package]
+name = "drmkit-scene-sources"
+description = "Tier-1 buffer sources for drmkit scenes: dumb buffers and imported DMA-BUFs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["graphics", "os::linux-apis"]
+keywords = ["drm", "kms", "compositor", "dma-buf", "scanout"]
+
+[dependencies]
+drmkit-core = { workspace = true }
+drmkit-dumb = { workspace = true }
+drmkit-scene = { workspace = true }
+drmkit-sync = { workspace = true }
+rustix = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+drmkit-fmt = { workspace = true }
+
+[lints]
+workspace = true

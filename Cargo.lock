@@ -170,6 +170,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "drmkit-scene-sources"
+version = "0.0.0"
+dependencies = [
+ "drmkit-core",
+ "drmkit-dumb",
+ "drmkit-fmt",
+ "drmkit-scene",
+ "drmkit-sync",
+ "rustix",
+ "thiserror",
+]
+
+[[package]]
 name = "drmkit-sync"
 version = "0.0.0"
 dependencies = [

@@ -12,22 +12,34 @@ composition, and scanout.
 > library yet. See [`plan.md`](plan.md) for the full porting plan and
 > [`docs/phase0-spikes.md`](docs/phase0-spikes.md) for the dependency gap list.
 
-### Phase 0 exit gate
+### Phase gates
+
+**Phase 0 — met.** Workspace, pinned toolchain, cross fragments, all CI lanes
+green, drift linters negative-tested, and the dependency gap list decided
+([`docs/phase0-spikes.md`](docs/phase0-spikes.md)). The one item left open then
+— a trivial modeset under vkms — is now met by Phase 1: `drmkit-core` and
+`drmkit-dumb` allocate, map, and register framebuffers against the vkms card in
+the lane on every push.
+
+**Phase 1 — met, with one carry-over.**
 
 | Item | State |
 |---|---|
-| Workspace, toolchain pin, cross fragments | done |
-| CI skeleton, all lanes green | done — lint, test, drift, cross aarch64/riscv64, miri |
-| virtme-ng vkms lane boots and loads VKMS | done |
-| xtask TEST_PARITY + INVARIANTS linters | done, negative-tested |
-| `drmkit-log`, `drmkit-time` | done |
-| Foreign-crate gap list decided | done — [`docs/phase0-spikes.md`](docs/phase0-spikes.md) |
-| **Trivial modeset under vkms** | **not done** — needs `drmkit-core` (phase 1) |
+| `drmkit-core`, `-modeset`, `-dumb`, `-sync`, `-fmt` | done |
+| Ported unit tests for these subsystems pass | done — 10 upstream files ported, 1 partial |
+| Invariant 3 pinned (`PageFlip::dispatch`) | done |
+| Invariant 6 pinned (`Buffer::map`) | done |
+| Fuzz target seeded for `IN_FORMATS` | done — ~1.5M execs per CI run |
+| Fuzz target seeded for EDID-adjacent parsers | **carried to phase 4** |
 
-The vkms lane currently asserts that a card node exists, opens, and is a DRM
-device. That makes the lane fail when VKMS is absent instead of passing
-vacuously, but it is not yet a modeset: no drmkit subsystem can perform one
-until `drmkit-core` lands.
+The EDID parser lands with `drmkit-display` in phase 4, so its fuzz target
+cannot be seeded before the code it targets exists.
+
+Every card-dependent test is `#[ignore]`d so a developer machine without vkms
+stays green, and the lane runs them with `--include-ignored` under
+`DRMKIT_REQUIRE_MASTER=1` — which turns "another client holds DRM master" from a
+tolerated local condition into a lane failure, so a card test cannot pass in CI
+by quietly doing nothing.
 
 **Upstream baseline:** `jwinarske/drm-cxx` @ `dc2915b` (v2.0.1, PR #231).
 
@@ -55,6 +67,11 @@ Both are enforced by `cargo xtask check`.
 | `drmkit-log` | Diagnostic surface: level, installable sink, per-category channels | 0 ✅ |
 | `drmkit-time` | Monotonic clock abstraction over `CLOCK_MONOTONIC` | 0 ✅ |
 | `xtask` | TEST_PARITY / INVARIANTS drift linters | 0 ✅ |
+| `drmkit-fmt` | Format modifiers, `IN_FORMATS` tables, bandwidth cost (`no_std`) | 1 ✅ |
+| `drmkit-sync` | `sync_file` fences for explicit synchronization | 1 ✅ |
+| `drmkit-core` | Device handles, property cache, atomic requests | 1 ✅ |
+| `drmkit-modeset` | Mode selection, page-flip dispatch — **invariant 3** | 1 ✅ |
+| `drmkit-dumb` | Dumb buffers, lifetime mmaps — **invariant 6** | 1 ✅ |
 
 The remaining ~25 crates and the phase that lands each are listed in
 [`plan.md`](plan.md) §5 and §8.

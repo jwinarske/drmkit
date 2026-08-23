@@ -176,17 +176,70 @@ fn property_hash_cache_is_invalidated_on_mutation() {
     assert_ne!(layer.property_hash(), first, "disable must invalidate too");
 }
 
-/// A disabled layer hashes as empty regardless of what it held before.
+/// `LayerTest.DisableSetsFbIdToZero`
+///
+/// Disabling detaches the framebuffer and nothing else: geometry, format, and
+/// stacking survive so a re-enabled layer keeps its placement.
 #[test]
-fn disable_clears_every_property() {
+fn disable_sets_fb_id_to_zero_and_leaves_the_rest() {
     let mut layer = placed_layer();
-    layer.set_assigned_plane(Some(31));
+    let before = layer.property_hash();
+
     layer.disable();
 
-    assert_eq!(layer.property_count(), 0);
-    assert_eq!(layer.property(PropTag::FbId), None);
-    assert_eq!(layer.assigned_plane(), None);
-    assert_eq!(layer.property_hash(), Layer::new().property_hash());
+    assert_eq!(layer.property(PropTag::FbId), Some(0));
+    assert_eq!(
+        layer.property(PropTag::CrtcW),
+        Some(1920),
+        "geometry survives"
+    );
+    assert_eq!(
+        layer.property(PropTag::PixelFormat),
+        Some(u64::from(fourcc::XRGB8888)),
+        "format survives"
+    );
+    assert_eq!(
+        layer.property_hash(),
+        before,
+        "FB_ID is content, so disabling must not move the placement hash"
+    );
+}
+
+/// `LayerTest.SetSameValueDoesNotDirty`
+///
+/// Rewriting a property's existing value must not dirty the layer. The
+/// steady-state path rewrites the same geometry every frame, so treating that
+/// as a change would also invalidate the memoized hash each time and defeat the
+/// memoization the FB-only fast path leans on.
+#[test]
+fn setting_the_same_value_is_a_no_op() {
+    let mut layer = Layer::new();
+    layer.set_property(PropTag::FbId, 42);
+    layer.mark_clean();
+    assert!(!layer.is_dirty());
+
+    layer.set_property(PropTag::FbId, 42);
+    assert!(
+        !layer.is_dirty(),
+        "an unchanged value must not dirty the layer"
+    );
+
+    layer.set_property(PropTag::FbId, 43);
+    assert!(layer.is_dirty(), "a real change must");
+}
+
+/// The memoized hash must survive a no-op placement write, and still be
+/// invalidated by a real one.
+#[test]
+fn a_no_op_write_does_not_invalidate_the_hash_cache() {
+    let mut layer = placed_layer();
+    let before = layer.property_hash();
+
+    layer.set_property(PropTag::CrtcW, 1920); // same value
+    assert_eq!(layer.property_hash(), before);
+
+    layer.set_property(PropTag::CrtcW, 1280); // different
+    assert_ne!(layer.property_hash(), before);
 }
 
 // --- property bag ------------------------------------------------------------

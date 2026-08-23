@@ -16,12 +16,17 @@
 //! classification does not compile — the misclassification the invariant warns
 //! about cannot reach a running system.
 
+mod allocator;
 mod layer;
 mod matching;
 mod prop;
 mod registry;
 mod scoring;
 
+pub use allocator::{
+    Allocation, Allocator, AlwaysAccept, Diagnostics, LayerId, LayerRef, PlaneAssignment,
+    TestCache, TestCommitter, TestFailure,
+};
 pub use layer::{ContentType, Layer, PropertySnapshot, Rect};
 pub use matching::BipartiteMatching;
 pub use prop::{NUM_PROPS, PropClass, PropTag};

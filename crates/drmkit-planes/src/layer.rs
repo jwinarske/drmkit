@@ -119,11 +119,24 @@ impl Layer {
     }
 
     /// Set a property. The hot path — no string lookup.
+    ///
+    /// Writing a property's existing value is a **no-op**: the layer is not
+    /// marked dirty and the memoized hash is not invalidated. That is not just
+    /// tidiness — the steady-state path rewrites the same geometry every frame,
+    /// so invalidating on a no-op would recompute the hash each time and defeat
+    /// the memoization the FB-only fast path leans on.
     pub fn set_property(&mut self, tag: PropTag, value: u64) -> &mut Self {
-        self.values[tag.index()] = value;
-        self.set_mask |= 1 << tag.index();
-        self.cached_hash.set(None);
-        self.dirty = true;
+        let index = tag.index();
+        let was_set = self.set_mask & (1 << index) != 0;
+        let changed = !was_set || self.values[index] != value;
+
+        self.values[index] = value;
+        self.set_mask |= 1 << index;
+
+        if changed {
+            self.cached_hash.set(None);
+            self.dirty = true;
+        }
         self
     }
 
@@ -180,14 +193,14 @@ impl Layer {
         }
     }
 
-    /// Clear every property and mark the layer disabled.
+    /// Disable the layer by detaching its framebuffer.
+    ///
+    /// Sets `FB_ID` to 0 and leaves everything else alone. Geometry, format,
+    /// and stacking stay put, which is what lets a re-enabled layer keep its
+    /// placement — and, because `FB_ID` is a content property, what keeps a
+    /// disable from moving [`property_hash`](Self::property_hash).
     pub fn disable(&mut self) -> &mut Self {
-        self.values = [0; NUM_PROPS];
-        self.set_mask = 0;
-        self.cached_hash.set(None);
-        self.assigned_plane = None;
-        self.dirty = true;
-        self
+        self.set_property(PropTag::FbId, 0)
     }
 
     /// Order-independent hash of the layer's **placement** properties.

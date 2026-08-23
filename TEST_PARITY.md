@@ -75,16 +75,16 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_hdr_metadata_cache.cpp` | _drmkit-display_ (phase 4) | pending |  |
 | `tests/unit/test_input.cpp` | _drmkit-input_ (phase 4) | pending |  |
 | `tests/unit/test_key_repeater.cpp` | _drmkit-input_ (phase 4) | pending |  |
-| `tests/unit/test_layer.cpp` | _drmkit-planes_ (phase 2) | pending | 4 |
+| `tests/unit/test_layer.cpp` | `drmkit-planes` | ported | 4 |
 | `tests/unit/test_log.cpp` | `drmkit-log` `src/tests.rs` | ported |  |
-| `tests/unit/test_matching.cpp` | _drmkit-planes_ (phase 2) | pending |  |
+| `tests/unit/test_matching.cpp` | `drmkit-planes` | ported |  |
 | `tests/unit/test_mode.cpp` | `drmkit-modeset` `src/tests.rs` | ported |  |
 | `tests/unit/test_mode_list.cpp` | _drmkit-modeset_ (phase 1) | pending |  |
 | `tests/unit/test_negotiate.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/unit/test_output.cpp` | _drmkit-planes_ (phase 2) | pending |  |
 | `tests/unit/test_output_signaling.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/unit/test_page_flip.cpp` | `drmkit-modeset` `src/tests.rs` | ported | 3 |
-| `tests/unit/test_plane_allocator.cpp` | _drmkit-planes_ (phase 2) | pending |  |
+| `tests/unit/test_plane_allocator.cpp` | `drmkit-planes` | ported |  |
 | `tests/unit/test_playlist.cpp` | — (covers `examples/`, outside the ported `src/` surface) | n/a |  |
 | `tests/unit/test_property_store.cpp` | `drmkit-core` `src/tests.rs` | ported |  |
 | `tests/unit/test_scanout_target.cpp` | _drmkit-present_ (phase 6+) | pending |  |
@@ -130,7 +130,7 @@ and runs in the vkms lane (plan §6, §13).
 
 ## Summary
 
-- `ported`: 10
+- `ported`: 13
 - `partial`: 1
-- `pending`: 84
+- `pending`: 81
 - `n/a`: 2

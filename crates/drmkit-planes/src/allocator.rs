@@ -50,8 +50,13 @@ pub struct LayerRef<'a> {
 /// The distinction matters: a scene suspends on lost DRM master and on nothing
 /// else (invariant 2), so flattening every rejection into one variant would
 /// break that contract.
+///
+/// Deliberately **not** `#[non_exhaustive]`. A caller must decide what each
+/// failure means — retry a smaller assignment, or stop the scene — and an open
+/// enum forces a catch-all arm, which is exactly how a new failure kind would
+/// silently inherit the wrong handling. Adding a variant should break every
+/// caller so each one chooses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum TestFailure {
     /// The kernel rejected the configuration. The ordinary case: try a smaller
     /// assignment.

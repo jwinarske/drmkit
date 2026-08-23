@@ -21,6 +21,7 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 rustix = { workspace = true, features = ["std", "event"] }
+drmkit-fmt = { workspace = true }
 
 [lints]
 workspace = true

@@ -18,10 +18,14 @@ Tests suffixed `_vkms` need the VKMS virtual driver (or any modeset card via
 runners, drmkit runs them under virtme-ng on every PR — they are
 merge-blocking from Phase 0 onward (plan §9, §10).
 
-> **Status:** invariants 3, 4 and 6 are pinned. Invariants 1, 2 and 5 have
-> their mechanism pinned host-side and await the commit path for their
-> end-to-end vkms pins. `cargo xtask parity` tracks the test files those pins
-> live in.
+> **Status.** Invariants 3 and 6 are pinned end to end. Invariants 1, 2, 4 and
+> 5 have their mechanism pinned by host tests and still want a vkms pin for the
+> parts that need a real page flip or a real kernel rejection — each entry says
+> which is which.
+>
+> `cargo xtask invariants` checks that every test named below actually exists,
+> so this file cannot drift from the tree the way it did before that check was
+> added.
 
 ---
 
@@ -42,11 +46,11 @@ the type system, so the vkms pin carries it.
 - **Defined:** `drmkit-scene`, `LayerBufferSource::release` /
   `release_with_fence`. The commit path that enforces the timing is still to
   come in phase 3.
-- **Ownership half pinned by:** the `compile_fail` doctest on `AcquiredBuffer`.
+- **Ownership half pinned by:** a compile-fail doctest on `AcquiredBuffer`.
   Releasing a buffer and then reading it does not compile, so the
   use-after-release this invariant exists to prevent cannot be written. Verified
   by removing the move from the snippet and watching rustdoc report "compiled
-  successfully, but it's marked `compile_fail`".
+  successfully, but it's marked compile_fail".
 - **Rotation pinned by:** `release_is_deferred_two_commits_deep` and
   `the_ring_holds_exactly_two_generations`, against `ReleaseQueue` directly —
   no device, no source, no kernel. Verified by breaking the ring to release one
@@ -62,9 +66,20 @@ release on) and returns the error. A non-`EACCES` failure does **not** put the
 scene into suspended mode. Self-healing producer rings rely on this to reuse
 their buffers after a rejected commit; the dropped frame heals on the next.
 
-- **Will be defined:** `drmkit-scene`, `finalize_frame` failure branch
-  (phase 3).
-- **Will be pinned by:** `commit_failure_releases_acquisitions_vkms`.
+- **Defined:** `drmkit-scene`, `ReleaseQueue::commit_failed` and
+  `FrameLifecycle::finalize`.
+- **Immediate-release pinned by:**
+  `a_failed_commit_releases_its_own_acquisitions_at_once` and
+  `a_failed_commit_leaves_the_in_flight_generations_alone`. The second matters
+  as much as the first: a rejection displaced nothing, so the buffers already on
+  screen must stay held and the rotation must not skip a generation.
+- **Suspend-on-`EACCES`-only pinned by:**
+  `an_ordinary_rejection_releases_but_does_not_suspend` and
+  `lost_master_suspends_the_scene`. `FrameLifecycle::finalize` takes the
+  kernel's answer as a parameter, so both are host tests. Verified by making
+  every failure suspend, which fails the first.
+- **End-to-end will be pinned by:** `commit_failure_releases_acquisitions_vkms`,
+  which needs a kernel that actually refuses a commit.
 
 ## 3. `PageFlip::dispatch` never returns `errc::interrupted`
 
@@ -120,10 +135,23 @@ with an **exhaustive `match` over the property enum**, so adding a variant
 without classifying it fails to compile rather than silently defaulting to
 "content" — the one place the port is structurally stronger than the original.
 
-- **Will be defined:** `drmkit-planes`, `is_fb_only_frame` and the
-  classification table (phase 2); the reject-invalidates-cache net in
-  `drmkit-scene::finalize_frame` (phase 3).
-- **Will be pinned by:** `property_hash_isolates_fb_only_content_from_placement`;
+- **Defined:** `drmkit-planes`, `PropTag::class` and `Allocator::is_fb_only_frame`;
+  the reject-invalidates-cache net in `drmkit-scene`'s `FrameLifecycle::finalize`.
+- **Classification pinned by:** `only_fb_id_and_in_fence_fd_are_content`, which
+  hardcodes the expected set. `property_hash_isolates_content_from_placement`
+  derives its expectations from `PropTag::class`, so it proves the hash *honors*
+  the classification but cannot prove the classification is right — verified by
+  misclassifying `CRTC_W` and watching it stay green while the first failed.
+- **Fast path pinned by:** `fb_only_frame_skips_the_test_commit`,
+  `a_placement_change_defeats_the_fast_path`, and
+  `a_vanished_layer_defeats_the_fast_path`.
+- **Reject-invalidates-cache pinned by:**
+  `a_rejected_fast_path_frame_invalidates_the_cached_allocation` and
+  `an_ordinary_rejection_does_not_invalidate_the_cache`. The second matters as
+  much: a rejection *after* a real test says nothing new about the cache, so
+  invalidating then would discard a good assignment every time the kernel
+  refused for an unrelated reason.
+- **End-to-end will be pinned by:**
   `steady_state_writes_only_fb_id_per_assigned_layer_vkms`;
   `fb_only_fast_path_retests_on_placement_change_vkms`;
   `static_steady_state_vkms`.

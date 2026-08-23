@@ -74,11 +74,126 @@ pub(crate) fn run(reference: Option<&str>) -> Result<(), String> {
         ));
     }
 
+    check_named_tests_exist(&refs::repo_root(), &refs::read(&ours_path)?)?;
+
     println!(
         "invariants: {} contracts, numbering and titles match upstream",
         ours.len()
     );
     Ok(())
+}
+
+/// Verify every test named in `INVARIANTS.md` actually exists in the tree.
+///
+/// The file records which test pins each contract. Nothing stopped those names
+/// from going stale — an entry could keep saying "will be pinned by" long after
+/// the pin landed, or name a test that was renamed away, and the numbering
+/// check above would still pass. That happened: invariant 4's entry claimed its
+/// pins were still pending through the whole phase that landed them.
+///
+/// A name is any `snake_case` identifier in backticks. Names ending in `_vkms`
+/// that do not exist yet are allowed — those are the pins still to be written,
+/// and the file says so in prose — but a name **without** that suffix must
+/// resolve to a real `fn`, so a claimed pin cannot be imaginary.
+fn check_named_tests_exist(root: &Path, markdown: &str) -> Result<(), String> {
+    let sources = collect_rust_sources(root)?;
+    let mut missing = Vec::new();
+
+    for name in backticked_test_names(markdown) {
+        if name.ends_with("_vkms") {
+            continue; // not written yet, by design
+        }
+        // A pin is normally a `fn`, but one entry names a whole test module.
+        let as_fn = format!("fn {name}(");
+        let as_mod = format!("mod {name} ");
+        let found = sources
+            .iter()
+            .any(|text| text.contains(&as_fn) || text.contains(&as_mod));
+        if !found {
+            missing.push(name);
+        }
+    }
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+    missing.sort();
+    missing.dedup();
+    Err(format!(
+        "INVARIANTS.md names tests that do not exist:\n{}\n\
+         Either the pin was renamed, or the entry claims a pin that was never \
+         written. A `_vkms` suffix marks one deliberately still to come.",
+        missing
+            .iter()
+            .map(|name| format!("  {name}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    ))
+}
+
+/// Test names claimed by the "pinned by" bullets.
+///
+/// Scoped to those bullets deliberately. An earlier version scanned the whole
+/// file and matched prose identifiers -- `atomic_check`, `pthread_kill`,
+/// `timeout_ms` -- none of which are tests. Only a bullet that *claims a pin*
+/// is making a checkable assertion; everything else is explanation.
+fn backticked_test_names(markdown: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut in_pin_bullet = false;
+
+    for line in markdown.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("- **") {
+            // A new bullet: is this one claiming a pin?
+            in_pin_bullet = trimmed.contains("inned by:**");
+        } else if trimmed.is_empty() || trimmed.starts_with("##") || trimmed.starts_with('>') {
+            in_pin_bullet = false;
+        } else if !line.starts_with("  ") {
+            // Unindented prose ends the bullet.
+            in_pin_bullet = false;
+        }
+
+        if !in_pin_bullet {
+            continue;
+        }
+        for chunk in line.split('`').skip(1).step_by(2) {
+            let looks_like_an_item = chunk.len() > 8
+                && chunk.contains('_')
+                && chunk
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                && !chunk.starts_with('_')
+                && !chunk.ends_with('_');
+            if looks_like_an_item {
+                names.push(chunk.to_owned());
+            }
+        }
+    }
+    names
+}
+
+/// Every `.rs` file under `crates/`, read once.
+fn collect_rust_sources(root: &Path) -> Result<Vec<String>, String> {
+    let mut sources = Vec::new();
+    let mut stack = vec![root.join("crates")];
+
+    while let Some(dir) = stack.pop() {
+        let entries =
+            std::fs::read_dir(&dir).map_err(|e| format!("reading `{}`: {e}", dir.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("reading `{}`: {e}", dir.display()))?;
+            let path = entry.path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|name| name == "target") {
+                    continue;
+                }
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                sources.push(refs::read(&path)?);
+            }
+        }
+    }
+    Ok(sources)
 }
 
 /// Parse `## <number>. <title>` headings, rejecting duplicate numbers.

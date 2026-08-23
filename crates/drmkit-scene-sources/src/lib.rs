@@ -9,8 +9,10 @@
 //! them without knowing which it has.
 
 mod dumb;
+mod external;
 
 pub use dumb::DumbBufferSource;
+pub use external::{ExternalDmaBufSource, ExternalError, ExternalPlane};
 
 #[cfg(test)]
 mod tests;

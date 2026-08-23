@@ -256,3 +256,339 @@ fn empty_damage_means_full_frame_vkms() {
     assert!(acquired.damage.is_empty());
     source.release(acquired);
 }
+
+// --- ExternalDmaBufSource: the acquire-fence dup (plan §4.9, upstream #230) --
+
+use std::os::fd::{AsFd as _, AsRawFd as _, OwnedFd};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use drmkit_scene::SourceFormat;
+
+/// An eventfd standing in for a producer's render-done fence.
+fn fake_fence() -> OwnedFd {
+    rustix::event::eventfd(0, rustix::event::EventfdFlags::CLOEXEC).expect("eventfd")
+}
+
+/// A descriptor for the validation cases, which are rejected before any ioctl.
+fn placeholder_fd() -> OwnedFd {
+    rustix::event::eventfd(0, rustix::event::EventfdFlags::CLOEXEC).expect("eventfd")
+}
+
+/// A **real** dma-buf, made by allocating a dumb buffer and exporting its GEM
+/// handle through PRIME.
+///
+/// The first version of these tests fed an eventfd to `create` and fell back to
+/// a skip when the driver refused it. Every one of the fence cases took that
+/// path -- four silent skips, including the §4.9 pin this chunk exists for. A
+/// test that skips on the only interesting configuration is not a test.
+///
+/// Returns the descriptor and the pitch the kernel chose, which the caller
+/// needs for the plane description. The dumb buffer is dropped: the exported
+/// descriptor keeps the underlying object alive.
+fn real_dma_buf(device: &Device, width: u32, height: u32) -> Option<(OwnedFd, u32)> {
+    use drm::control::Device as _;
+
+    let buffer = drmkit_dumb::Buffer::create(
+        device,
+        &drmkit_dumb::Config {
+            width,
+            height,
+            fourcc: XRGB8888,
+            add_fb: false,
+            ..drmkit_dumb::Config::default()
+        },
+    )
+    .ok()?;
+
+    let handle = drm::control::from_u32(buffer.gem_handle()?)?;
+    let pitch = buffer.stride();
+    let fd = device.buffer_to_prime_fd(handle, 0).ok()?;
+    Some((fd, pitch))
+}
+
+fn plane(fd: &OwnedFd) -> ExternalPlane<'_> {
+    ExternalPlane {
+        fd: fd.as_fd(),
+        offset: 0,
+        pitch: 256,
+    }
+}
+
+fn external_format() -> SourceFormat {
+    SourceFormat {
+        fourcc: XRGB8888,
+        modifier: 0,
+        width: 64,
+        height: 64,
+    }
+}
+
+// --- validation, no card needed ---------------------------------------------
+
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn external_create_rejects_unusable_shapes_vkms() {
+    let _guard = card_guard();
+    let device = open_card();
+    let fd = placeholder_fd();
+
+    let cases: [(SourceFormat, &str); 3] = [
+        (
+            SourceFormat {
+                width: 0,
+                ..external_format()
+            },
+            "zero width",
+        ),
+        (
+            SourceFormat {
+                height: 0,
+                ..external_format()
+            },
+            "zero height",
+        ),
+        (
+            SourceFormat {
+                fourcc: 0,
+                ..external_format()
+            },
+            "zero format",
+        ),
+    ];
+
+    for (format, what) in cases {
+        assert!(
+            matches!(
+                ExternalDmaBufSource::create(&device, format, &[plane(&fd)], None),
+                Err(ExternalError::Invalid { .. })
+            ),
+            "{what} must be rejected"
+        );
+    }
+
+    // No planes, and a plane with no pitch.
+    assert!(matches!(
+        ExternalDmaBufSource::create(&device, external_format(), &[], None),
+        Err(ExternalError::Invalid { .. })
+    ));
+    let bad_pitch = ExternalPlane {
+        fd: fd.as_fd(),
+        offset: 0,
+        pitch: 0,
+    };
+    assert!(matches!(
+        ExternalDmaBufSource::create(&device, external_format(), &[bad_pitch], None),
+        Err(ExternalError::Invalid { .. })
+    ));
+}
+
+/// A failed create must **not** fire the release callback: the caller still
+/// owns the upstream buffer and will re-queue or drop it themselves. Firing
+/// would re-queue a buffer the caller has not finished with.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_failed_create_does_not_fire_the_release_callback_vkms() {
+    let _guard = card_guard();
+    let device = open_card();
+    let fd = placeholder_fd();
+    let fired = Arc::new(AtomicUsize::new(0));
+
+    let counter = Arc::clone(&fired);
+    let result = ExternalDmaBufSource::create(
+        &device,
+        SourceFormat {
+            width: 0,
+            ..external_format()
+        },
+        &[plane(&fd)],
+        Some(Box::new(move || {
+            counter.fetch_add(1, Ordering::Relaxed);
+        })),
+    );
+
+    assert!(result.is_err());
+    assert_eq!(
+        fired.load(Ordering::Relaxed),
+        0,
+        "the caller still owns the upstream buffer after a failed create"
+    );
+}
+
+// --- the fence dup ----------------------------------------------------------
+
+/// **Plan §4.9 / upstream PR #230.** Two consecutive acquires must yield
+/// **independently closeable** descriptors.
+///
+/// The scene acquires each source twice per frame — a TEST commit, then the
+/// real one. An owned fence handed over on the first acquire would be gone by
+/// the second, so the real commit would go out unsynced and the display engine
+/// could sample the buffer before the producer's writes land.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn two_acquires_yield_independently_closeable_fences_vkms() {
+    let _guard = card_guard();
+    let device = open_card();
+    let (dmabuf, pitch) = real_dma_buf(&device, 64, 64).expect("export a real dma-buf");
+    let planes = [ExternalPlane {
+        fd: dmabuf.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+    let mut source = ExternalDmaBufSource::create(&device, external_format(), &planes, None)
+        .expect("wrap a real dma-buf");
+
+    source.set_acquire_fence(
+        drmkit_sync::SyncFence::import(fake_fence().as_fd()).expect("import fence"),
+    );
+
+    let first = source.acquire().expect("first acquire");
+    let second = source.acquire().expect("second acquire");
+
+    let first_fd = first
+        .acquire_fence
+        .as_ref()
+        .and_then(drmkit_sync::SyncFence::as_fd);
+    let second_fd = second
+        .acquire_fence
+        .as_ref()
+        .and_then(drmkit_sync::SyncFence::as_fd);
+
+    assert!(
+        first_fd.is_some(),
+        "the TEST commit's acquire must be fenced"
+    );
+    assert!(
+        second_fd.is_some(),
+        "and so must the real commit's -- an owned fence would have been \
+         consumed by the first, leaving the real commit unsynced"
+    );
+    assert_ne!(
+        first_fd.map(|fd| fd.as_raw_fd()),
+        second_fd.map(|fd| fd.as_raw_fd()),
+        "each acquire must get its own descriptor, not an alias"
+    );
+
+    // Dropping one must not disturb the other: each rides its own buffer's
+    // lifecycle and closes on release.
+    drop(first);
+    assert!(
+        rustix::fs::fstat(second_fd.expect("second fence")).is_ok(),
+        "releasing one buffer must not close another's fence"
+    );
+
+    assert!(
+        source.has_acquire_fence(),
+        "the producer's fence stays live for the next frame; only \
+         set_acquire_fence replaces it"
+    );
+}
+
+/// With no producer fence set, acquires are simply unfenced — the common case
+/// for a source whose buffer is ready synchronously.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn acquires_are_unfenced_when_no_producer_fence_is_set_vkms() {
+    let _guard = card_guard();
+    let device = open_card();
+    let (dmabuf, pitch) = real_dma_buf(&device, 64, 64).expect("export a real dma-buf");
+    let planes = [ExternalPlane {
+        fd: dmabuf.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+    let mut source = ExternalDmaBufSource::create(&device, external_format(), &planes, None)
+        .expect("wrap a real dma-buf");
+
+    assert!(!source.has_acquire_fence());
+    let acquired = source.acquire().expect("acquire");
+    assert!(acquired.acquire_fence.is_none());
+}
+
+/// The release callback fires **exactly once**, whether the source is released
+/// or torn down without ever reaching release. Firing twice would re-queue a
+/// buffer still in use; never firing would stall the producer's pipeline.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn the_release_callback_fires_exactly_once_vkms() {
+    let _guard = card_guard();
+    let device = open_card();
+    let (dmabuf, pitch) = real_dma_buf(&device, 64, 64).expect("export a real dma-buf");
+    let planes = [ExternalPlane {
+        fd: dmabuf.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+    let fired = Arc::new(AtomicUsize::new(0));
+
+    {
+        let counter = Arc::clone(&fired);
+        let mut source = ExternalDmaBufSource::create(
+            &device,
+            external_format(),
+            &planes,
+            Some(Box::new(move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+            })),
+        )
+        .expect("wrap a real dma-buf");
+
+        let acquired = source.acquire().expect("acquire");
+        source.release(acquired);
+        assert_eq!(
+            fired.load(Ordering::Relaxed),
+            1,
+            "the first retire re-queues"
+        );
+
+        let again = source.acquire().expect("acquire");
+        source.release(again);
+        assert_eq!(
+            fired.load(Ordering::Relaxed),
+            1,
+            "a second release must not re-queue a buffer still in use"
+        );
+    }
+
+    assert_eq!(
+        fired.load(Ordering::Relaxed),
+        1,
+        "and the drop must not fire it again"
+    );
+}
+
+/// A source torn down before ever being released must still re-queue upstream,
+/// or the producer waits for a slot that never comes back.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn dropping_without_releasing_still_fires_the_callback_vkms() {
+    let _guard = card_guard();
+    let device = open_card();
+    let (dmabuf, pitch) = real_dma_buf(&device, 64, 64).expect("export a real dma-buf");
+    let planes = [ExternalPlane {
+        fd: dmabuf.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+    let fired = Arc::new(AtomicUsize::new(0));
+
+    {
+        let counter = Arc::clone(&fired);
+        let source = ExternalDmaBufSource::create(
+            &device,
+            external_format(),
+            &planes,
+            Some(Box::new(move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+            })),
+        )
+        .expect("wrap a real dma-buf");
+        drop(source);
+    }
+
+    assert_eq!(
+        fired.load(Ordering::Relaxed),
+        1,
+        "teardown must re-queue the upstream buffer"
+    );
+}

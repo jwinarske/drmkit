@@ -160,10 +160,12 @@ dependencies = [
 name = "drmkit-scene"
 version = "0.0.0"
 dependencies = [
+ "drm",
  "drmkit-core",
  "drmkit-dumb",
  "drmkit-fmt",
  "drmkit-planes",
+ "drmkit-scene-sources",
  "drmkit-sync",
  "rustix",
  "thiserror",

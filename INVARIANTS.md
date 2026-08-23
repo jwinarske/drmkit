@@ -18,10 +18,12 @@ Tests suffixed `_vkms` need the VKMS virtual driver (or any modeset card via
 runners, drmkit runs them under virtme-ng on every PR — they are
 merge-blocking from Phase 0 onward (plan §9, §10).
 
-> **Status.** Invariants 3 and 6 are pinned end to end. Invariants 1, 2, 4 and
-> 5 have their mechanism pinned by host tests and still want a vkms pin for the
-> parts that need a real page flip or a real kernel rejection — each entry says
-> which is which.
+> **Status.** Invariants 1, 2, 3, 5 and 6 are pinned end to end. Invariant 4's
+> mechanism is pinned host-side; its steady-state property-write census still
+> wants a vkms pin, which lands with the property-minimization work.
+>
+> Each entry says which of its pins are host tests and which run against a
+> device.
 >
 > `cargo xtask invariants` checks that every test named below actually exists,
 > so this file cannot drift from the tree the way it did before that check was
@@ -55,8 +57,9 @@ the type system, so the vkms pin carries it.
   `the_ring_holds_exactly_two_generations`, against `ReleaseQueue` directly —
   no device, no source, no kernel. Verified by breaking the ring to release one
   deep and watching seven cases fail.
-- **End-to-end timing will be pinned by:** `defers_release_two_commits_deep_vkms`,
-  which needs a real page flip and lands with the commit path.
+- **End-to-end pinned by:** `defers_release_two_commits_deep_vkms`, which
+  drives the same ring through a real device: the allocator's `TEST_ONLY`
+  commits go to the kernel, and only the finalize answer is supplied.
 
 ## 2. A failed commit releases that frame's acquisitions before returning
 
@@ -78,8 +81,8 @@ their buffers after a rejected commit; the dropped frame heals on the next.
   `lost_master_suspends_the_scene`. `FrameLifecycle::finalize` takes the
   kernel's answer as a parameter, so both are host tests. Verified by making
   every failure suspend, which fails the first.
-- **End-to-end will be pinned by:** `commit_failure_releases_acquisitions_vkms`,
-  which needs a kernel that actually refuses a commit.
+- **End-to-end pinned by:** `commit_failure_releases_acquisitions_vkms` and
+  `lost_master_suspends_the_scene_vkms`.
 
 ## 3. `PageFlip::dispatch` never returns `errc::interrupted`
 
@@ -178,9 +181,11 @@ tears.
   add.
 - **Pinned so far by:** `draining_returns_every_held_buffer_oldest_first` and
   `pending_flip_tracks_whether_teardown_is_safe`.
-- **The hazard itself will be pinned by:**
-  `drain_lands_pending_flip_before_teardown_vkms`, which needs a real armed
-  flip.
+- **End-to-end pinned by:** `drain_lands_pending_flip_before_teardown_vkms`
+  and `an_armed_flip_keeps_teardown_unsafe_until_landed_vkms`. The second is
+  the hazard itself: draining returns buffers but does **not** wait on the
+  kernel, so the flip stays outstanding and teardown stays unsafe until the
+  event is dispatched.
 
 ## 6. `dumb::Buffer::map` is a zero-cost view of a lifetime mmap
 

@@ -27,6 +27,7 @@
 //! is enforced by the type. The *timing* half still needs the vkms pins, which
 //! land with the commit path.
 
+mod commit;
 mod display;
 mod frame;
 mod lower;
@@ -35,6 +36,7 @@ mod report;
 mod scene;
 mod source;
 
+pub use commit::{DeviceCommitter, PlanePropertyMap, classify, emit_disable, emit_layer};
 pub use display::{DisplayParams, Rect, to_16_16};
 pub use frame::{AcquireTally, CommitKind, FrameLifecycle, FrameOutcome, KernelResult};
 pub use lower::{LoweringInput, lower_layer};

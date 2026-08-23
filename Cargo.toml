@@ -9,6 +9,7 @@ resolver = "3"
 members = [
     "crates/drmkit",
     "crates/drmkit-core",
+    "crates/drmkit-dumb",
     "crates/drmkit-fmt",
     "crates/drmkit-log",
     "crates/drmkit-modeset",
@@ -31,6 +32,7 @@ categories = ["graphics", "os::linux-apis", "no-std"]
 
 [workspace.dependencies]
 drmkit-core = { version = "0.0.0", path = "crates/drmkit-core" }
+drmkit-dumb = { version = "0.0.0", path = "crates/drmkit-dumb" }
 drmkit-fmt = { version = "0.0.0", path = "crates/drmkit-fmt" }
 drmkit-log = { version = "0.0.0", path = "crates/drmkit-log" }
 drmkit-modeset = { version = "0.0.0", path = "crates/drmkit-modeset" }

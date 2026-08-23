@@ -1,0 +1,23 @@
+[package]
+name = "drmkit-dumb"
+description = "DRM dumb buffers for drmkit: GPU-free, CPU-mappable scanout surfaces with lifetime mmaps."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["graphics", "os::linux-apis"]
+keywords = ["drm", "kms", "dumb-buffer", "framebuffer", "mmap"]
+
+[dependencies]
+drm = { workspace = true }
+drm-ffi = { workspace = true }
+rustix = { workspace = true, features = ["std", "mm"] }
+thiserror = { workspace = true }
+drmkit-core = { workspace = true }
+drmkit-fmt = { workspace = true }
+
+[lints]
+workspace = true

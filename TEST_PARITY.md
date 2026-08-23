@@ -32,7 +32,7 @@ and runs in the vkms lane (plan §6, §13).
 |---|---|---|---|
 | `tests/unit/test_acquire_fence.cpp` | _drmkit-scene-sources_ (phase 3) | pending |  |
 | `tests/unit/test_atomic_builder.cpp` | `drmkit-core` `src/tests.rs` | ported |  |
-| `tests/unit/test_buffer_mapping.cpp` | _drmkit-dumb_ (phase 1) | pending | 6 |
+| `tests/unit/test_buffer_mapping.cpp` | `drmkit-dumb` `src/tests.rs` | partial | 6 |
 | `tests/unit/test_buffer_ring.cpp` | _drmkit-present_ (phase 6+) | pending |  |
 | `tests/unit/test_canvas_format.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/unit/test_capture_jpg.cpp` | _drmkit-capture_ (phase 6+) | pending |  |
@@ -57,7 +57,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_display.cpp` | _drmkit-display_ (phase 4) | pending |  |
 | `tests/unit/test_dma_buf_source_cache.cpp` | _drmkit-scene-sources_ (phase 3) | pending |  |
 | `tests/unit/test_driver_profile.cpp` | _drmkit-display_ (phase 4) | pending |  |
-| `tests/unit/test_dumb_buffer.cpp` | _drmkit-dumb_ (phase 1) | pending | 6 |
+| `tests/unit/test_dumb_buffer.cpp` | `drmkit-dumb` `src/tests.rs` | ported | 6 |
 | `tests/unit/test_dumb_scanout_sink.cpp` | _drmkit-present_ (phase 6+) | pending |  |
 | `tests/unit/test_egl_stream_builder.cpp` | _drmkit-scene-streams_ (phase 6+) | pending |  |
 | `tests/unit/test_egl_stream_source.cpp` | _drmkit-scene-streams_ (phase 6+) | pending |  |
@@ -130,6 +130,7 @@ and runs in the vkms lane (plan §6, §13).
 
 ## Summary
 
-- `ported`: 9
-- `pending`: 86
+- `ported`: 10
+- `partial`: 1
+- `pending`: 84
 - `n/a`: 2

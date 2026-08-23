@@ -85,6 +85,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "drmkit-dumb"
+version = "0.0.0"
+dependencies = [
+ "drm",
+ "drm-ffi",
+ "drmkit-core",
+ "drmkit-fmt",
+ "rustix",
+ "thiserror",
+]
+
+[[package]]
 name = "drmkit-fmt"
 version = "0.0.0"
 

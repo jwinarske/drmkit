@@ -18,9 +18,9 @@ Tests suffixed `_vkms` need the VKMS virtual driver (or any modeset card via
 runners, drmkit runs them under virtme-ng on every PR — they are
 merge-blocking from Phase 0 onward (plan §9, §10).
 
-> **Status:** invariant 3 is pinned. The rest name the crate and phase that
-> will land their pins; `cargo xtask parity` tracks the test files those pins
-> live in.
+> **Status:** invariants 3 and 6 are pinned. The rest name the crate and phase
+> that will land their pins; `cargo xtask parity` tracks the test files those
+> pins live in.
 
 ---
 
@@ -149,6 +149,24 @@ In Rust the `Buffer` owns the mapping and `map()` returns a borrow-guarded
 documented. The lifetime-mmap decision is load-bearing for `DumbScanoutSink`
 pacing — keep it.
 
-- **Will be defined:** `drmkit-dumb`, `Buffer::map` / `Buffer::data` (phase 1).
-- **Will be pinned by:** `default_is_empty_and_drop_is_noop`;
-  `dumb_buffer_create_and_ownership`.
+- **Defined:** `drmkit-dumb`, `Buffer::map` and the `Mapping` view.
+- **Pinned by:** `mapping_has_no_destructor`, plus the card-backed
+  `create_allocates_maps_and_registers_a_framebuffer_vkms`.
+
+  The no-op-destructor half is machine-checked rather than described:
+  `mapping_has_no_destructor` asserts `!needs_drop::<Mapping>()`, so adding a
+  `Drop` impl — or a field carrying one — fails immediately instead of quietly
+  making `map()` cost something per frame. Verified by adding one.
+
+  Four of the five upstream `BufferMapping` cases test the C++ guard's unmap
+  bookkeeping: destructor calls the unmapper once, moves transfer that
+  responsibility, move-assignment destroys the target's, self-move is
+  harmless. None survive the port, because the guard carries no unmapper —
+  there is nothing to unmap for a dumb buffer. `TEST_PARITY.md` records
+  `test_buffer_mapping.cpp` as `partial` for that reason; the contract those
+  cases protected is what `mapping_has_no_destructor` asserts directly.
+
+  Note that the `drm` crate's own `map_dumb_buffer` does the opposite —
+  `mmap` per call, `munmap` on drop — so `drmkit-dumb` establishes the mapping
+  once at creation and holds it, going through `drm-ffi` for the allocation
+  ioctls.

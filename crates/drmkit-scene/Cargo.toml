@@ -19,5 +19,8 @@ drmkit-sync = { workspace = true }
 rustix = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
 
+[dev-dependencies]
+rustix = { workspace = true, features = ["std", "event"] }
+
 [lints]
 workspace = true

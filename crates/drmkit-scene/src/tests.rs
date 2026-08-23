@@ -334,3 +334,281 @@ fn placements_describe_each_layer_outcome() {
         "and no rotation mask to report"
     );
 }
+
+// --- the deferred-release ring: invariants 1, 2 and 5 ------------------------
+
+fn acquisition(layer: u64, fb_id: u32) -> Acquisition {
+    Acquisition::new(
+        LayerId(layer),
+        AcquiredBuffer {
+            fb_id,
+            ..AcquiredBuffer::default()
+        },
+    )
+}
+
+/// The framebuffer ids returned, in order.
+fn released_fbs(released: &Released) -> Vec<u32> {
+    released
+        .acquisitions
+        .iter()
+        .map(|a| a.buffer.fb_id)
+        .collect()
+}
+
+/// **Invariant 1.** A buffer is released only after the flip that stops
+/// scanning it out completes — two commits deep, never at ioctl return.
+///
+/// Frame 1 and frame 2 must return nothing: frame 1's buffer is still on
+/// screen when frame 2 commits. Only frame 3 retires it.
+#[test]
+fn release_is_deferred_two_commits_deep() {
+    let mut queue = ReleaseQueue::new();
+
+    let first = queue.commit_succeeded(vec![acquisition(1, 100)], None, |_| false);
+    assert!(
+        first.is_empty(),
+        "frame 1's buffer is being scanned out; releasing it here is the tear"
+    );
+
+    let second = queue.commit_succeeded(vec![acquisition(1, 200)], None, |_| false);
+    assert!(
+        second.is_empty(),
+        "frame 1's buffer only leaves the screen when frame 2's flip completes, \
+         which the *next* commit observes"
+    );
+
+    let third = queue.commit_succeeded(vec![acquisition(1, 300)], None, |_| false);
+    assert_eq!(
+        released_fbs(&third),
+        vec![100],
+        "two commits deep: frame 1 retires now"
+    );
+    assert_eq!(third.reason, ReleaseReason::Retired);
+
+    let fourth = queue.commit_succeeded(vec![acquisition(1, 400)], None, |_| false);
+    assert_eq!(released_fbs(&fourth), vec![200], "then frame 2, in order");
+}
+
+/// The ring holds exactly two generations, however long it runs.
+#[test]
+fn the_ring_holds_exactly_two_generations() {
+    let mut queue = ReleaseQueue::new();
+    assert!(queue.is_empty());
+
+    for frame in 0..20u32 {
+        queue.commit_succeeded(vec![acquisition(1, frame)], None, |_| false);
+        assert!(
+            queue.in_flight() <= 2,
+            "frame {frame}: {} buffers in flight, expected at most 2",
+            queue.in_flight()
+        );
+    }
+    assert_eq!(queue.in_flight(), 2, "steady state holds N-1 and N-2");
+}
+
+/// **Invariant 2.** A failed commit releases that frame's acquisitions
+/// immediately — no flip is in flight to gate them on, and a self-healing
+/// producer ring depends on reusing them at once.
+#[test]
+fn a_failed_commit_releases_its_own_acquisitions_at_once() {
+    let mut queue = ReleaseQueue::new();
+    queue.commit_succeeded(vec![acquisition(1, 100)], None, |_| false);
+
+    let failed = queue.commit_failed(vec![acquisition(1, 200)]);
+
+    assert_eq!(
+        released_fbs(&failed),
+        vec![200],
+        "this frame's buffer comes straight back"
+    );
+    assert_eq!(failed.reason, ReleaseReason::CommitFailed);
+}
+
+/// A failed commit must **not** disturb what is on screen. The previous
+/// commit's buffers are still being scanned out — a rejection displaced
+/// nothing.
+#[test]
+fn a_failed_commit_leaves_the_in_flight_generations_alone() {
+    let mut queue = ReleaseQueue::new();
+    queue.commit_succeeded(vec![acquisition(1, 100)], None, |_| false);
+    queue.commit_succeeded(vec![acquisition(1, 200)], None, |_| false);
+    let before = queue.in_flight();
+
+    queue.commit_failed(vec![acquisition(1, 300)]);
+    assert_eq!(queue.in_flight(), before, "nothing on screen changed");
+
+    // And the ring is unbroken: the next success still retires frame 1.
+    let next = queue.commit_succeeded(vec![acquisition(1, 400)], None, |_| false);
+    assert_eq!(
+        released_fbs(&next),
+        vec![100],
+        "a rejected commit must not skip a generation"
+    );
+}
+
+/// A test commit applies nothing to hardware, so its buffers come back at once
+/// too — reported distinctly, because the caller counts them differently.
+#[test]
+fn a_test_commit_releases_immediately_and_is_distinguishable() {
+    let mut queue = ReleaseQueue::new();
+    let released = queue.test_committed(vec![acquisition(1, 100)]);
+
+    assert_eq!(released_fbs(&released), vec![100]);
+    assert_eq!(released.reason, ReleaseReason::TestOnly);
+    assert!(queue.is_empty(), "a test commit holds nothing in flight");
+}
+
+/// **Invariant 5's counterpart.** Draining returns everything held, oldest
+/// first, for teardown and session pause — paths with no flip in flight, where
+/// holding buffers back would simply leak them.
+#[test]
+fn draining_returns_every_held_buffer_oldest_first() {
+    let mut queue = ReleaseQueue::new();
+    queue.commit_succeeded(vec![acquisition(1, 100)], None, |_| false);
+    queue.commit_succeeded(vec![acquisition(1, 200)], None, |_| false);
+    assert_eq!(queue.in_flight(), 2);
+
+    let drained = queue.drain();
+
+    assert_eq!(
+        released_fbs(&drained),
+        vec![100, 200],
+        "oldest first, matching the order a running scene would have used"
+    );
+    assert_eq!(drained.reason, ReleaseReason::Drained);
+    assert!(queue.is_empty(), "draining leaves nothing behind");
+}
+
+#[test]
+fn draining_an_empty_queue_is_harmless() {
+    let mut queue = ReleaseQueue::new();
+    let drained = queue.drain();
+    assert!(drained.is_empty());
+    assert_eq!(drained.len(), 0);
+}
+
+/// Multiple layers rotate together: a frame's buffers retire as a set.
+#[test]
+fn every_layers_buffer_retires_together() {
+    let mut queue = ReleaseQueue::new();
+
+    queue.commit_succeeded(vec![acquisition(1, 100), acquisition(2, 101)], None, |_| {
+        false
+    });
+    queue.commit_succeeded(vec![acquisition(1, 200), acquisition(2, 201)], None, |_| {
+        false
+    });
+    let third =
+        queue.commit_succeeded(vec![acquisition(1, 300), acquisition(2, 301)], None, |_| {
+            false
+        });
+
+    let mut fbs = released_fbs(&third);
+    fbs.sort_unstable();
+    assert_eq!(
+        fbs,
+        vec![100, 101],
+        "both layers' frame-1 buffers retire together"
+    );
+}
+
+/// A layer that skipped a frame — its source returned `WouldBlock` — simply
+/// contributes nothing to that generation, and the ring stays consistent.
+#[test]
+fn a_skipped_layer_does_not_break_the_rotation() {
+    let mut queue = ReleaseQueue::new();
+
+    queue.commit_succeeded(vec![acquisition(1, 100), acquisition(2, 101)], None, |_| {
+        false
+    });
+    // Layer 2 had no frame this vblank.
+    queue.commit_succeeded(vec![acquisition(1, 200)], None, |_| false);
+    let third = queue.commit_succeeded(vec![acquisition(1, 300)], None, |_| false);
+
+    let mut fbs = released_fbs(&third);
+    fbs.sort_unstable();
+    assert_eq!(fbs, vec![100, 101]);
+
+    let fourth = queue.commit_succeeded(vec![acquisition(1, 400)], None, |_| false);
+    assert_eq!(
+        released_fbs(&fourth),
+        vec![200],
+        "only layer 1 contributed to frame 2"
+    );
+}
+
+/// The release fence is stamped only onto sources that asked for it, so a scene
+/// with no interested source pays nothing.
+#[test]
+fn the_release_fence_is_stamped_only_where_wanted() {
+    use std::os::fd::AsFd as _;
+
+    let mut queue = ReleaseQueue::new();
+    queue.commit_succeeded(vec![acquisition(1, 100), acquisition(2, 101)], None, |_| {
+        false
+    });
+
+    // An eventfd stands in for the commit's OUT_FENCE.
+    let raw = rustix::event::eventfd(0, rustix::event::EventfdFlags::CLOEXEC).expect("eventfd");
+    let fence = drmkit_sync::SyncFence::import(raw.as_fd()).expect("import");
+
+    // Only layer 1 wants it.
+    queue.commit_succeeded(vec![acquisition(1, 200)], Some(&fence), |layer| {
+        layer == LayerId(1)
+    });
+
+    // Frame 1's buffers retire next commit; check what came back stamped.
+    let retired = queue.commit_succeeded(vec![acquisition(1, 300)], None, |_| false);
+    let stamped: Vec<(u32, bool)> = retired
+        .acquisitions
+        .iter()
+        .map(|a| (a.buffer.fb_id, a.release_fence.is_some()))
+        .collect();
+
+    assert_eq!(stamped.len(), 2);
+    assert!(
+        stamped.contains(&(100, true)),
+        "layer 1 opted in and must get the fence: {stamped:?}"
+    );
+    assert!(
+        stamped.contains(&(101, false)),
+        "layer 2 did not opt in and must not: {stamped:?}"
+    );
+}
+
+/// No fence offered means nothing stamped, whatever the sources want.
+#[test]
+fn no_out_fence_means_nothing_is_stamped() {
+    let mut queue = ReleaseQueue::new();
+    queue.commit_succeeded(vec![acquisition(1, 100)], None, |_| true);
+    queue.commit_succeeded(vec![acquisition(1, 200)], None, |_| true);
+
+    let retired = queue.commit_succeeded(vec![acquisition(1, 300)], None, |_| true);
+    assert!(
+        retired
+            .acquisitions
+            .iter()
+            .all(|a| a.release_fence.is_none()),
+        "a CRTC without OUT_FENCE_PTR stamps nothing"
+    );
+}
+
+// --- invariant 5: the armed-flip tripwire ------------------------------------
+
+/// Dropping a scene with a flip still armed is the RmFB-on-in-flight-FB hazard.
+/// Tracking it is what lets the scene's drop say so out loud.
+#[test]
+fn pending_flip_tracks_whether_teardown_is_safe() {
+    let mut pending = ScenePendingFlip::new();
+    assert!(!pending.is_armed(), "nothing committed yet");
+
+    pending.arm();
+    assert!(
+        pending.is_armed(),
+        "a commit that armed PAGE_FLIP_EVENT still references its framebuffer"
+    );
+
+    pending.landed();
+    assert!(!pending.is_armed(), "once dispatched, teardown is safe");
+}

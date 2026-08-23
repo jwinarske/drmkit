@@ -18,9 +18,10 @@ Tests suffixed `_vkms` need the VKMS virtual driver (or any modeset card via
 runners, drmkit runs them under virtme-ng on every PR — they are
 merge-blocking from Phase 0 onward (plan §9, §10).
 
-> **Status:** invariants 3 and 6 are pinned. The rest name the crate and phase
-> that will land their pins; `cargo xtask parity` tracks the test files those
-> pins live in.
+> **Status:** invariants 3, 4 and 6 are pinned. Invariants 1, 2 and 5 have
+> their mechanism pinned host-side and await the commit path for their
+> end-to-end vkms pins. `cargo xtask parity` tracks the test files those pins
+> live in.
 
 ---
 
@@ -46,7 +47,11 @@ the type system, so the vkms pin carries it.
   use-after-release this invariant exists to prevent cannot be written. Verified
   by removing the move from the snippet and watching rustdoc report "compiled
   successfully, but it's marked `compile_fail`".
-- **Timing half will be pinned by:** `defers_release_two_commits_deep_vkms`,
+- **Rotation pinned by:** `release_is_deferred_two_commits_deep` and
+  `the_ring_holds_exactly_two_generations`, against `ReleaseQueue` directly —
+  no device, no source, no kernel. Verified by breaking the ring to release one
+  deep and watching seven cases fail.
+- **End-to-end timing will be pinned by:** `defers_release_two_commits_deep_vkms`,
   which needs a real page flip and lands with the commit path.
 
 ## 2. A failed commit releases that frame's acquisitions before returning
@@ -138,9 +143,16 @@ into `Drop`. The port adds observability the C++ side cannot cheaply provide: a
 outstanding, so the hazard is loud in development instead of silent until it
 tears.
 
-- **Will be defined:** `drmkit-scene`, `LayerScene::drain` and the `Drop` impl
-  (phase 3).
-- **Will be pinned by:** `drain_lands_pending_flip_before_teardown_vkms`.
+- **Partly defined:** `drmkit-scene`, `ReleaseQueue::drain` and
+  `ScenePendingFlip`. `drain` returns every held buffer without waiting on the
+  kernel; `ScenePendingFlip` is the tripwire the scene's `Drop` will consult to
+  warn when a flip is still armed — the observability the C++ cannot cheaply
+  add.
+- **Pinned so far by:** `draining_returns_every_held_buffer_oldest_first` and
+  `pending_flip_tracks_whether_teardown_is_safe`.
+- **The hazard itself will be pinned by:**
+  `drain_lands_pending_flip_before_teardown_vkms`, which needs a real armed
+  flip.
 
 ## 6. `dumb::Buffer::map` is a zero-cost view of a lifetime mmap
 

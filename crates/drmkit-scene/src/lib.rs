@@ -27,9 +27,11 @@
 //! is enforced by the type. The *timing* half still needs the vkms pins, which
 //! land with the commit path.
 
+mod release;
 mod report;
 mod source;
 
+pub use release::{Acquisition, ReleaseQueue, ReleaseReason, Released, ScenePendingFlip};
 pub use report::{CommitReport, LayerPlacement, Placement};
 pub use source::{
     AcquiredBuffer, BindingModel, DamageRect, DmaBufDesc, LayerBufferSource, SourceError,

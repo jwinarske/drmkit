@@ -1,0 +1,20 @@
+[package]
+name = "drmkit-parity-runner"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+drm = { workspace = true }
+drmkit-core = { workspace = true }
+drmkit-fmt = { workspace = true }
+drmkit-modeset = { workspace = true }
+drmkit-planes = { workspace = true }
+drmkit-scene = { workspace = true }
+drmkit-scene-sources = { workspace = true }
+drmkit-time = { workspace = true }

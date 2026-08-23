@@ -47,7 +47,7 @@ mod error;
 mod property;
 
 pub use atomic::{AtomicRequest, PropertyWrite};
-pub use device::Device;
+pub use device::{Device, PropertyBlob};
 pub use error::{CoreError, Result};
 pub use property::{ObjectType, PropertyInfo, PropertyStore};
 
@@ -55,6 +55,7 @@ pub use property::{ObjectType, PropertyInfo, PropertyStore};
 /// that appear in this crate's signatures.
 pub use drm::ClientCapability;
 pub use drm::control::AtomicCommitFlags;
+pub use drm::control::Mode;
 
 #[cfg(test)]
 mod tests;

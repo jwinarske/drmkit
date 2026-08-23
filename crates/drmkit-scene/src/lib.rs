@@ -36,7 +36,9 @@ mod report;
 mod scene;
 mod source;
 
-pub use commit::{DeviceCommitter, PlanePropertyMap, classify, emit_disable, emit_layer};
+pub use commit::{
+    DeviceCommitter, Modeset, PlanePropertyMap, classify, emit_disable, emit_frame, emit_layer,
+};
 pub use display::{DisplayParams, Rect, to_16_16};
 pub use frame::{AcquireTally, CommitKind, FrameLifecycle, FrameOutcome, KernelResult};
 pub use lower::{LoweringInput, lower_layer};

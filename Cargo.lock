@@ -148,6 +148,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "drmkit-parity-runner"
+version = "0.0.0"
+dependencies = [
+ "drm",
+ "drmkit-core",
+ "drmkit-fmt",
+ "drmkit-modeset",
+ "drmkit-planes",
+ "drmkit-scene",
+ "drmkit-scene-sources",
+ "drmkit-time",
+]
+
+[[package]]
 name = "drmkit-planes"
 version = "0.0.0"
 dependencies = [

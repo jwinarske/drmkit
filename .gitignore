@@ -17,3 +17,6 @@
 /.idea/
 /.vscode/
 *.swp
+
+# T7 harness build products
+parity/*.so

@@ -1,0 +1,44 @@
+# T7-001 -- warm-start stability (plan v2.0.1 §4.6)
+#
+# A compositor drops a layer from the middle of its stack. The stability
+# bonus in Allocator::score_pair is supposed to leave every surviving layer
+# on the plane it already held, so the frame after the removal should
+# reprogram nothing except the plane being vacated.
+#
+# This is the scenario most likely to diverge silently. The matcher
+# maximizes cardinality first and uses score only to order tie-breaks, so a
+# port that drops the bonus still places every layer and still passes every
+# "did it composite correctly" test -- it just picks different planes each
+# time the layer set changes, and the display flickers. Only a
+# property-write trace shows it.
+#
+# The reference's answer, for the record: ov2 stays on plane[2] rather than
+# compacting down into the hole at plane[1], the vacated plane is explicitly
+# disabled, and no new TEST_ONLY commit is issued at all -- the warm
+# allocation is reused minus the removed layer.
+#
+# Note this does NOT re-split the backing store, which is how the plan words
+# §4.6. On vkms that phrasing cannot hold: its planes expose no zpos
+# property, so stacking order is fixed by plane index, and adding a layer
+# below the overlays forces every one of them to shift up. Removing a layer
+# from the middle tests the same bonus without the constraint dominating the
+# result. See docs/parity-findings.md.
+#
+# Grammar (one command per line, '#' comments, blank lines ignored):
+#   add NAME ZPOS DST_X DST_Y W H   -- W H of 0 0 means the full display
+#   del NAME
+#   frame                           -- build + real commit + land the flip
+
+add bg  0 0 0 0 0
+add ov1 1 64 64 256 256
+add ov2 2 400 200 256 256
+
+# Two steady frames: the first carries the modeset, the second warms the
+# allocation cache.
+frame
+frame
+
+# Drop the middle layer. The two survivors must not move.
+del ov1
+frame
+frame

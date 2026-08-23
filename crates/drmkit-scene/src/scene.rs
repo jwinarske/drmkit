@@ -162,6 +162,7 @@ enum Slot {
 #[derive(Debug)]
 pub struct FrameBuild {
     acquisitions: Vec<Acquisition>,
+    plan: Vec<(u32, drmkit_planes::Layer)>,
     report: CommitReport,
     kind: CommitKind,
     finalized: bool,
@@ -178,6 +179,17 @@ impl FrameBuild {
     #[must_use]
     pub fn held(&self) -> usize {
         self.acquisitions.len()
+    }
+
+    /// Which layer landed on which plane, as lowered property bags.
+    ///
+    /// This is what an apply commit writes. The search that produced it ran
+    /// against `TEST_ONLY` commits, so by the time a caller sees this the
+    /// kernel has already accepted this exact set -- emitting it is the cheap
+    /// part.
+    #[must_use]
+    pub fn plan(&self) -> &[(u32, drmkit_planes::Layer)] {
+        &self.plan
     }
 }
 
@@ -511,8 +523,19 @@ impl LayerScene {
             }
         }
 
+        let plan = plane_layers
+            .iter()
+            .filter_map(|(id, layer)| {
+                allocation
+                    .assignment
+                    .get_plane_of(*id)
+                    .map(|plane_id| (plane_id, layer.clone()))
+            })
+            .collect();
+
         Ok(FrameBuild {
             acquisitions,
+            plan,
             report,
             kind,
             finalized: false,

@@ -56,7 +56,7 @@ fn layer_at(x: i32, y: i32, w: u32, h: u32, zpos: u64) -> Layer {
 struct Committer {
     calls: usize,
     reject_first: usize,
-    /// Reject any assignment larger than this, modelling scarce bandwidth.
+    /// Reject any assignment larger than this, modeling scarce bandwidth.
     max_planes: Option<usize>,
     fail_with: Option<TestFailure>,
     seen: Vec<Vec<u32>>,

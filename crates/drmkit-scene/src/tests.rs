@@ -612,3 +612,250 @@ fn pending_flip_tracks_whether_teardown_is_safe() {
     pending.landed();
     assert!(!pending.is_armed(), "once dispatched, teardown is safe");
 }
+
+// --- lowering ----------------------------------------------------------------
+
+use drmkit_planes::{Layer as PlaneLayer, PropTag};
+
+fn lowering_input() -> LoweringInput {
+    LoweringInput {
+        display: DisplayParams {
+            dst_rect: Rect {
+                x: 10,
+                y: 20,
+                w: 640,
+                h: 480,
+            },
+            ..DisplayParams::default()
+        },
+        format: SourceFormat {
+            fourcc: 0x3234_5258, // XR24
+            modifier: 0,
+            width: 1920,
+            height: 1080,
+        },
+        binding: BindingModel::SceneSubmitsFbId,
+        fb_id: 42,
+        crtc_id: 7,
+        default_zpos: None,
+    }
+}
+
+#[test]
+fn lowering_writes_the_destination_rectangle_in_whole_pixels() {
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&lowering_input(), &mut plane_layer);
+
+    assert_eq!(plane_layer.property(PropTag::CrtcX), Some(10));
+    assert_eq!(plane_layer.property(PropTag::CrtcY), Some(20));
+    assert_eq!(plane_layer.property(PropTag::CrtcW), Some(640));
+    assert_eq!(plane_layer.property(PropTag::CrtcH), Some(480));
+}
+
+/// A zero-sized source rectangle means "the buffer's full extent".
+///
+/// Callers commonly set only `dst_rect` — the scene cannot guess a screen
+/// position but can read the source extent from the format. Without this
+/// resolution `SRC_W`/`SRC_H` go out as 0, which the kernel rejects with
+/// `EINVAL`; the C++ records that as the root cause of direct scanout failing
+/// on every controller it was tried on, sending every frame through
+/// composition.
+#[test]
+fn an_unset_source_rectangle_resolves_to_the_buffer_extent() {
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&lowering_input(), &mut plane_layer);
+
+    assert_eq!(
+        plane_layer.property(PropTag::SrcW),
+        Some(to_16_16(1920)),
+        "an unset source width must become the buffer width, never 0"
+    );
+    assert_eq!(plane_layer.property(PropTag::SrcH), Some(to_16_16(1080)));
+    assert_ne!(plane_layer.property(PropTag::SrcW), Some(0));
+}
+
+#[test]
+fn an_explicit_source_rectangle_is_kept_and_converted_to_fixed_point() {
+    let mut input = lowering_input();
+    input.display.src_rect = Rect {
+        x: 8,
+        y: 16,
+        w: 320,
+        h: 240,
+    };
+
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&input, &mut plane_layer);
+
+    assert_eq!(plane_layer.property(PropTag::SrcX), Some(to_16_16(8)));
+    assert_eq!(plane_layer.property(PropTag::SrcY), Some(to_16_16(16)));
+    assert_eq!(plane_layer.property(PropTag::SrcW), Some(320 << 16));
+    assert_eq!(plane_layer.property(PropTag::SrcH), Some(240 << 16));
+}
+
+/// `CRTC_ID` must always be written. Without it the kernel rejects the plane
+/// commit — the framebuffer is armed but the plane is still bound to whatever
+/// the previous commit left — so every allocator test fails and the scene
+/// reports zero layers assigned.
+#[test]
+fn crtc_id_is_always_written() {
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&lowering_input(), &mut plane_layer);
+    assert_eq!(plane_layer.property(PropTag::CrtcId), Some(7));
+
+    // Even for a driver-owned binding, which skips only FB_ID.
+    let mut input = lowering_input();
+    input.binding = BindingModel::DriverOwnsBinding;
+    let mut driver_owned = PlaneLayer::new();
+    lower_layer(&input, &mut driver_owned);
+    assert_eq!(driver_owned.property(PropTag::CrtcId), Some(7));
+}
+
+/// A driver-owned binding gets its `FB_ID` from the producer's extension stack,
+/// so writing it here would race the consumer's internal state. The layer is
+/// also flagged externally bound so the allocator skips it.
+#[test]
+fn a_driver_owned_binding_skips_fb_id_and_is_marked_external() {
+    let mut input = lowering_input();
+    input.binding = BindingModel::DriverOwnsBinding;
+
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&input, &mut plane_layer);
+
+    assert_eq!(
+        plane_layer.property(PropTag::FbId),
+        None,
+        "the scene must not write FB_ID for a driver-owned binding"
+    );
+    assert!(plane_layer.is_externally_bound());
+}
+
+#[test]
+fn a_scene_owned_binding_writes_fb_id_and_is_not_external() {
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&lowering_input(), &mut plane_layer);
+
+    assert_eq!(plane_layer.property(PropTag::FbId), Some(42));
+    assert!(!plane_layer.is_externally_bound());
+}
+
+/// Format and modifier reach the bag so the allocator can screen planes before
+/// issuing any test commit.
+#[test]
+fn format_and_modifier_reach_the_property_bag() {
+    let mut input = lowering_input();
+    input.format.modifier = 0x0800_0000_0000_0001; // AFBC(16x16)
+
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&input, &mut plane_layer);
+
+    assert_eq!(plane_layer.format(), Some(0x3234_5258));
+    assert_eq!(plane_layer.modifier(), 0x0800_0000_0000_0001);
+}
+
+/// **`zpos` is written only when asked for.** Emitting 0 unconditionally would
+/// statically disqualify any primary plane with an immutable non-zero `zpos` —
+/// amdgpu pins primary at 2 — leaving a single-layer scene with nowhere to go.
+#[test]
+fn zpos_is_left_unwritten_unless_requested() {
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&lowering_input(), &mut plane_layer);
+    assert_eq!(
+        plane_layer.property(PropTag::Zpos),
+        None,
+        "an unrequested zpos must not be written as 0"
+    );
+
+    let mut explicit = lowering_input();
+    explicit.display.zpos = Some(3);
+    let mut with_zpos = PlaneLayer::new();
+    lower_layer(&explicit, &mut with_zpos);
+    assert_eq!(with_zpos.property(PropTag::Zpos), Some(3));
+}
+
+/// The scene's hint fills in only when the caller expressed no preference.
+#[test]
+fn the_default_zpos_hint_only_applies_when_unset() {
+    let mut hinted = lowering_input();
+    hinted.default_zpos = Some(1);
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&hinted, &mut plane_layer);
+    assert_eq!(plane_layer.property(PropTag::Zpos), Some(1));
+
+    // An explicit request wins over the hint.
+    hinted.display.zpos = Some(4);
+    let mut explicit = PlaneLayer::new();
+    lower_layer(&hinted, &mut explicit);
+    assert_eq!(explicit.property(PropTag::Zpos), Some(4));
+}
+
+/// Rotation is likewise conditional: zero means "no rotation", and writing it
+/// would claim a capability the plane may not have.
+#[test]
+fn rotation_is_written_only_when_non_zero() {
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&lowering_input(), &mut plane_layer);
+    assert_eq!(plane_layer.property(PropTag::Rotation), None);
+
+    let mut rotated = lowering_input();
+    rotated.display.rotation = 0b0010;
+    let mut with_rotation = PlaneLayer::new();
+    lower_layer(&rotated, &mut with_rotation);
+    assert_eq!(with_rotation.property(PropTag::Rotation), Some(0b0010));
+}
+
+#[test]
+fn alpha_is_written_only_when_requested() {
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&lowering_input(), &mut plane_layer);
+    assert_eq!(plane_layer.property(PropTag::Alpha), None);
+
+    let mut translucent = lowering_input();
+    translucent.display.alpha = Some(0x8000);
+    let mut with_alpha = PlaneLayer::new();
+    lower_layer(&translucent, &mut with_alpha);
+    assert_eq!(with_alpha.property(PropTag::Alpha), Some(0x8000));
+}
+
+/// A negative destination position round-trips: a plane may extend off-screen,
+/// and KMS carries `CRTC_X`/`CRTC_Y` as signed values in unsigned slots.
+#[test]
+fn a_negative_destination_position_round_trips() {
+    let mut input = lowering_input();
+    input.display.dst_rect.x = -64;
+    input.display.dst_rect.y = -32;
+
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&input, &mut plane_layer);
+
+    let rect = plane_layer.crtc_rect();
+    assert_eq!(rect.x, -64, "a plane may extend off the left edge");
+    assert_eq!(rect.y, -32);
+}
+
+/// A lowered layer must be scale-detectable: the allocator screens planes on
+/// it, and getting the fixed-point conversion wrong would make every layer look
+/// scaled.
+#[test]
+fn a_one_to_one_layer_does_not_read_as_scaled() {
+    let mut input = lowering_input();
+    input.display.dst_rect = Rect {
+        x: 0,
+        y: 0,
+        w: 1920,
+        h: 1080,
+    };
+
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&input, &mut plane_layer);
+    assert!(
+        !plane_layer.requires_scaling(),
+        "a full-extent source into a matching destination is 1:1"
+    );
+
+    // And a genuine downscale does.
+    input.display.dst_rect.w = 1280;
+    let mut scaled = PlaneLayer::new();
+    lower_layer(&input, &mut scaled);
+    assert!(scaled.requires_scaling());
+}

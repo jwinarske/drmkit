@@ -859,3 +859,303 @@ fn a_one_to_one_layer_does_not_read_as_scaled() {
     lower_layer(&input, &mut scaled);
     assert!(scaled.requires_scaling());
 }
+
+// --- frame lifecycle: what a commit does to scene state ----------------------
+
+fn real_commit() -> CommitKind {
+    CommitKind::Real { arms_flip: true }
+}
+
+/// A successful real commit rotates the ring — invariant 1 end to end through
+/// the lifecycle rather than the queue alone.
+#[test]
+fn a_successful_commit_rotates_and_arms_the_flip() {
+    let mut lifecycle = FrameLifecycle::new();
+
+    let first = lifecycle.finalize(
+        real_commit(),
+        KernelResult::Ok,
+        vec![acquisition(1, 100)],
+        CommitReport::default(),
+        None,
+        |_| false,
+    );
+    assert!(first.released.is_empty(), "nothing has left the screen yet");
+    assert!(lifecycle.has_pending_flip(), "a real commit armed a flip");
+    assert!(!first.suspended);
+
+    lifecycle.finalize(
+        real_commit(),
+        KernelResult::Ok,
+        vec![acquisition(1, 200)],
+        CommitReport::default(),
+        None,
+        |_| false,
+    );
+    let third = lifecycle.finalize(
+        real_commit(),
+        KernelResult::Ok,
+        vec![acquisition(1, 300)],
+        CommitReport::default(),
+        None,
+        |_| false,
+    );
+    assert_eq!(released_fbs(&third.released), vec![100]);
+}
+
+/// A commit that does not arm a flip leaves teardown safe.
+#[test]
+fn a_commit_without_a_flip_event_leaves_no_pending_flip() {
+    let mut lifecycle = FrameLifecycle::new();
+    lifecycle.finalize(
+        CommitKind::Real { arms_flip: false },
+        KernelResult::Ok,
+        vec![acquisition(1, 100)],
+        CommitReport::default(),
+        None,
+        |_| false,
+    );
+    assert!(!lifecycle.has_pending_flip());
+}
+
+/// **Invariant 2, both clauses.** A non-`EACCES` rejection releases this
+/// frame's buffers at once and does **not** suspend the scene. Suspending on a
+/// recoverable stumble would stop a scene that should have healed next frame.
+#[test]
+fn an_ordinary_rejection_releases_but_does_not_suspend() {
+    let mut lifecycle = FrameLifecycle::new();
+    lifecycle.finalize(
+        real_commit(),
+        KernelResult::Ok,
+        vec![acquisition(1, 100)],
+        CommitReport::default(),
+        None,
+        |_| false,
+    );
+
+    let rejected = lifecycle.finalize(
+        real_commit(),
+        KernelResult::Rejected,
+        vec![acquisition(1, 200)],
+        CommitReport::default(),
+        None,
+        |_| false,
+    );
+
+    assert_eq!(released_fbs(&rejected.released), vec![200]);
+    assert_eq!(rejected.released.reason, ReleaseReason::CommitFailed);
+    assert!(
+        !rejected.suspended,
+        "a non-EACCES failure must not suspend the scene -- the frame heals"
+    );
+    assert!(!lifecycle.is_suspended());
+}
+
+/// Lost DRM master is the one failure that suspends.
+#[test]
+fn lost_master_suspends_the_scene() {
+    let mut lifecycle = FrameLifecycle::new();
+
+    let outcome = lifecycle.finalize(
+        real_commit(),
+        KernelResult::NotMaster,
+        vec![acquisition(1, 100)],
+        CommitReport::default(),
+        None,
+        |_| false,
+    );
+
+    assert!(outcome.suspended);
+    assert!(lifecycle.is_suspended());
+    assert_eq!(
+        released_fbs(&outcome.released),
+        vec![100],
+        "the buffers still come straight back"
+    );
+
+    lifecycle.resume();
+    assert!(!lifecycle.is_suspended(), "a session resume lifts it");
+}
+
+/// **Invariant 4's safety net.** The kernel rejected a frame whose `TEST_ONLY`
+/// was skipped, so the cached allocation is no longer trustworthy: drop it and
+/// re-search next frame. The frame is dropped but heals — never corruption.
+#[test]
+fn a_rejected_fast_path_frame_invalidates_the_cached_allocation() {
+    let mut lifecycle = FrameLifecycle::new();
+    let report = CommitReport {
+        fb_delta_fast_path: true,
+        test_commits_issued: 0,
+        ..CommitReport::default()
+    };
+
+    let outcome = lifecycle.finalize(
+        real_commit(),
+        KernelResult::Rejected,
+        vec![acquisition(1, 100)],
+        report,
+        None,
+        |_| false,
+    );
+
+    assert!(
+        outcome.invalidate_allocation,
+        "a fast-path frame the kernel refused must drop the cache"
+    );
+    assert!(
+        !outcome.report.fb_delta_fast_path,
+        "and the report must stop claiming a fast path that did not hold"
+    );
+    assert!(lifecycle.has_warned_fast_path_reject());
+    assert!(!outcome.suspended, "it is still a recoverable rejection");
+}
+
+/// A rejection *after* a real test says nothing new about the cache, so it must
+/// not invalidate it — that would throw away a good assignment every time the
+/// kernel refused for an unrelated reason.
+#[test]
+fn an_ordinary_rejection_does_not_invalidate_the_cache() {
+    let mut lifecycle = FrameLifecycle::new();
+    let report = CommitReport {
+        fb_delta_fast_path: false,
+        test_commits_issued: 1,
+        ..CommitReport::default()
+    };
+
+    let outcome = lifecycle.finalize(
+        real_commit(),
+        KernelResult::Rejected,
+        vec![acquisition(1, 100)],
+        report,
+        None,
+        |_| false,
+    );
+
+    assert!(!outcome.invalidate_allocation);
+    assert!(!lifecycle.has_warned_fast_path_reject());
+}
+
+/// A test commit changes nothing: no rotation, no flip, no suspension.
+#[test]
+fn a_test_commit_leaves_scene_state_untouched() {
+    let mut lifecycle = FrameLifecycle::new();
+    lifecycle.finalize(
+        real_commit(),
+        KernelResult::Ok,
+        vec![acquisition(1, 100)],
+        CommitReport::default(),
+        None,
+        |_| false,
+    );
+    let in_flight = lifecycle.buffers_in_flight();
+    lifecycle.flip_landed();
+
+    let outcome = lifecycle.finalize(
+        CommitKind::Test,
+        KernelResult::Ok,
+        vec![acquisition(1, 200)],
+        CommitReport::default(),
+        None,
+        |_| false,
+    );
+
+    assert_eq!(released_fbs(&outcome.released), vec![200]);
+    assert_eq!(outcome.released.reason, ReleaseReason::TestOnly);
+    assert_eq!(
+        lifecycle.buffers_in_flight(),
+        in_flight,
+        "a test applied nothing, so nothing rotated"
+    );
+    assert!(!lifecycle.has_pending_flip(), "and armed no flip");
+}
+
+/// Even a *failed* test releases immediately and does not suspend — the kind
+/// decides the handling, not the result.
+#[test]
+fn a_failed_test_commit_is_still_just_a_test() {
+    let mut lifecycle = FrameLifecycle::new();
+    let outcome = lifecycle.finalize(
+        CommitKind::Test,
+        KernelResult::NotMaster,
+        vec![acquisition(1, 100)],
+        CommitReport::default(),
+        None,
+        |_| false,
+    );
+
+    assert_eq!(outcome.released.reason, ReleaseReason::TestOnly);
+    assert!(
+        !outcome.suspended,
+        "a probe that could not run is not a reason to stop the scene"
+    );
+}
+
+/// **Invariant 5.** The tripwire tracks whether teardown is safe, and draining
+/// does not clear it — landing the flip is the caller's job.
+#[test]
+fn draining_does_not_land_the_flip() {
+    let mut lifecycle = FrameLifecycle::new();
+    lifecycle.finalize(
+        real_commit(),
+        KernelResult::Ok,
+        vec![acquisition(1, 100)],
+        CommitReport::default(),
+        None,
+        |_| false,
+    );
+    assert!(lifecycle.has_pending_flip());
+
+    let drained = lifecycle.drain();
+    assert_eq!(drained.reason, ReleaseReason::Drained);
+    assert_eq!(lifecycle.buffers_in_flight(), 0);
+    assert!(
+        lifecycle.has_pending_flip(),
+        "draining returns buffers; it does not wait on the kernel, so the flip \
+         is still outstanding and teardown is still unsafe"
+    );
+
+    lifecycle.flip_landed();
+    assert!(!lifecycle.has_pending_flip());
+}
+
+// --- EAGAIN accounting -------------------------------------------------------
+
+/// A source with nothing to contribute is skipped and counted, never treated as
+/// a failure — the flow-control half of DR-6, at the accounting level.
+#[test]
+fn the_acquire_tally_separates_skips_from_acquisitions() {
+    let mut tally = AcquireTally::default();
+
+    assert!(tally.record(true));
+    assert!(!tally.record(false));
+    assert!(tally.record(true));
+
+    assert_eq!(tally.acquired, 2);
+    assert_eq!(tally.skipped_no_frame, 1);
+    assert_eq!(
+        tally.considered(),
+        3,
+        "every layer is accounted for exactly once"
+    );
+}
+
+/// The tally is what keeps the commit report's accounting balanced: a skipped
+/// layer belongs in `layers_skipped_no_frame`, not in the failure tallies.
+#[test]
+fn skipped_layers_keep_the_report_balanced() {
+    let mut tally = AcquireTally::default();
+    tally.record(true);
+    tally.record(false);
+    tally.record(false);
+
+    let report = CommitReport {
+        layers_total: tally.considered(),
+        layers_assigned: tally.acquired,
+        layers_skipped_no_frame: tally.skipped_no_frame,
+        ..CommitReport::default()
+    };
+    assert!(
+        report.accounting_balances(),
+        "a skipped layer must be counted somewhere, or the invariant breaks"
+    );
+}

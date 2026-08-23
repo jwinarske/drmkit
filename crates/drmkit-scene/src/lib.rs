@@ -28,12 +28,14 @@
 //! land with the commit path.
 
 mod display;
+mod frame;
 mod lower;
 mod release;
 mod report;
 mod source;
 
 pub use display::{DisplayParams, Rect, to_16_16};
+pub use frame::{AcquireTally, CommitKind, FrameLifecycle, FrameOutcome, KernelResult};
 pub use lower::{LoweringInput, lower_layer};
 pub use release::{Acquisition, ReleaseQueue, ReleaseReason, Released, ScenePendingFlip};
 pub use report::{CommitReport, LayerPlacement, Placement};

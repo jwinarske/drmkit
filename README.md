@@ -60,6 +60,12 @@ Two files keep the port honest as upstream moves:
 
 Both are enforced by `cargo xtask check`.
 
+A third file records the flow in the other direction:
+[`docs/upstream-findings.md`](docs/upstream-findings.md) tracks every defect and
+improvement the port surfaces, the drm-cxx issue it was filed as, and what the
+Rust side does in the meantime. drm-cxx is the origin of authority — a fix that
+lived only here would make the two implementations diverge.
+
 ## Crates
 
 | Crate | Purpose | Phase |

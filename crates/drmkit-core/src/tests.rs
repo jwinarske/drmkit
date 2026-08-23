@@ -146,7 +146,7 @@ fn moving_a_borrowed_device_keeps_it_borrowed() {
 /// the harness runs cases on parallel threads, and a number freed by this drop
 /// can be handed straight to another case's `open`, making the check report
 /// "still open". That is exactly how an earlier version of this test passed on
-/// x86_64 and failed under qemu-riscv64, where the scheduling differs.
+/// `x86_64` and failed under `qemu-riscv64`, where the scheduling differs.
 ///
 /// Measuring the descriptor table instead is race-tolerant in the same way the
 /// `drmkit-sync` leak test is: a missing close grows the table once per

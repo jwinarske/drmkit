@@ -491,3 +491,115 @@ fn supports_format_consults_the_bare_format_list() {
     assert!(caps.supports_format(fourcc::NV12));
     assert!(!caps.supports_format(fourcc::ARGB8888));
 }
+
+// --- bipartite matcher -------------------------------------------------------
+
+/// Port of the `test_matching.cpp` shape: a small graph with a known answer.
+#[test]
+fn matcher_finds_a_perfect_matching() {
+    let mut matching = BipartiteMatching::with_shape(3, 3);
+    matching.add_edge(0, 0);
+    matching.add_edge(0, 1);
+    matching.add_edge(1, 1);
+    matching.add_edge(1, 2);
+    matching.add_edge(2, 2);
+
+    assert_eq!(matching.solve(), 3);
+    for u in 0..3 {
+        assert!(matching.match_for_left(u).is_some());
+    }
+}
+
+/// Two layers competing for one plane: exactly one is placed.
+#[test]
+fn matcher_handles_contention() {
+    let mut matching = BipartiteMatching::with_shape(2, 1);
+    matching.add_edge(0, 0);
+    matching.add_edge(1, 0);
+
+    assert_eq!(matching.solve(), 1);
+    let placed = usize::from(matching.match_for_left(0).is_some())
+        + usize::from(matching.match_for_left(1).is_some());
+    assert_eq!(placed, 1);
+    assert!(matching.match_for_right(0).is_some());
+}
+
+#[test]
+fn matcher_with_no_edges_places_nothing() {
+    let mut matching = BipartiteMatching::with_shape(4, 4);
+    assert_eq!(matching.solve(), 0);
+    assert_eq!(matching.match_for_left(0), None);
+    assert_eq!(matching.matched_count(), 0);
+}
+
+/// A higher score is tried first, so when both planes are free the preferred
+/// one wins. This is the mechanism the allocator's stability bonus rides on.
+#[test]
+fn matcher_prefers_the_higher_scored_plane() {
+    let mut matching = BipartiteMatching::with_shape(1, 2);
+    matching.add_scored_edge(0, 0, 10);
+    matching.add_scored_edge(0, 1, 100);
+
+    assert_eq!(matching.solve(), 1);
+    assert_eq!(
+        matching.match_for_left(0),
+        Some(1),
+        "the higher-scored plane should win when both are free"
+    );
+}
+
+/// But preference must never cost a placement: when the preferred plane is
+/// the only option for another layer, cardinality still wins.
+#[test]
+fn matcher_gives_up_a_preference_to_keep_cardinality() {
+    // Layer 0 prefers plane 0 strongly but can also use plane 1.
+    // Layer 1 can only use plane 0.
+    let mut matching = BipartiteMatching::with_shape(2, 2);
+    matching.add_scored_edge(0, 0, 1000);
+    matching.add_scored_edge(0, 1, 0);
+    matching.add_scored_edge(1, 0, 0);
+
+    assert_eq!(
+        matching.solve(),
+        2,
+        "both layers must be placed even though it costs layer 0 its preference"
+    );
+    assert_eq!(matching.match_for_left(1), Some(0));
+    assert_eq!(matching.match_for_left(0), Some(1));
+}
+
+/// Out-of-range endpoints are ignored, so a caller filtering candidates need
+/// not re-check bounds the matcher already knows.
+#[test]
+fn matcher_ignores_out_of_range_edges() {
+    let mut matching = BipartiteMatching::with_shape(2, 2);
+    matching.add_edge(0, 0);
+    matching.add_edge(5, 0); // no such layer
+    matching.add_edge(0, 9); // no such plane
+
+    assert_eq!(matching.solve(), 1);
+    assert_eq!(matching.match_for_left(0), Some(0));
+    assert_eq!(matching.match_for_left(5), None);
+}
+
+/// Reset re-shapes and clears, and the matcher is reusable across frames.
+#[test]
+fn matcher_reset_reshapes_and_clears() {
+    let mut matching = BipartiteMatching::with_shape(2, 2);
+    matching.add_edge(0, 0);
+    matching.add_edge(1, 1);
+    assert_eq!(matching.solve(), 2);
+
+    matching.reset(1, 3);
+    assert_eq!(matching.left_len(), 1);
+    assert_eq!(matching.right_len(), 3);
+    assert_eq!(
+        matching.solve(),
+        0,
+        "edges from the previous shape are gone"
+    );
+
+    matching.add_edge(0, 2);
+    assert_eq!(matching.solve(), 1);
+    assert_eq!(matching.match_for_left(0), Some(2));
+}

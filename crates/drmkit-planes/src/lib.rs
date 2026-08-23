@@ -17,10 +17,12 @@
 //! about cannot reach a running system.
 
 mod layer;
+mod matching;
 mod prop;
 mod registry;
 
 pub use layer::{ContentType, Layer, PropertySnapshot, Rect};
+pub use matching::BipartiteMatching;
 pub use prop::{NUM_PROPS, PropClass, PropTag};
 pub use registry::{
     BlendModeValues, ColorEncoding, ColorEncodingValues, ColorPipeline, ColorRange,

@@ -38,9 +38,16 @@ tear: the scene holds each `AcquiredBuffer` in a two-deep queue and cannot hand
 it back while it is still owned. The **timing** contract is not expressible in
 the type system, so the vkms pin carries it.
 
-- **Will be defined:** `drmkit-scene`, `LayerBufferSource::release` /
-  `release_with_fence` (phase 3).
-- **Will be pinned by:** `defers_release_two_commits_deep_vkms`.
+- **Defined:** `drmkit-scene`, `LayerBufferSource::release` /
+  `release_with_fence`. The commit path that enforces the timing is still to
+  come in phase 3.
+- **Ownership half pinned by:** the `compile_fail` doctest on `AcquiredBuffer`.
+  Releasing a buffer and then reading it does not compile, so the
+  use-after-release this invariant exists to prevent cannot be written. Verified
+  by removing the move from the snippet and watching rustdoc report "compiled
+  successfully, but it's marked `compile_fail`".
+- **Timing half will be pinned by:** `defers_release_two_commits_deep_vkms`,
+  which needs a real page flip and lands with the commit path.
 
 ## 2. A failed commit releases that frame's acquisitions before returning
 

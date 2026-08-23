@@ -14,6 +14,7 @@ members = [
     "crates/drmkit-log",
     "crates/drmkit-modeset",
     "crates/drmkit-planes",
+    "crates/drmkit-scene",
     "crates/drmkit-sync",
     "crates/drmkit-time",
     "tests-integration",
@@ -38,6 +39,7 @@ drmkit-fmt = { version = "0.0.0", path = "crates/drmkit-fmt" }
 drmkit-log = { version = "0.0.0", path = "crates/drmkit-log" }
 drmkit-modeset = { version = "0.0.0", path = "crates/drmkit-modeset" }
 drmkit-planes = { version = "0.0.0", path = "crates/drmkit-planes" }
+drmkit-scene = { version = "0.0.0", path = "crates/drmkit-scene" }
 drmkit-sync = { version = "0.0.0", path = "crates/drmkit-sync" }
 drmkit-time = { version = "0.0.0", path = "crates/drmkit-time" }
 

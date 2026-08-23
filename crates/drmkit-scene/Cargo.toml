@@ -1,0 +1,23 @@
+[package]
+name = "drmkit-scene"
+description = "Scene composition for drmkit: buffer sources, layer lowering, and atomic commit orchestration."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["graphics", "os::linux-apis"]
+keywords = ["drm", "kms", "compositor", "scene", "scanout"]
+
+[dependencies]
+drmkit-core = { workspace = true }
+drmkit-dumb = { workspace = true }
+drmkit-planes = { workspace = true }
+drmkit-sync = { workspace = true }
+rustix = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

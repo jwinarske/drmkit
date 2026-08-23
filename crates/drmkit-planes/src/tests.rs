@@ -1111,3 +1111,158 @@ fn split_handles_empty_and_single_inputs() {
     let only = at(0, 0, 10, 10);
     assert_eq!(split_independent_groups(&[&only]), vec![vec![0]]);
 }
+
+// --- Output ------------------------------------------------------------------
+
+/// `OutputTest.ConstructWithCompositionLayer`
+#[test]
+fn output_designates_a_composition_layer() {
+    let mut output = Output::new(42);
+    assert_eq!(output.crtc_id(), 42);
+    assert!(output.is_empty());
+    assert_eq!(output.composition_layer(), None);
+
+    let canvas = output.add_layer();
+    assert!(output.set_composition_layer(canvas));
+
+    assert_eq!(output.composition_layer(), Some(canvas));
+    assert!(output.layer(canvas).expect("canvas").is_composition_layer());
+}
+
+/// `OutputTest.AddAndRemoveLayer`
+#[test]
+fn output_adds_and_removes_layers() {
+    let mut output = Output::new(1);
+    let a = output.add_layer();
+    let b = output.add_layer();
+    assert_eq!(output.len(), 2);
+
+    assert!(output.remove_layer(a));
+    assert_eq!(output.len(), 1);
+    assert!(output.layer(a).is_none());
+    assert!(output.layer(b).is_some());
+
+    assert!(
+        !output.remove_layer(a),
+        "removing twice is not an error, just false"
+    );
+}
+
+/// Ids are never reused, which is what lets the allocator key warm-start state
+/// on them: a recycled id could make a new layer masquerade as an old one.
+#[test]
+fn output_never_reuses_layer_ids() {
+    let mut output = Output::new(1);
+    let first = output.add_layer();
+    output.remove_layer(first);
+    let second = output.add_layer();
+
+    assert_ne!(first, second, "a removed id must not come back");
+}
+
+/// Removing the composition layer leaves the output without one, rather than
+/// pointing at a layer that no longer exists.
+#[test]
+fn removing_the_composition_layer_clears_the_designation() {
+    let mut output = Output::new(1);
+    let canvas = output.add_layer();
+    output.set_composition_layer(canvas);
+
+    output.remove_layer(canvas);
+    assert_eq!(output.composition_layer(), None);
+}
+
+/// `OutputTest.SetCompositionLayerUpdatesFlag`
+///
+/// Exactly one layer carries the flag: designating a new one clears the old.
+#[test]
+fn set_composition_layer_moves_the_flag() {
+    let mut output = Output::new(1);
+    let first = output.add_layer();
+    let second = output.add_layer();
+
+    output.set_composition_layer(first);
+    assert!(output.layer(first).unwrap().is_composition_layer());
+
+    output.set_composition_layer(second);
+    assert!(
+        !output.layer(first).unwrap().is_composition_layer(),
+        "the previous composition layer must lose the flag"
+    );
+    assert!(output.layer(second).unwrap().is_composition_layer());
+
+    assert!(
+        !output.set_composition_layer(LayerId(999)),
+        "a layer this output does not own is rejected"
+    );
+}
+
+/// `OutputTest.AnyLayerDirtyDetection` and `ChangedLayersReturnsOnlyDirty`
+#[test]
+fn output_tracks_dirty_layers() {
+    let mut output = Output::new(1);
+    let a = output.add_layer();
+    let b = output.add_layer();
+    assert!(output.any_layer_dirty(), "freshly added layers are dirty");
+
+    output.mark_clean();
+    assert!(!output.any_layer_dirty());
+    assert_eq!(output.changed_layers().count(), 0);
+
+    output.layer_mut(b).unwrap().set_property(PropTag::FbId, 7);
+    assert!(output.any_layer_dirty());
+
+    let changed: Vec<_> = output.changed_layers().map(|entry| entry.id).collect();
+    assert_eq!(changed, vec![b], "only the layer that changed");
+    assert!(output.layer(a).unwrap().property(PropTag::FbId).is_none());
+}
+
+/// `OutputTest.SortLayersByZpos`
+#[test]
+fn output_sorts_layers_by_zpos() {
+    let mut output = Output::new(1);
+    let top = output.add_layer();
+    let bottom = output.add_layer();
+    let middle = output.add_layer();
+
+    output
+        .layer_mut(top)
+        .unwrap()
+        .set_property(PropTag::Zpos, 9);
+    output
+        .layer_mut(bottom)
+        .unwrap()
+        .set_property(PropTag::Zpos, 0);
+    output
+        .layer_mut(middle)
+        .unwrap()
+        .set_property(PropTag::Zpos, 4);
+
+    output.sort_layers_by_zpos();
+
+    let order: Vec<_> = output.layers().map(|entry| entry.id).collect();
+    assert_eq!(order, vec![bottom, middle, top]);
+}
+
+/// An unset zpos sorts as 0, and the sort is stable so equal values keep the
+/// order they were added in.
+#[test]
+fn zpos_sort_treats_unset_as_zero_and_is_stable() {
+    let mut output = Output::new(1);
+    let first_unset = output.add_layer();
+    let second_unset = output.add_layer();
+    let above = output.add_layer();
+    output
+        .layer_mut(above)
+        .unwrap()
+        .set_property(PropTag::Zpos, 1);
+
+    output.sort_layers_by_zpos();
+
+    let order: Vec<_> = output.layers().map(|entry| entry.id).collect();
+    assert_eq!(
+        order,
+        vec![first_unset, second_unset, above],
+        "unset sorts as 0, and equal values keep insertion order"
+    );
+}

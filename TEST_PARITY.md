@@ -81,7 +81,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_mode.cpp` | `drmkit-modeset` `src/tests.rs` | ported |  |
 | `tests/unit/test_mode_list.cpp` | _drmkit-modeset_ (phase 1) | pending |  |
 | `tests/unit/test_negotiate.cpp` | _drmkit-scene_ (phase 3) | pending |  |
-| `tests/unit/test_output.cpp` | _drmkit-planes_ (phase 2) | pending |  |
+| `tests/unit/test_output.cpp` | `drmkit-planes` | ported |  |
 | `tests/unit/test_output_signaling.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/unit/test_page_flip.cpp` | `drmkit-modeset` `src/tests.rs` | ported | 3 |
 | `tests/unit/test_plane_allocator.cpp` | `drmkit-planes` | ported |  |
@@ -130,7 +130,7 @@ and runs in the vkms lane (plan §6, §13).
 
 ## Summary
 
-- `ported`: 13
+- `ported`: 14
 - `partial`: 1
-- `pending`: 81
+- `pending`: 80
 - `n/a`: 2

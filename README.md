@@ -35,6 +35,18 @@ the lane on every push.
 The EDID parser lands with `drmkit-display` in phase 4, so its fuzz target
 cannot be seeded before the code it targets exists.
 
+**Phase 2 — met.**
+
+| Item | State |
+|---|---|
+| `PlaneRegistry::from_capabilities` first | done — every allocator test runs on synthetic fixtures, no hardware |
+| Matching, allocator, warm-start + stability bonus | done |
+| Invariant 4 hash-classification table | done — an exhaustive `match`, so an unclassified property does not compile |
+| Externally-bound exclusion hooks | done — `is_externally_bound` / `is_pinned` skip placement |
+| `test_matching`, `test_plane_allocator`, `test_layer`, `test_output` ported | done |
+| Proptest: cardinality-first | done — against a brute-force oracle |
+| Proptest: stability bonus never reduces placements | done |
+
 Every card-dependent test is `#[ignore]`d so a developer machine without vkms
 stays green, and the lane runs them with `--include-ignored` under
 `DRMKIT_REQUIRE_MASTER=1` — which turns "another client holds DRM master" from a
@@ -78,6 +90,8 @@ lived only here would make the two implementations diverge.
 | `drmkit-core` | Device handles, property cache, atomic requests | 1 ✅ |
 | `drmkit-modeset` | Mode selection, page-flip dispatch — **invariant 3** | 1 ✅ |
 | `drmkit-dumb` | Dumb buffers, lifetime mmaps — **invariant 6** | 1 ✅ |
+
+| `drmkit-planes` | Registry, layer model, matcher, allocator — **invariant 4** | 2 ✅ |
 
 The remaining ~25 crates and the phase that lands each are listed in
 [`plan.md`](plan.md) §5 and §8.

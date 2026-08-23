@@ -19,6 +19,7 @@
 mod allocator;
 mod layer;
 mod matching;
+mod output;
 mod prop;
 mod registry;
 mod scoring;
@@ -29,6 +30,7 @@ pub use allocator::{
 };
 pub use layer::{ContentType, Layer, PropertySnapshot, Rect};
 pub use matching::BipartiteMatching;
+pub use output::Output;
 pub use prop::{NUM_PROPS, PropClass, PropTag};
 pub use registry::{
     BlendModeValues, ColorEncoding, ColorEncodingValues, ColorPipeline, ColorRange,

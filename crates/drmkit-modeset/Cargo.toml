@@ -1,0 +1,32 @@
+[package]
+name = "drmkit-modeset"
+description = "Mode selection and page-flip event dispatch for drmkit."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["graphics", "os::linux-apis"]
+keywords = ["drm", "kms", "modesetting", "page-flip", "epoll"]
+
+[dependencies]
+drm = { workspace = true }
+rustix = { workspace = true, features = ["std", "event", "time"] }
+thiserror = { workspace = true }
+drmkit-core = { workspace = true }
+drmkit-time = { workspace = true }
+
+[dev-dependencies]
+# Test-only: `drm::control::Mode` keeps its raw `drm_mode_modeinfo` private and
+# is only constructible through `From`, so building fixture modes means naming
+# that type. The library never touches drm-ffi directly.
+drm-ffi = { workspace = true }
+# Test-only. The invariant 3 cases need a real SIGALRM storm to force EINTR out
+# of epoll_wait, and rustix exposes no stable sigaction/setitimer. Nothing in
+# the library itself depends on libc.
+libc = "0.2"
+
+[lints]
+workspace = true

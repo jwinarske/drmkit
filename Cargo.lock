@@ -96,6 +96,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "drmkit-modeset"
+version = "0.0.0"
+dependencies = [
+ "drm",
+ "drm-ffi",
+ "drmkit-core",
+ "drmkit-time",
+ "libc",
+ "rustix",
+ "thiserror",
+]
+
+[[package]]
 name = "drmkit-sync"
 version = "0.0.0"
 dependencies = [

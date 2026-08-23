@@ -18,10 +18,9 @@ Tests suffixed `_vkms` need the VKMS virtual driver (or any modeset card via
 runners, drmkit runs them under virtme-ng on every PR — they are
 merge-blocking from Phase 0 onward (plan §9, §10).
 
-> **Status:** no invariant is pinned yet. Phase 0 carries only `drmkit-log`
-> and `drmkit-time`, neither of which owns a contract. Each entry below names
-> the crate and phase that will land its pin; `cargo xtask parity` tracks the
-> test files those pins live in.
+> **Status:** invariant 3 is pinned. The rest name the crate and phase that
+> will land their pins; `cargo xtask parity` tracks the test files those pins
+> live in.
 
 ---
 
@@ -69,9 +68,24 @@ through the contract. The retry-with-budget loop must swallow it. Budget
 recomputation uses `drmkit-time`'s `Clock`, so the storm test drives a
 `ManualClock` rather than sleeping.
 
-- **Will be defined:** `drmkit-modeset`, `PageFlip::dispatch` (phase 1).
-- **Will be pinned by:** `dispatch_infinite_retries_until_ready`,
-  `dispatch_bounded_timeout_honors_budget_under_storm`.
+- **Defined:** `drmkit-modeset`, `PageFlip::dispatch` and the
+  `remaining_budget` helper it delegates the budget to.
+- **Pinned by:** `dispatch_infinite_retries_until_ready`,
+  `dispatch_bounded_timeout_honors_budget_under_storm`, and the
+  `remaining_budget_tests` module.
+
+  The two storm cases drive a real `SIGALRM` cadence at the waiting thread with
+  `pthread_kill`, not `setitimer`: the C++ approach posts the signal to the
+  process, and under Rust's parallel test harness another case's thread absorbs
+  it, leaving the wait uninterrupted. That was verified, not assumed — with
+  `setitimer`, both cases passed against a `dispatch` deliberately broken to
+  propagate `EINTR`.
+
+  A bad **budget** is a different failure: `dispatch` hangs rather than
+  answering wrongly, and no signal-driven test reports a hang reliably. So the
+  budget arithmetic is also pinned as a pure function, deterministically, by
+  `remaining_budget_tests` — which fails in milliseconds with exact values where
+  the storm case could only stall.
 
 ## 4. FB-only fast path: the real commit's `atomic_check` is the arbiter
 

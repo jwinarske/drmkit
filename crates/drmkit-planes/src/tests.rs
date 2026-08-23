@@ -603,3 +603,458 @@ fn matcher_reset_reshapes_and_clears() {
     assert_eq!(matching.solve(), 1);
     assert_eq!(matching.match_for_left(0), Some(2));
 }
+
+// --- allocator scoring -------------------------------------------------------
+
+/// A plane that accepts XRGB8888 LINEAR on CRTC 0.
+fn scoring_plane(id: u32, plane_type: PlaneType) -> PlaneCapabilities {
+    let mut caps = plane(id, plane_type, 0b1, &[fourcc::XRGB8888]);
+    caps.build_format_metadata();
+    caps
+}
+
+/// A 1080p XRGB8888 layer at the origin.
+fn scoring_layer() -> Layer {
+    let mut layer = Layer::new();
+    layer
+        .set_property(PropTag::PixelFormat, u64::from(fourcc::XRGB8888))
+        .set_property(PropTag::CrtcW, 1920)
+        .set_property(PropTag::CrtcH, 1080)
+        .set_property(PropTag::SrcW, 1920 << 16)
+        .set_property(PropTag::SrcH, 1080 << 16);
+    layer
+}
+
+#[test]
+fn bandwidth_class_bonus_ranks_compression_highest() {
+    assert_eq!(bandwidth_class_bonus(BandwidthClass::Compression), 2);
+    assert_eq!(bandwidth_class_bonus(BandwidthClass::Tiling), 1);
+    assert_eq!(bandwidth_class_bonus(BandwidthClass::Linear), 0);
+}
+
+#[test]
+fn cost_bias_buckets_by_frame_size() {
+    const MB: u64 = 1024 * 1024;
+    assert_eq!(cost_bias(0), 0);
+    assert_eq!(cost_bias(MB - 1), 0);
+    assert_eq!(cost_bias(MB), 1);
+    assert_eq!(cost_bias(4 * MB), 2);
+    assert_eq!(cost_bias(16 * MB), 3);
+    assert_eq!(cost_bias(u64::MAX), 3, "bounded above");
+}
+
+#[test]
+fn layer_priority_ranks_video_above_animated_above_static() {
+    let mut video = Layer::new();
+    video.set_content_type(ContentType::Video);
+    assert_eq!(layer_priority(&video), 100);
+
+    let mut fast = Layer::new();
+    fast.set_update_hint(60);
+    assert_eq!(layer_priority(&fast), 80);
+
+    let mut slow = Layer::new();
+    slow.set_update_hint(10);
+    assert_eq!(layer_priority(&slow), 50);
+
+    assert_eq!(layer_priority(&Layer::new()), 10, "static default");
+}
+
+/// Content class must dominate: no `app_priority` can lift a Generic layer
+/// above a Video one.
+#[test]
+fn keep_priority_lets_content_class_dominate_app_priority() {
+    let mut video = Layer::new();
+    video
+        .set_content_type(ContentType::Video)
+        .set_app_priority(0);
+
+    let mut generic = Layer::new();
+    generic.set_app_priority(u8::MAX);
+
+    assert!(
+        keep_priority(&video) > keep_priority(&generic),
+        "a maximum app_priority must not outrank a higher content class"
+    );
+
+    // Within a class, app_priority breaks the tie.
+    let mut low = Layer::new();
+    low.set_content_type(ContentType::Video).set_app_priority(1);
+    assert!(keep_priority(&video) < keep_priority(&low));
+}
+
+/// The stability bonus must outweigh every structural term combined, so that
+/// among equal-cardinality matchings the previous assignment wins.
+#[test]
+fn stability_bonus_outweighs_every_structural_term() {
+    let plane = scoring_plane(31, PlaneType::Primary);
+    let mut layer = scoring_layer();
+    layer.set_content_type(ContentType::Video);
+    layer.set_property(PropTag::Zpos, 0);
+
+    let cold = score_pair(&plane, &layer, ScoreContext::default());
+    let warm = score_pair(
+        &plane,
+        &layer,
+        ScoreContext {
+            held_last_frame: true,
+            failure_hits: 0,
+        },
+    );
+
+    assert_eq!(warm - cold, WARM_STABILITY_BONUS);
+    assert!(
+        WARM_STABILITY_BONUS > cold,
+        "the bonus ({WARM_STABILITY_BONUS}) must exceed the best structural score ({cold}), \
+         or a newly attractive plane could displace a stable placement"
+    );
+}
+
+#[test]
+fn failure_hits_reduce_the_score() {
+    let plane = scoring_plane(31, PlaneType::Overlay);
+    let layer = scoring_layer();
+
+    let clean = score_pair(&plane, &layer, ScoreContext::default());
+    let punished = score_pair(
+        &plane,
+        &layer,
+        ScoreContext {
+            held_last_frame: false,
+            failure_hits: 5,
+        },
+    );
+    assert_eq!(clean - punished, 5);
+}
+
+#[test]
+fn composition_layer_prefers_the_primary_plane() {
+    let primary = scoring_plane(31, PlaneType::Primary);
+    let overlay = scoring_plane(32, PlaneType::Overlay);
+
+    let mut layer = scoring_layer();
+    layer.set_composition_layer(true);
+
+    assert!(
+        score_pair(&primary, &layer, ScoreContext::default())
+            > score_pair(&overlay, &layer, ScoreContext::default()),
+        "the composition output belongs on primary"
+    );
+}
+
+/// A layer pinned to primary's minimum zpos is asking for direct scanout
+/// there. Without the bonus the overlay preference wins and primary keeps
+/// whatever the console left on it.
+#[test]
+fn layer_at_primary_min_zpos_prefers_primary() {
+    let mut primary = scoring_plane(31, PlaneType::Primary);
+    primary.zpos_min = Some(0);
+    primary.zpos_max = Some(0);
+    let mut overlay = scoring_plane(32, PlaneType::Overlay);
+    overlay.zpos_min = Some(1);
+    overlay.zpos_max = Some(4);
+
+    let mut layer = scoring_layer();
+    layer.set_property(PropTag::Zpos, 0);
+
+    assert!(
+        score_pair(&primary, &layer, ScoreContext::default())
+            > score_pair(&overlay, &layer, ScoreContext::default())
+    );
+}
+
+/// On platforms with no kernel zpos property, zpos 0 means primary and any
+/// positive zpos means overlay.
+#[test]
+fn zpos_convention_without_a_kernel_zpos_property() {
+    let primary = scoring_plane(31, PlaneType::Primary); // zpos_min: None
+    let overlay = scoring_plane(32, PlaneType::Overlay);
+
+    let mut bottom = scoring_layer();
+    bottom.set_property(PropTag::Zpos, 0);
+    assert!(
+        score_pair(&primary, &bottom, ScoreContext::default())
+            > score_pair(&overlay, &bottom, ScoreContext::default()),
+        "zpos 0 means bottom-most, which is primary"
+    );
+
+    let mut above = scoring_layer();
+    above.set_property(PropTag::Zpos, 1);
+    assert!(
+        score_pair(&overlay, &above, ScoreContext::default())
+            > score_pair(&primary, &above, ScoreContext::default()),
+        "a positive zpos means above primary, which is an overlay"
+    );
+}
+
+// --- static compatibility ----------------------------------------------------
+
+#[test]
+fn statically_compatible_accepts_a_plain_layer() {
+    let plane = scoring_plane(31, PlaneType::Overlay);
+    let layer = scoring_layer();
+    assert!(plane_statically_compatible(&plane, &layer, 0));
+}
+
+#[test]
+fn a_layer_without_a_format_is_never_compatible() {
+    let plane = scoring_plane(31, PlaneType::Overlay);
+    let mut layer = Layer::new();
+    layer
+        .set_property(PropTag::CrtcW, 1920)
+        .set_property(PropTag::CrtcH, 1080);
+
+    assert!(
+        !plane_statically_compatible(&plane, &layer, 0),
+        "no format means no buffer this frame; placing it would report the \
+         layer as both assigned and skipped"
+    );
+}
+
+#[test]
+fn composited_layers_are_incompatible_with_every_plane() {
+    let plane = scoring_plane(31, PlaneType::Overlay);
+
+    let mut forced = scoring_layer();
+    forced.set_force_composited(true);
+    assert!(!plane_statically_compatible(&plane, &forced, 0));
+
+    let mut transient = scoring_layer();
+    transient.set_transient_composited(true);
+    assert!(!plane_statically_compatible(&plane, &transient, 0));
+}
+
+/// A plane must expose every requested rotation bit, not merely have the
+/// property — otherwise a 90-degree request lands on 0/180-only hardware.
+#[test]
+fn rotation_requires_the_exact_bits() {
+    let mut plane = scoring_plane(31, PlaneType::Overlay);
+    plane.supports_rotation = true;
+    plane.rotation_bits = 0b0001 | 0b0100; // rotate-0 and rotate-180 only
+
+    let mut layer = scoring_layer();
+    layer.set_property(PropTag::Rotation, 0b0001);
+    assert!(plane_statically_compatible(&plane, &layer, 0));
+
+    layer.set_property(PropTag::Rotation, 0b0010); // rotate-90
+    assert!(
+        !plane_statically_compatible(&plane, &layer, 0),
+        "advertising a rotation property is not the same as implementing 90 degrees"
+    );
+}
+
+#[test]
+fn scaling_requires_a_scaling_plane() {
+    let mut plane = scoring_plane(31, PlaneType::Overlay);
+    plane.supports_scaling = false;
+
+    let mut layer = scoring_layer();
+    layer.set_property(PropTag::CrtcW, 1280); // 1920 source into 1280 dest
+    assert!(layer.requires_scaling());
+    assert!(!plane_statically_compatible(&plane, &layer, 0));
+
+    plane.supports_scaling = true;
+    assert!(plane_statically_compatible(&plane, &layer, 0));
+}
+
+#[test]
+fn zpos_must_fall_inside_the_planes_range() {
+    let mut plane = scoring_plane(31, PlaneType::Overlay);
+    plane.zpos_min = Some(2);
+    plane.zpos_max = Some(4);
+
+    let mut layer = scoring_layer();
+    layer.set_property(PropTag::Zpos, 3);
+    assert!(plane_statically_compatible(&plane, &layer, 0));
+
+    layer.set_property(PropTag::Zpos, 1);
+    assert!(!plane_statically_compatible(&plane, &layer, 0));
+    layer.set_property(PropTag::Zpos, 5);
+    assert!(!plane_statically_compatible(&plane, &layer, 0));
+}
+
+#[test]
+fn cursor_planes_enforce_their_maximum_size() {
+    let mut plane = scoring_plane(31, PlaneType::Cursor);
+    plane.cursor_max_w = 64;
+    plane.cursor_max_h = 64;
+
+    let mut layer = scoring_layer();
+    layer
+        .set_property(PropTag::CrtcW, 64)
+        .set_property(PropTag::CrtcH, 64);
+    layer
+        .set_property(PropTag::SrcW, 64 << 16)
+        .set_property(PropTag::SrcH, 64 << 16);
+    assert!(plane_statically_compatible(&plane, &layer, 0));
+
+    layer
+        .set_property(PropTag::CrtcW, 128)
+        .set_property(PropTag::SrcW, 128 << 16);
+    assert!(!plane_statically_compatible(&plane, &layer, 0));
+}
+
+#[test]
+fn a_wrong_crtc_is_incompatible() {
+    let plane = scoring_plane(31, PlaneType::Overlay); // CRTC 0 only
+    let layer = scoring_layer();
+    assert!(plane_statically_compatible(&plane, &layer, 0));
+    assert!(!plane_statically_compatible(&plane, &layer, 1));
+}
+
+// --- spatial splitting -------------------------------------------------------
+
+#[expect(
+    clippy::cast_sign_loss,
+    reason = "KMS carries CRTC_X/Y as signed values in u64 property slots; the \
+              round trip through the property bag is exact"
+)]
+fn at(x: i32, y: i32, w: u32, h: u32) -> Layer {
+    let mut layer = Layer::new();
+    layer
+        .set_property(PropTag::CrtcX, x as u64)
+        .set_property(PropTag::CrtcY, y as u64)
+        .set_property(PropTag::CrtcW, u64::from(w))
+        .set_property(PropTag::CrtcH, u64::from(h));
+    layer
+}
+
+#[test]
+fn rects_intersect_is_half_open() {
+    let a = Rect {
+        x: 0,
+        y: 0,
+        w: 10,
+        h: 10,
+    };
+    assert!(rects_intersect(
+        a,
+        Rect {
+            x: 9,
+            y: 9,
+            w: 10,
+            h: 10
+        }
+    ));
+    assert!(
+        !rects_intersect(
+            a,
+            Rect {
+                x: 10,
+                y: 0,
+                w: 10,
+                h: 10
+            }
+        ),
+        "edge-adjacent rectangles do not overlap"
+    );
+    assert!(!rects_intersect(
+        a,
+        Rect {
+            x: 0,
+            y: 10,
+            w: 10,
+            h: 10
+        }
+    ));
+    // A zero-area rectangle *inside* another reports as intersecting. Strictly
+    // this is wrong for half-open intervals -- [5,5) is empty and overlaps
+    // nothing -- but it is what the C++ predicate computes, and it is kept for
+    // parity. The consequence is nil: the predicate only partitions the search,
+    // never decides correctness, so a degenerate layer merely joins a group it
+    // did not need to. Not worth diverging over.
+    assert!(rects_intersect(
+        a,
+        Rect {
+            x: 5,
+            y: 5,
+            w: 0,
+            h: 0
+        }
+    ));
+}
+
+/// Computed in `i64`, so a rectangle near `i32::MAX` cannot wrap into a false
+/// negative the way 32-bit arithmetic would.
+#[test]
+fn rects_intersect_does_not_wrap_near_the_coordinate_limit() {
+    let a = Rect {
+        x: i32::MAX - 5,
+        y: 0,
+        w: 100,
+        h: 10,
+    };
+    let b = Rect {
+        x: i32::MAX - 1,
+        y: 0,
+        w: 100,
+        h: 10,
+    };
+    assert!(rects_intersect(a, b));
+}
+
+#[test]
+fn split_separates_non_overlapping_layers() {
+    let left = at(0, 0, 100, 100);
+    let right = at(200, 0, 100, 100);
+    let layers = [&left, &right];
+
+    let groups = split_independent_groups(&layers);
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0], vec![0]);
+    assert_eq!(groups[1], vec![1]);
+}
+
+#[test]
+fn split_joins_overlapping_layers() {
+    let a = at(0, 0, 100, 100);
+    let b = at(50, 50, 100, 100);
+    let c = at(500, 500, 10, 10);
+    let layers = [&a, &b, &c];
+
+    let groups = split_independent_groups(&layers);
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0], vec![0, 1], "a and b overlap");
+    assert_eq!(groups[1], vec![2]);
+}
+
+/// Overlap is transitive through the union-find: a-b and b-c overlapping puts
+/// all three together even though a and c do not touch.
+#[test]
+fn split_is_transitive() {
+    let a = at(0, 0, 100, 100);
+    let b = at(90, 0, 100, 100);
+    let c = at(180, 0, 100, 100);
+    let layers = [&a, &b, &c];
+
+    let groups = split_independent_groups(&layers);
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0], vec![0, 1, 2]);
+}
+
+/// Group order must be deterministic and follow the caller's layer order --
+/// the caller consumes a shared plane pool, so order decides who wins
+/// contention. The C++ collects out of an `unordered_map` (drm-cxx#236).
+#[test]
+fn split_group_order_is_deterministic() {
+    let a = at(300, 0, 50, 50);
+    let b = at(0, 0, 50, 50);
+    let c = at(150, 0, 50, 50);
+    let layers = [&a, &b, &c];
+
+    for _ in 0..32 {
+        let groups = split_independent_groups(&layers);
+        assert_eq!(
+            groups,
+            vec![vec![0], vec![1], vec![2]],
+            "groups must come back ordered by lowest member index, every time"
+        );
+    }
+}
+
+#[test]
+fn split_handles_empty_and_single_inputs() {
+    assert!(split_independent_groups(&[]).is_empty());
+    let only = at(0, 0, 10, 10);
+    assert_eq!(split_independent_groups(&[&only]), vec![vec![0]]);
+}

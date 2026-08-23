@@ -198,8 +198,13 @@ impl From<Modifier> for u64 {
 /// Best-effort classification by vendor and bit inspection, used only for
 /// allocator scoring. **Correctness never depends on this being right** — the
 /// atomic `TEST_ONLY` commit is the arbiter of what a plane can scan out.
+///
+/// Deliberately **not** `#[non_exhaustive]`. It mirrors a closed C++ enum, and
+/// consumers switch on it to assign placement bonuses. Leaving it open would
+/// force every one of them to write a catch-all arm, which is exactly how a new
+/// class would silently inherit some other class's bonus. Adding a variant
+/// should break those consumers so each decides what the new class is worth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
 pub enum BandwidthClass {
     /// Raw bytes, poor DRAM locality.
     Linear,

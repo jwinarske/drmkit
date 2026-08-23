@@ -20,6 +20,7 @@ mod layer;
 mod matching;
 mod prop;
 mod registry;
+mod scoring;
 
 pub use layer::{ContentType, Layer, PropertySnapshot, Rect};
 pub use matching::BipartiteMatching;
@@ -27,6 +28,11 @@ pub use prop::{NUM_PROPS, PropClass, PropTag};
 pub use registry::{
     BlendModeValues, ColorEncoding, ColorEncodingValues, ColorPipeline, ColorRange,
     ColorRangeValues, PlaneCapabilities, PlaneRegistry, PlaneType,
+};
+pub use scoring::{
+    ScoreContext, WARM_STABILITY_BONUS, bandwidth_class_bonus, cost_bias, keep_priority,
+    layer_priority, layers_intersect, plane_statically_compatible, rects_intersect, score_pair,
+    split_independent_groups,
 };
 
 #[cfg(test)]

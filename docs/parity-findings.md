@@ -17,6 +17,7 @@ Three scenarios in the corpus, all **byte-identical** on both sides:
 | `warm-start-stability` | The stability bonus: a layer removed from the middle of the stack must not make the survivors move. |
 | `fast-path-classification` | Which frames may skip the `TEST_ONLY` commit — in both directions, including that the fast path returns after an invalidation rather than being lost for good. |
 | `eagain-skip-accounting` | A source with no frame ready: the layer holds its plane and its last framebuffer, and the report's identity still balances. |
+| `plane-migration` | A changing layer set that forces every overlay onto a different plane: the ordering inside one commit, and z-order on planes that cannot be reordered. |
 
 ## Open
 
@@ -35,7 +36,20 @@ Three scenarios in the corpus, all **byte-identical** on both sides:
 | P-3 | The port emitted the modeset properties only in the apply commit; the reference includes them in the `TEST_ONLY` commits too. | Fixed, and it was worse than first recorded. This is not "the test does not match the apply": while the CRTC is inactive the kernel rejects **every** plane bound to it with `EINVAL`, so the whole search would find nothing placeable and composite the entire scene on the first frame. Upstream carries a `test_preparer_` hook for exactly this and says so. `DeviceCommitter` now takes an optional `Modeset` and prepends it to each test request. Invisible here for the same reason as P-0: fbcon keeps the CRTC lit. |
 | P-7 | A layer whose source returned `WouldBlock` was dropped from the frame entirely, so its plane was **disabled**: a source that hiccups for one frame blinked its layer off screen. The reference re-attaches the framebuffer the layer already had. | Fixed. The scene remembers each layer's last framebuffer and re-attaches it when the source has nothing ready, so the layer goes on showing what it put up. A layer starved before it ever produced anything is still absent — there is nothing to hold. |
 | P-8 | Holding the plane made the report double-count: the starved layer was in the assignment *and* counted as skipped, so `total = assigned + composited + unassigned + skipped` stopped holding and a compositor watching those counters for dropped frames would see phantom ones. | Fixed by excluding starved layers from `layers_assigned` — they are skipped, not assigned, because nothing new reached the screen. This is the EAGAIN accounting drift the plan lists as a named risk; it appeared the moment P-7 was fixed, which is roughly when it was predicted to. |
+| P-9 | Layers were assigned to planes in the order the scene held them rather than bottom-up by zpos. On a card whose planes expose a settable `zpos` that is only a preference. On one whose planes do not — vkms, and plenty of embedded display controllers — the plane's index **is** its stacking order, so a backing store could land on a higher-numbered plane than the overlays it belongs behind and cover them. | Fixed: the search now sorts by zpos before placing, as upstream's `sort_layers_by_zpos` does. It cannot cost a placement — the matcher maximizes cardinality first and uses score only for tie-breaks, so reordering the input changes which valid assignment wins, never whether one is found. |
 | P-5 | The port force-disabled **cursor** planes on every commit. | Fixed: `PlaneRegistry::force_disable_candidates` excludes them, and both the test and apply paths go through it. Upstream carves out the same exception in `disable_unused_planes` — a cursor plane belongs to the cursor path, and clearing it here would erase the cursor on every frame the scene commits. |
+
+### What P-9 looked like from inside the process
+
+Nothing. Every layer was assigned, the counts balanced, the kernel accepted
+the commit, and the screen was wrong. No counter in `CommitReport` distinguishes
+a correct stacking from an inverted one, because the report records *that* a
+layer got a plane, not what that plane sits above.
+
+It is the clearest case so far for diffing against a reference rather than
+asserting against expectations: nobody writes the assertion for a property they
+have not realised is load-bearing, and on hardware with settable zpos this one
+is not.
 
 ### A bug P-4's own fix introduced, and the harness caught
 

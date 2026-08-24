@@ -561,3 +561,76 @@ fn a_new_layer_in_steady_state_is_not_composited_forever() {
     );
     assert_eq!(third.assignment.len(), 2);
 }
+
+/// Planes with no settable `zpos`, where index order *is* stacking order.
+///
+/// vkms is like this, and so are plenty of embedded display controllers,
+/// `Tegra` Orin's display block among them. `zpos: None` is not "the plane has no
+/// preference"; it is "nothing can reorder these".
+fn fixed_order_registry() -> PlaneRegistry {
+    PlaneRegistry::from_capabilities(vec![
+        plane(31, PlaneType::Primary, None),
+        plane(32, PlaneType::Overlay, None),
+        plane(33, PlaneType::Overlay, None),
+        plane(34, PlaneType::Overlay, None),
+    ])
+}
+
+/// The bottom layer gets the bottom plane, whatever order it arrived in.
+///
+/// On a card whose planes cannot be reordered, the plane a layer lands on is
+/// the only thing that decides what covers what. Assigning in the order layers
+/// happen to be held — which is arrival order, and after a removal and two
+/// additions is not zpos order — puts a backing store on a higher-numbered
+/// plane than the overlays it is meant to sit behind, and it covers them.
+///
+/// Nothing in the commit report shows this. Every layer is assigned, the
+/// counts balance, the kernel accepts it, and the screen is wrong.
+#[test]
+fn layers_are_assigned_bottom_up_when_planes_cannot_be_reordered() {
+    let registry = fixed_order_registry();
+    let mut allocator = Allocator::new();
+    let mut committer = Committer::default();
+
+    // Deliberately out of zpos order, the way a scene is after a layer is
+    // dropped and two are added in its place.
+    let top = layer_at(400, 200, 256, 256, 2);
+    let bottom = layer_at(0, 0, 1024, 768, 0);
+    let middle = layer_at(64, 64, 256, 256, 1);
+    let layers = [
+        LayerRef {
+            id: LayerId(10),
+            layer: &top,
+        },
+        LayerRef {
+            id: LayerId(11),
+            layer: &bottom,
+        },
+        LayerRef {
+            id: LayerId(12),
+            layer: &middle,
+        },
+    ];
+
+    let allocation = allocator
+        .allocate(&layers, &registry, 0, &mut committer)
+        .expect("a valid assignment exists");
+
+    let plane_of = |id: LayerId| {
+        allocation
+            .assignment
+            .get_plane_of(id)
+            .unwrap_or_else(|| panic!("{id:?} was not placed"))
+    };
+    let (bottom_plane, middle_plane, top_plane) = (
+        plane_of(LayerId(11)),
+        plane_of(LayerId(12)),
+        plane_of(LayerId(10)),
+    );
+
+    assert!(
+        bottom_plane < middle_plane && middle_plane < top_plane,
+        "stacking is plane order here, so zpos 0/1/2 must land on ascending \
+         planes; got {bottom_plane}, {middle_plane}, {top_plane}"
+    );
+}

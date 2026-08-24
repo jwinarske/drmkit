@@ -526,6 +526,23 @@ impl Allocator {
             .copied()
             .collect();
 
+        // Bottom-up, so the search hands the lowest layer the lowest plane.
+        //
+        // On a card whose planes expose a settable `zpos` this is only a
+        // preference -- stacking is whatever gets written. On a card whose
+        // planes do not (vkms, Tegra Orin display, plenty of SoC display
+        // controllers) the plane's index *is* its stacking order, nothing can
+        // change it, and an assignment made in any other order puts layers on
+        // screen in the wrong order. A backing store handed a higher-numbered
+        // plane than the overlays it is supposed to sit behind covers them.
+        //
+        // Cheap here, and it cannot cost a placement: the matcher maximizes
+        // cardinality first and uses score only to break ties, so reordering
+        // the input changes which valid assignment is chosen, never whether
+        // one is found.
+        let mut placeable = placeable;
+        placeable.sort_by_key(|entry| entry.layer.property(PropTag::Zpos).unwrap_or(0));
+
         // A layer present this frame that the previous frame did not place.
         //
         // Both cached paths below iterate the *previous* assignment to decide

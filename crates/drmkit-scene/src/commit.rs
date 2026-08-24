@@ -52,6 +52,15 @@ pub struct PlanePropertyMap {
     immutable: HashMap<u32, Vec<PropTag>>,
     /// Colorimetry properties, for the planes that expose them.
     color: HashMap<u32, ColorProps>,
+    /// The inclusive zpos range each plane advertises, where it has one.
+    ///
+    /// zpos is the one plane property drmkit *derives* rather than echoes: the
+    /// composition canvas asks to sit above every layer, and "above" is
+    /// computed from the layer count. Nothing in that arithmetic knows what
+    /// the plane will accept, and a plane whose range is `[1, 17]` rejects 19
+    /// with `EINVAL` -- taking the whole frame down with it, every correctly
+    /// programmed layer included.
+    pub(crate) zpos_range: HashMap<u32, (u64, u64)>,
     /// Planes whose colorimetry the kernel has already taken.
     ///
     /// These properties are sticky across clients, so they have to be written
@@ -107,6 +116,10 @@ impl PlanePropertyMap {
         };
         if let Some(color) = color {
             self.color.insert(plane_id, color);
+        }
+
+        if let Ok(Some(range)) = store.range(plane_id, PropTag::Zpos.name()) {
+            self.zpos_range.insert(plane_id, range);
         }
 
         let mut ids = HashMap::new();
@@ -205,6 +218,13 @@ pub fn emit_layer(
         let Some(property_id) = map.property_id(plane_id, tag) else {
             continue;
         };
+        // Before the baseline check, so the diff compares what the kernel will
+        // be told rather than what the caller asked for.
+        let value = if tag == PropTag::Zpos {
+            map.clamp_zpos(plane_id, value)
+        } else {
+            value
+        };
         // An externally bound layer's FB_ID is set up by the producer's
         // extension stack. Writing it from here fights that, so suppress it
         // even if something has stuffed one into the property bag.
@@ -218,6 +238,24 @@ pub fn emit_layer(
         written += 1;
     }
     Ok(written)
+}
+
+impl PlanePropertyMap {
+    /// Bring a derived zpos inside what the plane will actually take.
+    ///
+    /// Only zpos is clamped, and only against an unsigned range. Every other
+    /// plane property carries a value the caller measured or was handed -- a
+    /// rectangle, a framebuffer id -- where a value outside the range is a
+    /// real error that silently moving would hide. zpos alone is computed, so
+    /// it alone is worth bending to fit; a canvas one slot lower than asked is
+    /// still above every layer, whereas the alternative is no frame at all.
+    #[must_use]
+    pub fn clamp_zpos(&self, plane_id: u32, value: u64) -> u64 {
+        match self.zpos_range.get(&plane_id) {
+            Some((lo, hi)) => value.clamp(*lo, *hi),
+            None => value,
+        }
+    }
 }
 
 /// Whether a property has to be written, given what the kernel last took.

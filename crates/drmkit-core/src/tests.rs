@@ -475,3 +475,45 @@ fn test_masks_page_flip_event_vkms() {
         "PAGE_FLIP_EVENT must be masked out rather than rejected",
     );
 }
+
+/// A signed range is reported as no range at all.
+///
+/// Every atomic value crosses the ioctl boundary as a `u64`, so a signed
+/// range arrives as two's complement: `CRTC_X` spans `(-2^31, 2^31 - 1)`,
+/// which as `u64` is a pair whose "minimum" is the larger number. A caller
+/// clamping against that would turn `CRTC_X = -8` into `INT32_MAX` and push
+/// the layer off the far edge of the screen -- a bug that looks like a
+/// compositor fault, not a range fault. Reporting `None` makes that
+/// arithmetic impossible to write by accident.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn signed_ranges_are_not_reported_as_ranges_vkms() {
+    use drm::control::Device as _;
+
+    let device = Device::open(test_card()).expect("open card");
+    device.enable_universal_planes().expect("universal planes");
+    device.enable_atomic().expect("atomic");
+
+    let planes = device.plane_handles().expect("planes");
+    let plane: u32 = (*planes.first().expect("at least one plane")).into();
+
+    let mut store = PropertyStore::new();
+    store
+        .cache_properties(&device, plane, ObjectType::Plane)
+        .expect("plane properties");
+
+    // Unsigned: reported, and a sane interval.
+    let src_w = store.range(plane, "SRC_W").expect("SRC_W exists");
+    let (lo, hi) = src_w.expect("SRC_W is an unsigned range");
+    assert!(
+        lo <= hi,
+        "an unsigned range must not be inverted: [{lo}, {hi}]"
+    );
+
+    // Signed: withheld, precisely so nobody compares those two numbers.
+    assert_eq!(
+        store.range(plane, "CRTC_X").expect("CRTC_X exists"),
+        None,
+        "CRTC_X is a signed range and must not be reported as an unsigned one"
+    );
+}

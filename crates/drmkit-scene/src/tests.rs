@@ -1189,3 +1189,41 @@ fn a_plane_that_takes_a_fence_is_armed_with_it() {
 fn a_plane_without_the_property_falls_back_to_a_cpu_wait() {
     assert_eq!(crate::fence_action(None), crate::FenceAction::CpuWait);
 }
+
+/// A derived zpos is bent to fit the plane, not sent to be refused.
+///
+/// Found on a Raspberry Pi 5: vc4's overlays advertise `zpos [1, 17]`, the
+/// composition canvas asked for 19 -- one above the 18 layers in the scene --
+/// and the kernel refused the entire frame with `EINVAL`, all sixteen
+/// correctly programmed layers along with it. vkms exposes no zpos property at
+/// all, so nothing there ever writes one and no lane could have caught it.
+#[test]
+fn a_canvas_zpos_above_the_plane_range_is_clamped_not_sent() {
+    let mut map = PlanePropertyMap::new();
+    map.zpos_range.insert(7, (1, 17));
+
+    assert_eq!(
+        map.clamp_zpos(7, 19),
+        17,
+        "above the range clamps to the top"
+    );
+    assert_eq!(
+        map.clamp_zpos(7, 0),
+        1,
+        "below the range clamps to the bottom"
+    );
+    assert_eq!(map.clamp_zpos(7, 9), 9, "inside the range is left alone");
+    assert_eq!(
+        map.clamp_zpos(7, 17),
+        17,
+        "the top of the range is inside it"
+    );
+
+    // A plane that advertises no range is not second-guessed: the value goes
+    // as-is and the kernel decides, which is what happens on vkms.
+    assert_eq!(
+        map.clamp_zpos(8, 19),
+        19,
+        "no known range means no clamping"
+    );
+}

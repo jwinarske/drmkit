@@ -50,6 +50,24 @@ pub struct PropertyInfo {
     /// the one bit that has a caller and leaves the rest to
     /// [`get_property`](drm::control::Device::get_property).
     pub immutable: bool,
+    /// Inclusive `(min, max)` for an **unsigned** range property, `None` for
+    /// every other kind -- signed ranges included.
+    ///
+    /// The kernel rejects a range write outside these bounds with `EINVAL`,
+    /// and an atomic commit is all-or-nothing: one out-of-range value fails
+    /// the whole frame, including every layer that was fine. A caller that
+    /// derives a value rather than echoing one back -- a zpos computed from a
+    /// layer count, say -- has no other way to know what the plane will take.
+    ///
+    /// Signed ranges are deliberately not reported. The atomic ioctl carries
+    /// every value as a `u64`, so a signed range arrives as two's complement:
+    /// `CRTC_X`'s bounds are `(-2^31, 2^31 - 1)`, which as `u64` is
+    /// `(18446744071562067968, 2147483647)` -- a pair where the minimum
+    /// compares *greater* than the maximum. Anything doing unsigned arithmetic
+    /// on that would turn a small negative offset into `INT32_MAX`, so the
+    /// safe thing is to hand back nothing rather than a bound that is wrong in
+    /// a direction the caller cannot see.
+    pub range: Option<(u64, u64)>,
 }
 
 /// Per-object property cache.
@@ -94,11 +112,16 @@ impl PropertyStore {
                 // One unreadable property must not disqualify the object.
                 continue;
             };
+            let range = match info.value_type() {
+                drm::control::property::ValueType::UnsignedRange(lo, hi) => Some((*lo, *hi)),
+                _ => None,
+            };
             entries.push(PropertyInfo {
                 id: (*handle).into(),
                 name: info.name().to_string_lossy().into_owned(),
                 value: *value,
                 immutable: !info.mutable(),
+                range,
             });
         }
 
@@ -200,6 +223,19 @@ impl PropertyStore {
     /// As [`PropertyStore::property_id`].
     pub fn is_immutable(&self, object_id: u32, name: &str) -> Result<bool> {
         self.find(object_id, name).map(|p| p.immutable)
+    }
+
+    /// The inclusive `(min, max)` of a named unsigned range property.
+    ///
+    /// `None` when the property is not an unsigned range -- see
+    /// [`PropertyInfo::range`] -- which callers treat as "no bound to enforce"
+    /// rather than an error.
+    ///
+    /// # Errors
+    ///
+    /// As [`PropertyStore::property_id`].
+    pub fn range(&self, object_id: u32, name: &str) -> Result<Option<(u64, u64)>> {
+        self.find(object_id, name).map(|p| p.range)
     }
 
     /// Drop everything cached.

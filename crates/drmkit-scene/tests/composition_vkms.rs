@@ -24,6 +24,8 @@ use drmkit_scene::{
 
 static CARD_LOCK: Mutex<()> = Mutex::new(());
 
+mod common;
+
 fn card_guard() -> std::sync::MutexGuard<'static, ()> {
     CARD_LOCK
         .lock()
@@ -94,6 +96,7 @@ impl LayerBufferSource for OpaqueSource {
 }
 
 struct Fixture {
+    crtc_index: u32,
     device: Device,
     registry: PlaneRegistry,
     map: PlanePropertyMap,
@@ -119,7 +122,7 @@ fn fixture() -> Option<Fixture> {
 
     let resources = device.resource_handles().expect("resources");
     let crtcs = resources.crtcs();
-    let crtc_id: u32 = (*crtcs.first().expect("a CRTC")).into();
+    let (crtc_id, crtc_index) = common::pick_crtc(&device, &resources);
 
     let mut capabilities = Vec::new();
     for handle in device.plane_handles().expect("planes") {
@@ -156,7 +159,7 @@ fn fixture() -> Option<Fixture> {
     // depending on kernel version and module parameters -- ten here, fewer in
     // the lane -- so every case below is written against this count rather
     // than a number that happened to be true on one machine.
-    let planes = registry.force_disable_candidates(0).count();
+    let planes = registry.force_disable_candidates(crtc_index).count();
     assert!(
         planes > 0,
         "a CRTC with no usable plane cannot display anything"
@@ -172,6 +175,7 @@ fn fixture() -> Option<Fixture> {
         .expect("allocate the canvas");
 
     Some(Fixture {
+        crtc_index,
         device,
         registry,
         map,
@@ -210,14 +214,14 @@ fn build(fx: &mut Fixture) -> drmkit_scene::FrameBuild {
         &fx.device,
         &fx.map,
         &fx.registry,
-        0,
+        fx.crtc_index,
         AtomicCommitFlags::empty(),
         None,
     );
     fx.scene
         .build_frame(
             &fx.registry,
-            0,
+            fx.crtc_index,
             CommitKind::Real { arms_flip: false },
             &mut committer,
         )

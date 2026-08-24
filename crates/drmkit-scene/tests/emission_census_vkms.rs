@@ -20,6 +20,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Mutex;
 
+mod common;
+
 use drmkit_core::{AtomicCommitFlags, AtomicRequest, Device, ObjectType, PropertyStore};
 use drmkit_fmt::fourcc;
 use drmkit_planes::{PlaneCapabilities, PlaneRegistry, PlaneType};
@@ -66,6 +68,7 @@ impl LayerBufferSource for DumbSource {
 }
 
 struct Fixture {
+    crtc_index: u32,
     device: Device,
     next_acquire_fence: Option<SyncFence>,
     fence_slot: Rc<RefCell<Option<SyncFence>>>,
@@ -120,7 +123,7 @@ fn fixture() -> Option<Fixture> {
 
     let resources = device.resource_handles().expect("resources");
     let crtcs = resources.crtcs();
-    let crtc_id: u32 = (*crtcs.first().expect("at least one CRTC")).into();
+    let (crtc_id, crtc_index) = common::pick_crtc(&device, &resources);
 
     let mut capabilities = Vec::new();
     for handle in device.plane_handles().expect("planes") {
@@ -181,6 +184,7 @@ fn fixture() -> Option<Fixture> {
         });
 
     Some(Fixture {
+        crtc_index,
         device,
         next_acquire_fence: None,
         fence_slot,
@@ -203,14 +207,14 @@ fn build_one(fx: &mut Fixture) -> drmkit_scene::FrameBuild {
         &fx.device,
         &fx.map,
         &fx.registry,
-        0,
+        fx.crtc_index,
         AtomicCommitFlags::empty(),
         None,
     );
     fx.scene
         .build_frame(
             &fx.registry,
-            0,
+            fx.crtc_index,
             CommitKind::Real { arms_flip: false },
             &mut committer,
         )
@@ -222,7 +226,7 @@ fn frame(fx: &mut Fixture) -> AtomicRequest {
         &fx.device,
         &fx.map,
         &fx.registry,
-        0,
+        fx.crtc_index,
         AtomicCommitFlags::empty(),
         None,
     );
@@ -230,7 +234,7 @@ fn frame(fx: &mut Fixture) -> AtomicRequest {
         .scene
         .build_frame(
             &fx.registry,
-            0,
+            fx.crtc_index,
             CommitKind::Real { arms_flip: false },
             &mut committer,
         )

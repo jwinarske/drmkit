@@ -252,6 +252,19 @@ pub struct Diagnostics {
     /// Implies `test_commits_issued == 0` for the frame. This is the counter
     /// invariant 4 is stated in terms of.
     pub fb_delta_fast_path: bool,
+    /// Whether the per-frame test-commit budget ran out before every layer had
+    /// been offered a plane.
+    ///
+    /// The budget bounds how many round trips to the kernel one frame may
+    /// cost. Spending it is not an error -- the layers it could not reach fall
+    /// through to composition and still reach the screen -- but it is a
+    /// *capacity* limit rather than a hardware one, and the two look identical
+    /// in `layers_composited`. On a device with many planes and a scene of
+    /// spatially disjoint layers, each layer forms its own group costing one
+    /// test commit, so a 17-layer scene exhausts the default budget of 16 and
+    /// composites its last layer with a free, compatible plane sitting unused.
+    /// Without this flag that reads as "the hardware ran out of planes".
+    pub budget_exhausted: bool,
 }
 
 /// The result of one allocation pass.
@@ -294,6 +307,9 @@ pub struct Allocator {
     probe_cache: ModifierProbeCache,
     max_test_commits: usize,
     test_commits_this_frame: usize,
+    /// Whether the budget stopped a test this frame -- see
+    /// [`Diagnostics::budget_exhausted`].
+    budget_exhausted_this_frame: bool,
     matcher: BipartiteMatching,
 }
 
@@ -320,6 +336,7 @@ impl Allocator {
             probe_cache: ModifierProbeCache::new(),
             max_test_commits: Self::DEFAULT_MAX_TEST_COMMITS,
             test_commits_this_frame: 0,
+            budget_exhausted_this_frame: false,
             matcher: BipartiteMatching::new(),
         }
     }
@@ -533,6 +550,7 @@ impl Allocator {
         committer: &mut C,
     ) -> Result<Allocation, TestFailure> {
         self.test_commits_this_frame = 0;
+        self.budget_exhausted_this_frame = false;
 
         // Layers the allocator must not touch: the scene owns their planes.
         let placeable: Vec<LayerRef<'_>> = layers
@@ -585,6 +603,7 @@ impl Allocator {
                 diagnostics: Diagnostics {
                     test_commits_issued: 0,
                     fb_delta_fast_path: true,
+                    budget_exhausted: false,
                 },
             });
         }
@@ -608,6 +627,7 @@ impl Allocator {
                             diagnostics: Diagnostics {
                                 test_commits_issued: self.test_commits_this_frame,
                                 fb_delta_fast_path: false,
+                                budget_exhausted: false,
                             },
                         });
                     }
@@ -632,6 +652,7 @@ impl Allocator {
             diagnostics: Diagnostics {
                 test_commits_issued: self.test_commits_this_frame,
                 fb_delta_fast_path: false,
+                budget_exhausted: self.budget_exhausted_this_frame,
             },
         })
     }
@@ -776,6 +797,7 @@ impl Allocator {
                 break;
             }
             if self.test_commits_this_frame >= self.max_test_commits {
+                self.budget_exhausted_this_frame = true;
                 break;
             }
         }
@@ -792,6 +814,7 @@ impl Allocator {
         committer: &mut C,
     ) -> Result<bool, TestFailure> {
         if self.test_commits_this_frame >= self.max_test_commits {
+            self.budget_exhausted_this_frame = true;
             return Ok(false);
         }
         let pairs = Self::pairs_for(assignment, present);

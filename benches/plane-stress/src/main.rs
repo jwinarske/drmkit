@@ -132,14 +132,51 @@ impl LayerBufferSource for Source {
     }
 }
 
-fn build_registry(device: &Device) -> Result<(PlaneRegistry, u32), String> {
+/// Index of the first CRTC a connected connector is routed to.
+fn connected_crtc(device: &Device, resources: &drm::control::ResourceHandles) -> Option<usize> {
+    use drm::control::Device as _;
+
+    let crtcs = resources.crtcs();
+    for handle in resources.connectors() {
+        let Ok(connector) = device.get_connector(*handle, false) else {
+            continue;
+        };
+        if connector.state() != drm::control::connector::State::Connected {
+            continue;
+        }
+        let encoder = connector.current_encoder()?;
+        let Ok(encoder) = device.get_encoder(encoder) else {
+            continue;
+        };
+        let Some(crtc) = encoder.crtc() else {
+            continue;
+        };
+        if let Some(index) = crtcs.iter().position(|candidate| *candidate == crtc) {
+            return Some(index);
+        }
+    }
+    None
+}
+
+fn build_registry(device: &Device) -> Result<(PlaneRegistry, u32, u32), String> {
     use drm::control::Device as _;
 
     let resources = device
         .resource_handles()
         .map_err(|e| format!("resources: {e}"))?;
     let crtcs = resources.crtcs();
-    let crtc_id: u32 = (*crtcs.first().ok_or("no CRTC")?).into();
+    // Not `crtcs.first()`: on hardware with several CRTCs the first is often
+    // inactive with nothing plugged into it, and stressing plane allocation
+    // against a CRTC that cannot scan out measures nothing. Prefer one a
+    // connected connector is routed to; `DRMKIT_TEST_CRTC` overrides.
+    let chosen = std::env::var("DRMKIT_TEST_CRTC")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|index| *index < crtcs.len())
+        .or_else(|| connected_crtc(device, &resources))
+        .unwrap_or(0);
+    let crtc_id: u32 = (*crtcs.get(chosen).ok_or("no CRTC")?).into();
+    let crtc_index = u32::try_from(chosen).map_err(|e| format!("CRTC index: {e}"))?;
 
     let mut capabilities = Vec::new();
     for handle in device.plane_handles().map_err(|e| format!("planes: {e}"))? {
@@ -173,7 +210,11 @@ fn build_registry(device: &Device) -> Result<(PlaneRegistry, u32), String> {
             ..PlaneCapabilities::default()
         });
     }
-    Ok((PlaneRegistry::from_capabilities(capabilities), crtc_id))
+    Ok((
+        PlaneRegistry::from_capabilities(capabilities),
+        crtc_id,
+        crtc_index,
+    ))
 }
 
 fn run(cfg: &Config) -> Result<String, String> {
@@ -186,8 +227,8 @@ fn run(cfg: &Config) -> Result<String, String> {
         return Err("another client holds DRM master".into());
     }
 
-    let (registry, crtc_id) = build_registry(&device)?;
-    let planes = registry.force_disable_candidates(0).count();
+    let (registry, crtc_id, crtc_index) = build_registry(&device)?;
+    let planes = registry.force_disable_candidates(crtc_index).count();
     let mut map = PlanePropertyMap::new();
     map.learn_all(&device, &registry)
         .map_err(|e| format!("learn planes: {e}"))?;
@@ -240,7 +281,7 @@ fn run(cfg: &Config) -> Result<String, String> {
             &device,
             &map,
             &registry,
-            0,
+            crtc_index,
             AtomicCommitFlags::empty(),
             None,
         );
@@ -248,7 +289,7 @@ fn run(cfg: &Config) -> Result<String, String> {
         let build = scene
             .build_frame(
                 &registry,
-                0,
+                crtc_index,
                 CommitKind::Real { arms_flip: false },
                 &mut committer,
             )

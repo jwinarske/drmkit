@@ -144,6 +144,18 @@ pub struct CommitReport {
     /// confirm it is paying one atomic commit per frame rather than two.
     pub fb_delta_fast_path: bool,
 
+    /// Whether the per-frame test-commit budget, not the hardware, is what
+    /// stopped more layers reaching planes.
+    ///
+    /// When this is set, some of `layers_composited` is a capacity decision
+    /// rather than a plane shortage: there were compatible planes free and the
+    /// allocator ran out of permitted round trips to the kernel before it
+    /// could offer them. Composited layers still reach the screen, so this is
+    /// not an error -- but a caller tuning a scene needs to tell "this device
+    /// has no more planes" from "raise the budget", and `layers_composited`
+    /// alone cannot. Raise it with `Allocator::set_max_test_commits`.
+    pub budget_exhausted: bool,
+
     /// Per-layer outcomes.
     pub placements: Vec<LayerPlacement>,
 }

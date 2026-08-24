@@ -16,6 +16,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Mutex;
 
+mod common;
+
 use drmkit_core::{AtomicCommitFlags, Device};
 use drmkit_fmt::fourcc;
 use drmkit_planes::PlaneRegistry;
@@ -134,12 +136,7 @@ fn harness() -> Option<Harness> {
     let resources = device
         .resource_handles()
         .expect("a modeset card must report its resources");
-    let crtc = *resources
-        .crtcs()
-        .first()
-        .expect("a modeset card must have at least one CRTC");
-    let crtc_id: u32 = crtc.into();
-    let crtc_index = 0;
+    let (crtc_id, crtc_index) = common::pick_crtc(&device, &resources);
 
     // Build the registry from the device's real planes.
     //

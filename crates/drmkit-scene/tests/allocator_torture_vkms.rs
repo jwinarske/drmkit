@@ -18,9 +18,11 @@
 
 use std::sync::Mutex;
 
+mod common;
+
 use drmkit_core::{AtomicCommitFlags, Device, ObjectType, PropertyStore};
 use drmkit_fmt::fourcc;
-use drmkit_planes::{PlaneCapabilities, PlaneRegistry, PlaneType};
+use drmkit_planes::{Allocator, PlaneCapabilities, PlaneRegistry, PlaneType};
 use drmkit_scene::{
     AcquiredBuffer, CommitKind, CommitReport, DeviceCommitter, DisplayParams, KernelResult,
     LayerBufferSource, LayerHandle, LayerScene, PlanePropertyMap, Rect, SourceError, SourceFormat,
@@ -80,6 +82,7 @@ impl LayerBufferSource for Source {
 }
 
 struct Rig {
+    crtc_index: u32,
     device: Device,
     registry: PlaneRegistry,
     map: PlanePropertyMap,
@@ -104,7 +107,7 @@ fn rig() -> Option<Rig> {
 
     let resources = device.resource_handles().expect("resources");
     let crtcs = resources.crtcs();
-    let crtc_id: u32 = (*crtcs.first().expect("a CRTC")).into();
+    let (crtc_id, crtc_index) = common::pick_crtc(&device, &resources);
 
     let mut capabilities = Vec::new();
     for handle in device.plane_handles().expect("planes") {
@@ -137,7 +140,7 @@ fn rig() -> Option<Rig> {
         });
     }
     let registry = PlaneRegistry::from_capabilities(capabilities);
-    let planes = registry.force_disable_candidates(0).count();
+    let planes = registry.force_disable_candidates(crtc_index).count();
     assert!(planes > 0, "a CRTC with no usable plane cannot display");
     println!("note: {planes} candidate plane(s)");
 
@@ -150,6 +153,7 @@ fn rig() -> Option<Rig> {
         .expect("composition canvas");
 
     Some(Rig {
+        crtc_index,
         device,
         registry,
         map,
@@ -185,7 +189,7 @@ impl Rig {
             &self.device,
             &self.map,
             &self.registry,
-            0,
+            self.crtc_index,
             AtomicCommitFlags::empty(),
             None,
         );
@@ -193,7 +197,7 @@ impl Rig {
             .scene
             .build_frame(
                 &self.registry,
-                0,
+                self.crtc_index,
                 CommitKind::Real { arms_flip: false },
                 &mut committer,
             )
@@ -385,10 +389,20 @@ fn a_steady_frame_costs_no_test_commit_vkms() {
     let _guard = card_guard();
     let Some(mut rig) = rig() else { return };
 
-    // Exactly as many layers as there are planes, so everything is placed and
-    // the frame is a pure fast path. Two layers hardcoded overflows a CRTC
-    // with one usable plane -- which the lane has, and this machine does not.
-    for i in 0..rig.planes {
+    // As many layers as can actually be placed in one frame, so everything
+    // lands on a plane and the frame is a pure fast path. Two hardcoded
+    // overflows a CRTC with one usable plane -- which the lane has, and this
+    // machine does not.
+    //
+    // The bound is the smaller of the plane count and the allocator's
+    // per-frame test-commit budget. These layers are spatially disjoint, so
+    // each forms its own group costing one test commit: on vc4's 17 candidate
+    // planes a 17-layer scene spends the default budget of 16 and composites
+    // the last one, which is a capacity decision and not the plane shortage
+    // this test is about. `a_layer_past_the_budget_is_composited_and_says_so`
+    // covers that case deliberately.
+    let placeable = rig.planes.min(Allocator::DEFAULT_MAX_TEST_COMMITS);
+    for i in 0..placeable {
         rig.add(
             i32::try_from(i).expect("small") * 64,
             0,
@@ -410,4 +424,59 @@ fn a_steady_frame_costs_no_test_commit_vkms() {
         "the fast path exists to skip the test commit entirely"
     );
     assert!(steady.fast_path_consistent());
+}
+
+/// Running out of budget is reported as budget, not as a plane shortage.
+///
+/// Found on a Raspberry Pi 5, whose connected CRTC offers 17 candidate planes
+/// -- one more than the default per-frame test-commit budget. Spatially
+/// disjoint layers are placed one group at a time at one test commit each, so
+/// the seventeenth layer never gets offered the seventeenth plane: it falls
+/// through to composition with a free, compatible plane sitting unused. That
+/// is a defensible thing to do, and an indefensible thing to do silently --
+/// `layers_composited` alone cannot be told apart from "the device is out of
+/// planes". vkms has far fewer planes than the budget, so no lane there can
+/// reach this.
+#[test]
+#[ignore = "needs a DRM device with more planes than the test-commit budget"]
+fn a_layer_past_the_budget_is_composited_and_says_so_vkms() {
+    let _guard = card_guard();
+    let Some(mut rig) = rig() else { return };
+
+    let budget = Allocator::DEFAULT_MAX_TEST_COMMITS;
+    if rig.planes <= budget {
+        println!(
+            "note: skipped -- {} candidate plane(s) does not exceed the budget of {budget}",
+            rig.planes
+        );
+        return;
+    }
+
+    // One layer per plane, all disjoint, so every one of them costs a group.
+    for i in 0..rig.planes {
+        rig.add(
+            i32::try_from(i).expect("small") * 64,
+            0,
+            u64::try_from(i).expect("small"),
+        );
+    }
+    let report = rig.frame();
+    rig.scene.drain();
+
+    assert!(
+        report.budget_exhausted,
+        "the budget bound this frame and the report has to say so: {report:?}"
+    );
+    assert_eq!(
+        report.test_commits_issued, budget,
+        "a budget-bound frame spends exactly the budget: {report:?}"
+    );
+    assert!(
+        report.layers_composited >= 1,
+        "the layers the budget could not reach still have to reach the screen: {report:?}"
+    );
+    assert_eq!(
+        report.layers_unassigned, 0,
+        "composited is not dropped -- every layer is accounted for: {report:?}"
+    );
 }

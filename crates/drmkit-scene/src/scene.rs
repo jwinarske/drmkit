@@ -908,6 +908,7 @@ fn build_report(
         layers_skipped_no_frame: tally.skipped_no_frame,
         test_commits_issued: allocation.diagnostics.test_commits_issued,
         fb_delta_fast_path: allocation.diagnostics.fb_delta_fast_path,
+        budget_exhausted: allocation.diagnostics.budget_exhausted,
         placements,
         ..CommitReport::default()
     }

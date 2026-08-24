@@ -131,16 +131,53 @@ pub fn emit_layer(
     map: &PlanePropertyMap,
     plane_id: u32,
     layer: &drmkit_planes::Layer,
+    baseline: Option<&drmkit_planes::PropertySnapshot>,
 ) -> Result<usize, CoreError> {
     let mut written = 0;
     for (tag, value) in layer.properties() {
         let Some(property_id) = map.property_id(plane_id, tag) else {
             continue;
         };
+        // An externally bound layer's FB_ID is set up by the producer's
+        // extension stack. Writing it from here fights that, so suppress it
+        // even if something has stuffed one into the property bag.
+        if layer.is_externally_bound() && tag == PropTag::FbId {
+            continue;
+        }
+        if !needs_write(tag, value, baseline) {
+            continue;
+        }
         request.add_property(plane_id, property_id, value)?;
         written += 1;
     }
     Ok(written)
+}
+
+/// Whether a property has to be written, given what the kernel last took.
+///
+/// `baseline` of `None` means write everything -- see
+/// [`committed_baseline`](drmkit_planes::Allocator::committed_baseline).
+fn needs_write(
+    tag: PropTag,
+    value: u64,
+    baseline: Option<&drmkit_planes::PropertySnapshot>,
+) -> bool {
+    // Two properties are written every commit no matter what the diff says.
+    //
+    // FB_ID is how KMS is told this is a new frame: the kernel schedules the
+    // page-flip event off the re-attach. A single-buffered source whose pixels
+    // mutate in place presents the same id every frame, so diffing it away
+    // leaves an otherwise-clean scene with an empty request -- which the kernel
+    // accepts and then never queues an event for, wedging the caller's flip
+    // forever.
+    //
+    // IN_FENCE_FD is a one-shot the kernel consumes each commit. An fd number
+    // the diff happens to see unchanged, because the value was recycled, still
+    // has to be re-armed or the plane scans out before its buffer is ready.
+    if matches!(tag, PropTag::FbId | PropTag::InFenceFd) {
+        return true;
+    }
+    baseline.is_none_or(|snapshot| snapshot.get(tag) != Some(value))
 }
 
 /// Emit the writes that detach a plane.
@@ -228,8 +265,14 @@ impl TestCommitter for DeviceCommitter<'_> {
                 return Err(TestFailure::Rejected);
             }
         }
+        // Full writes, deliberately. A search commit proposes a configuration
+        // the kernel has not seen; diffing it against what the kernel last
+        // took would test a request that is only valid as a delta from the
+        // current state, while the assignment being tried is not that state.
+        // Upstream splits the same way -- the search path and the apply path
+        // are different functions there for this reason.
         for (plane_id, layer) in assignment {
-            if emit_layer(&mut request, self.map, *plane_id, layer.layer).is_err() {
+            if emit_layer(&mut request, self.map, *plane_id, layer.layer, None).is_err() {
                 return Err(TestFailure::Rejected);
             }
         }
@@ -349,22 +392,25 @@ impl<'a> Modeset<'a> {
 pub fn emit_frame(
     request: &mut drmkit_core::AtomicRequest,
     map: &PlanePropertyMap,
-    registry: &drmkit_planes::PlaneRegistry,
-    crtc_index: u32,
     plan: &[crate::PlanePlan],
+    disables: &[u32],
     modeset: Option<&Modeset<'_>>,
 ) -> Result<usize, CoreError> {
     let mut written = 0;
     if let Some(modeset) = modeset {
         written += modeset.emit(request)?;
     }
-    for plane in registry.force_disable_candidates(crtc_index) {
-        if !plan.iter().any(|entry| entry.plane_id == plane.id) {
-            written += emit_disable(request, map, plane.id)?;
-        }
+    for plane_id in disables {
+        written += emit_disable(request, map, *plane_id)?;
     }
     for entry in plan {
-        written += emit_layer(request, map, entry.plane_id, &entry.layer)?;
+        written += emit_layer(
+            request,
+            map,
+            entry.plane_id,
+            &entry.layer,
+            entry.baseline.as_ref(),
+        )?;
     }
     Ok(written)
 }

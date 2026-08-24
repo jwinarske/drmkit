@@ -166,6 +166,12 @@ pub struct PlanePlan {
     pub layer_id: LayerId,
     /// The lowered property bag to write.
     pub layer: drmkit_planes::Layer,
+    /// What the kernel last took on this plane, or `None` to write it all.
+    ///
+    /// Captured at build time on purpose: the baseline is replaced when the
+    /// frame is finalized, so reading it afterwards would diff this frame
+    /// against itself and suppress every property.
+    pub baseline: Option<drmkit_planes::PropertySnapshot>,
 }
 
 /// leaks them** — the same contract the C++ states, and the reason this type
@@ -174,6 +180,7 @@ pub struct PlanePlan {
 pub struct FrameBuild {
     acquisitions: Vec<Acquisition>,
     plan: Vec<PlanePlan>,
+    disables: Vec<u32>,
     report: CommitReport,
     kind: CommitKind,
     finalized: bool,
@@ -201,6 +208,20 @@ impl FrameBuild {
     #[must_use]
     pub fn plan(&self) -> &[PlanePlan] {
         &self.plan
+    }
+
+    /// Planes this frame has to switch off.
+    ///
+    /// Candidate planes the frame did not use **and** that the kernel does not
+    /// already have off. Re-disabling an already-off plane is two property
+    /// writes per plane per frame that change nothing.
+    ///
+    /// Computed at build time for the same reason as
+    /// [`PlanePlan::baseline`]: finalizing the frame replaces the state this
+    /// is derived from.
+    #[must_use]
+    pub fn disables(&self) -> &[u32] {
+        &self.disables
     }
 }
 
@@ -538,23 +559,18 @@ impl LayerScene {
             }
         }
 
-        let plan = plane_layers
-            .iter()
-            .filter_map(|(id, layer)| {
-                allocation
-                    .assignment
-                    .get_plane_of(*id)
-                    .map(|plane_id| PlanePlan {
-                        plane_id,
-                        layer_id: *id,
-                        layer: layer.clone(),
-                    })
-            })
-            .collect();
+        let (plan, disables) = build_plan(
+            &self.allocator,
+            &allocation,
+            &plane_layers,
+            registry,
+            crtc_index,
+        );
 
         Ok(FrameBuild {
             acquisitions,
             plan,
+            disables,
             report,
             kind,
             finalized: false,
@@ -701,6 +717,47 @@ fn build_report(
         placements,
         ..CommitReport::default()
     }
+}
+
+/// Work out what this frame writes: which layer goes on which plane, with what
+/// baseline to diff against, and which planes have to be switched off.
+///
+/// Both halves read the allocator's committed baseline, so both have to be
+/// computed **before** the frame is finalized -- finalizing replaces that
+/// baseline with this frame's own, and a plan derived from it afterwards would
+/// diff the frame against itself and write nothing at all.
+fn build_plan(
+    allocator: &drmkit_planes::Allocator,
+    allocation: &drmkit_planes::Allocation,
+    plane_layers: &[(LayerId, drmkit_planes::Layer)],
+    registry: &PlaneRegistry,
+    crtc_index: u32,
+) -> (Vec<PlanePlan>, Vec<u32>) {
+    let plan: Vec<PlanePlan> = plane_layers
+        .iter()
+        .filter_map(|(id, layer)| {
+            allocation
+                .assignment
+                .get_plane_of(*id)
+                .map(|plane_id| PlanePlan {
+                    plane_id,
+                    layer_id: *id,
+                    layer: layer.clone(),
+                    baseline: allocator.committed_baseline(plane_id, *id).copied(),
+                })
+        })
+        .collect();
+
+    let disables = registry
+        .force_disable_candidates(crtc_index)
+        .map(|plane| plane.id)
+        .filter(|plane_id| {
+            !plan.iter().any(|entry| entry.plane_id == *plane_id)
+                && !allocator.plane_is_off(*plane_id)
+        })
+        .collect();
+
+    (plan, disables)
 }
 
 impl Drop for LayerScene {

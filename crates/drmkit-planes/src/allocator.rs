@@ -12,6 +12,7 @@ use drmkit_fmt::{Modifier, ModifierProbeCache, Verdict};
 
 use crate::layer::Layer;
 use crate::matching::BipartiteMatching;
+use crate::prop::PropTag;
 use crate::registry::{PlaneCapabilities, PlaneRegistry};
 use crate::scoring::{
     ScoreContext, keep_priority, plane_statically_compatible, score_pair, split_independent_groups,
@@ -267,7 +268,12 @@ pub struct Allocation {
 /// What the kernel accepted for a plane last commit.
 #[derive(Debug, Clone, Copy)]
 struct LastCommitted {
-    layer: LayerId,
+    /// `None` once the layer is gone but the plane is still lit -- see
+    /// [`Allocator::forget_layer`].
+    layer: Option<LayerId>,
+    /// Every property the kernel took, so the next commit can write only what
+    /// actually changed.
+    properties: crate::PropertySnapshot,
     /// `property_hash` at commit time, which excludes `FB_ID` and
     /// `IN_FENCE_FD`. The fast path compares against this to prove geometry,
     /// format, and modifier are unchanged since the kernel accepted them.
@@ -280,6 +286,8 @@ pub struct Allocator {
     previous: PlaneAssignment,
     previous_valid: bool,
     last_committed: HashMap<u32, LastCommitted>,
+    /// Driver-quirk opt-out; see `set_force_full_property_writes`.
+    force_full_writes: bool,
     failure_cache: TestCache,
     probe_cache: ModifierProbeCache,
     max_test_commits: usize,
@@ -304,6 +312,7 @@ impl Allocator {
             previous: PlaneAssignment::new(),
             previous_valid: false,
             last_committed: HashMap::new(),
+            force_full_writes: false,
             failure_cache: TestCache::new(),
             probe_cache: ModifierProbeCache::new(),
             max_test_commits: Self::DEFAULT_MAX_TEST_COMMITS,
@@ -337,7 +346,8 @@ impl Allocator {
         self.last_committed.insert(
             plane_id,
             LastCommitted {
-                layer: layer.id,
+                layer: Some(layer.id),
+                properties: layer.layer.snapshot(),
                 hash: layer.layer.property_hash(),
             },
         );
@@ -359,6 +369,60 @@ impl Allocator {
         }
     }
 
+    /// What the kernel last took on `plane_id`, if this commit may diff
+    /// against it.
+    ///
+    /// `None` means every property must be written:
+    ///
+    /// * the plane has no baseline -- first use, or it was detached since;
+    /// * the baseline belongs to a **different** layer, so the incoming one
+    ///   would silently inherit any property the outgoing layer set and it
+    ///   does not (a stale rotation, a stale alpha);
+    /// * full writes were forced for a driver that mishandles partial ones.
+    #[must_use]
+    pub fn committed_baseline(
+        &self,
+        plane_id: u32,
+        layer: LayerId,
+    ) -> Option<&crate::PropertySnapshot> {
+        if self.force_full_writes {
+            return None;
+        }
+        self.last_committed
+            .get(&plane_id)
+            .filter(|baseline| baseline.layer == Some(layer))
+            .map(|baseline| &baseline.properties)
+    }
+
+    /// Whether the kernel currently has nothing on `plane_id`.
+    ///
+    /// A plane with no baseline was never activated, or was detached by the
+    /// commit that dropped it. Either way the kernel already has it off, and
+    /// disabling it again is a pair of property writes the kernel still has to
+    /// walk on every frame.
+    #[must_use]
+    pub fn plane_is_off(&self, plane_id: u32) -> bool {
+        self.last_committed.get(&plane_id).is_none_or(|baseline| {
+            baseline
+                .properties
+                .get(PropTag::FbId)
+                .is_none_or(|fb| fb == 0)
+        })
+    }
+
+    /// Re-emit every property on every commit, for drivers that mishandle a
+    /// partial write. Off by default; this is a quirk escape hatch, not a
+    /// tuning knob -- it multiplies per-frame property traffic.
+    pub const fn set_force_full_property_writes(&mut self, force: bool) {
+        self.force_full_writes = force;
+    }
+
+    /// Whether full property writes are being forced.
+    #[must_use]
+    pub const fn force_full_property_writes(&self) -> bool {
+        self.force_full_writes
+    }
+
     /// Drop every trace of a layer the scene has removed.
     ///
     /// Without this the cached assignment still names the departed layer, so
@@ -377,8 +441,19 @@ impl Allocator {
         while let Some(plane_id) = self.previous.get_plane_of(layer) {
             self.previous.remove(plane_id);
         }
-        self.last_committed
-            .retain(|_, baseline| baseline.layer != layer);
+        // Clear the identity but keep the entry. The entry is the only record
+        // that the kernel still has this plane lit: dropping it would make the
+        // plane look already-off, so nothing would disable it and it would go
+        // on scanning out the departed layer's last framebuffer.
+        //
+        // Losing the identity is what forces a full property write for the
+        // next layer to land here, which is the other half of what upstream's
+        // pointer-nulling buys.
+        for baseline in self.last_committed.values_mut() {
+            if baseline.layer == Some(layer) {
+                baseline.layer = None;
+            }
+        }
         if self.previous.is_empty() {
             self.previous_valid = false;
         }
@@ -417,7 +492,7 @@ impl Allocator {
                 return false; // a previously-placed layer is gone this frame
             };
             self.last_committed.get(plane_id).is_some_and(|baseline| {
-                baseline.layer == *layer_id && baseline.hash == current.layer.property_hash()
+                baseline.layer == Some(*layer_id) && baseline.hash == current.layer.property_hash()
             })
         })
     }

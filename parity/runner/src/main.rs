@@ -213,9 +213,8 @@ impl<'a> Runner<'a> {
         emit_frame(
             &mut request,
             &self.map,
-            &self.registry,
-            self.crtc_index,
             build.plan(),
+            build.disables(),
             modeset,
         )
         .map_err(|e| format!("emit: {e}"))?;

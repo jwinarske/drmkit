@@ -604,3 +604,111 @@ fn removing_a_layer_does_not_force_a_search() {
         "removing a layer must not re-test the survivors"
     );
 }
+
+// --- invariant 4: the steady-state property-write census ---------------------
+
+/// A steady frame re-disables nothing and diffs everything.
+///
+/// **Invariant 4.** Once the kernel has taken a configuration, the next frame's
+/// job is to hand it new buffers, not to restate the configuration. Two things
+/// have to hold for that: every assigned plane must carry a baseline to diff
+/// against, and no plane the kernel already has off may be disabled again.
+///
+/// Re-disabling costs two property writes per idle plane per frame, which on a
+/// card with ten planes is most of the frame's property traffic and none of its
+/// meaning.
+#[test]
+fn a_steady_frame_disables_nothing_and_diffs_everything() {
+    let log = Rc::new(RefCell::new(SourceLog::default()));
+    let mut scene = LayerScene::new(1);
+    let handle = scene.add_layer(Box::new(TestSource::new(&log)));
+    scene
+        .layer_mut(handle)
+        .expect("layer")
+        .set_display(full_screen());
+
+    let registry = registry();
+    let mut committer = Accepting::default();
+
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("first frame");
+    assert!(
+        build.plan().iter().all(|entry| entry.baseline.is_none()),
+        "the first frame has no baseline and must write every property"
+    );
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("second frame");
+    let all_have_baselines = build.plan().iter().all(|entry| entry.baseline.is_some());
+    let disables = build.disables().to_vec();
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+
+    assert!(
+        all_have_baselines,
+        "a plane the kernel already accepted must be diffed, not re-stated"
+    );
+    assert!(
+        disables.is_empty(),
+        "no plane changed hands, so nothing needs disabling; got {disables:?}"
+    );
+}
+
+/// The plane a removed layer was using still gets switched off.
+///
+/// Dropping the layer removes the scene's reason to program that plane, but the
+/// kernel is still scanning out whatever was on it. The frame after a removal
+/// has to disable it explicitly or it keeps displaying the departed layer's
+/// last framebuffer.
+///
+/// This is the hazard in pruning the allocator's committed baseline on removal:
+/// the baseline entry is the only record that the plane is still lit, so
+/// erasing it makes the plane look already-off and nothing disables it. The
+/// entry is kept and its layer identity cleared instead.
+#[test]
+fn the_plane_a_removed_layer_held_is_disabled() {
+    let log = Rc::new(RefCell::new(SourceLog::default()));
+    let mut scene = LayerScene::new(1);
+    let keep = scene.add_layer(Box::new(TestSource::new(&log)));
+    let drop_me = scene.add_layer(Box::new(TestSource::new(&log)));
+    for handle in [keep, drop_me] {
+        scene
+            .layer_mut(handle)
+            .expect("layer")
+            .set_display(full_screen());
+    }
+
+    let registry = registry();
+    let mut committer = Accepting::default();
+
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("first frame");
+    let vacated = build
+        .plan()
+        .iter()
+        .find(|entry| entry.layer_id == drop_me.layer_id())
+        .map(|entry| entry.plane_id)
+        .expect("the layer being dropped must have been placed");
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+
+    scene.remove_layer(drop_me);
+
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("frame after removal");
+    let disables = build.disables().to_vec();
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+
+    assert!(
+        disables.contains(&vacated),
+        "plane {vacated} still holds the removed layer's framebuffer and was \
+         not disabled; disables were {disables:?}"
+    );
+}

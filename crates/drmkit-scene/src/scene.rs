@@ -157,12 +157,23 @@ enum Slot {
 /// A frame that has been built and is awaiting the kernel's answer.
 ///
 /// Holding one means holding acquisitions. **Dropping it without finalizing
+/// One plane's share of a built frame.
+#[derive(Debug, Clone)]
+pub struct PlanePlan {
+    /// The plane this layer landed on.
+    pub plane_id: u32,
+    /// Which layer it is, for the allocator's committed baseline.
+    pub layer_id: LayerId,
+    /// The lowered property bag to write.
+    pub layer: drmkit_planes::Layer,
+}
+
 /// leaks them** — the same contract the C++ states, and the reason this type
 /// warns on drop.
 #[derive(Debug)]
 pub struct FrameBuild {
     acquisitions: Vec<Acquisition>,
-    plan: Vec<(u32, drmkit_planes::Layer)>,
+    plan: Vec<PlanePlan>,
     report: CommitReport,
     kind: CommitKind,
     finalized: bool,
@@ -188,7 +199,7 @@ impl FrameBuild {
     /// kernel has already accepted this exact set -- emitting it is the cheap
     /// part.
     #[must_use]
-    pub fn plan(&self) -> &[(u32, drmkit_planes::Layer)] {
+    pub fn plan(&self) -> &[PlanePlan] {
         &self.plan
     }
 }
@@ -365,7 +376,11 @@ impl LayerScene {
             self.retiring.push((handle.layer_id(), layer.source));
         }
 
-        self.allocator.invalidate_allocation();
+        // Prune just this layer rather than dropping the whole warm-start
+        // cache. Removing a layer only frees resources, so the assignment the
+        // kernel already accepted stays valid without it -- invalidating would
+        // force a full search, and a full search is several test commits.
+        self.allocator.forget_layer(handle.layer_id());
         true
     }
 
@@ -529,7 +544,11 @@ impl LayerScene {
                 allocation
                     .assignment
                     .get_plane_of(*id)
-                    .map(|plane_id| (plane_id, layer.clone()))
+                    .map(|plane_id| PlanePlan {
+                        plane_id,
+                        layer_id: *id,
+                        layer: layer.clone(),
+                    })
             })
             .collect();
 
@@ -549,6 +568,35 @@ impl LayerScene {
         let acquisitions = std::mem::take(&mut build.acquisitions);
         let report = std::mem::take(&mut build.report);
         let kind = build.kind;
+        let plan = std::mem::take(&mut build.plan);
+
+        // Record what the kernel actually took, so the next frame's FB-only
+        // fast path has a baseline to diff against (invariant 4).
+        //
+        // Only after a real commit that succeeded. A `TEST_ONLY` applies
+        // nothing, so recording one would let a later commit diff against
+        // state the kernel never held and suppress properties it still needs.
+        //
+        // Without this the baseline stays empty forever, `is_fb_only_frame`
+        // can never be true, and the fast path is unreachable outside the
+        // unit tests that populate the baseline by hand -- which is exactly
+        // how it went unnoticed until the parity harness counted the test
+        // commits the reference did not issue.
+        if matches!(kind, CommitKind::Real { .. }) && matches!(result, KernelResult::Ok) {
+            let applied: Vec<(u32, drmkit_planes::LayerRef<'_>)> = plan
+                .iter()
+                .map(|entry| {
+                    (
+                        entry.plane_id,
+                        drmkit_planes::LayerRef {
+                            id: entry.layer_id,
+                            layer: &entry.layer,
+                        },
+                    )
+                })
+                .collect();
+            self.allocator.record_commit(&applied);
+        }
 
         let wants_fence = |_layer: LayerId| false;
         let outcome: FrameOutcome =

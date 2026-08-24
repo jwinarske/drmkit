@@ -497,3 +497,110 @@ fn a_scene_without_an_armed_flip_drops_cleanly() {
     assert!(!scene.has_pending_flip());
     scene.drain();
 }
+
+// --- invariant 4: the fast path has to be reachable from the scene -----------
+
+/// A steady frame issues no test commit at all.
+///
+/// **Invariant 4.** The allocator's FB-only fast path is gated on a baseline of
+/// what the kernel last accepted, and only a successful *real* commit may set
+/// it. Nothing in the scene recorded that baseline until the parity harness
+/// counted the test commits the reference did not issue: the allocator's own
+/// unit tests populate the baseline by calling `record_committed` themselves,
+/// so they passed while the path was unreachable in production.
+///
+/// Counting commits from outside the allocator is the point. A test that sets
+/// up the baseline by hand proves the predicate works and says nothing about
+/// whether anyone ever satisfies it.
+#[test]
+fn a_steady_frame_issues_no_test_commit() {
+    let log = Rc::new(RefCell::new(SourceLog::default()));
+    let mut scene = LayerScene::new(1);
+    let handle = scene.add_layer(Box::new(TestSource::new(&log)));
+    scene
+        .layer_mut(handle)
+        .expect("layer")
+        .set_display(full_screen());
+
+    let registry = registry();
+    let mut committer = Accepting::default();
+
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("first frame");
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+    let after_first = committer.calls;
+    assert!(
+        after_first > 0,
+        "the first frame has no baseline and must search"
+    );
+
+    // Nothing changed but the buffer, which is what a compositor does every
+    // frame it is not reconfiguring anything.
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("second frame");
+    // Read the fact out before finalizing, and assert only once the scene is
+    // quiescent. Asserting with a flip still armed makes the failure unwind
+    // through `LayerScene::drop`, whose invariant-5 tripwire then fires during
+    // cleanup -- and a panic in a destructor while panicking aborts the
+    // process, so the message that mattered never gets printed.
+    let took_fast_path = build.report().fb_delta_fast_path;
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+
+    assert!(
+        took_fast_path,
+        "an unchanged layer set must take the FB-only fast path"
+    );
+    assert_eq!(
+        committer.calls,
+        after_first,
+        "a steady frame must not issue a test commit; it issued {}",
+        committer.calls - after_first
+    );
+}
+
+/// Removing a layer does not cost a test commit.
+///
+/// Dropping a layer only frees resources, so the assignment the kernel already
+/// accepted stays valid without it. The scene used to invalidate the whole
+/// warm-start cache here, which forced a full search -- several test commits --
+/// for a configuration that could not have become invalid.
+#[test]
+fn removing_a_layer_does_not_force_a_search() {
+    let log = Rc::new(RefCell::new(SourceLog::default()));
+    let mut scene = LayerScene::new(1);
+    let keep = scene.add_layer(Box::new(TestSource::new(&log)));
+    let drop_me = scene.add_layer(Box::new(TestSource::new(&log)));
+    for handle in [keep, drop_me] {
+        scene
+            .layer_mut(handle)
+            .expect("layer")
+            .set_display(full_screen());
+    }
+
+    let registry = registry();
+    let mut committer = Accepting::default();
+
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("first frame");
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+    let after_first = committer.calls;
+
+    scene.remove_layer(drop_me);
+
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("frame after removal");
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+
+    assert_eq!(
+        committer.calls, after_first,
+        "removing a layer must not re-test the survivors"
+    );
+}

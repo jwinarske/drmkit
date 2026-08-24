@@ -107,7 +107,6 @@ struct Harness {
     map: PlanePropertyMap,
     scene: LayerScene,
     log: Rc<RefCell<SourceLog>>,
-    candidates: Vec<u32>,
     crtc_index: u32,
 }
 
@@ -167,9 +166,11 @@ fn harness() -> Option<Harness> {
     map.learn_all(&device, &registry)
         .expect("every advertised plane must expose readable properties");
 
-    let candidates: Vec<u32> = registry.for_crtc(crtc_index).map(|p| p.id).collect();
     assert!(
-        !candidates.is_empty(),
+        registry
+            .force_disable_candidates(crtc_index)
+            .next()
+            .is_some(),
         "CRTC {crtc_index} has no compatible planes; the lane is not testing \
          what it claims to"
     );
@@ -201,7 +202,6 @@ fn harness() -> Option<Harness> {
         map,
         scene,
         log,
-        candidates,
         crtc_index,
     })
 }
@@ -213,7 +213,8 @@ fn cycle(h: &mut Harness, result: KernelResult) -> drmkit_scene::CommitReport {
     let mut committer = DeviceCommitter::new(
         &h.device,
         &h.map,
-        h.candidates.clone(),
+        &h.registry,
+        h.crtc_index,
         AtomicCommitFlags::empty(),
     );
     let build = h
@@ -344,7 +345,8 @@ fn an_armed_flip_keeps_teardown_unsafe_until_landed_vkms() {
     let mut committer = DeviceCommitter::new(
         &h.device,
         &h.map,
-        h.candidates.clone(),
+        &h.registry,
+        h.crtc_index,
         AtomicCommitFlags::empty(),
     );
     let build = h

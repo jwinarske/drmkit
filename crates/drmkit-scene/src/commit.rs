@@ -185,18 +185,29 @@ pub struct DeviceCommitter<'a> {
 }
 
 impl<'a> DeviceCommitter<'a> {
-    /// A committer over `candidates`, the planes this CRTC could use.
+    /// A committer over the planes this CRTC could use.
+    ///
+    /// The candidate list comes from
+    /// [`force_disable_candidates`](drmkit_planes::PlaneRegistry::force_disable_candidates)
+    /// rather than being supplied, so a test commit and the apply commit that
+    /// follows it clear exactly the same set. Handing them different lists
+    /// would let a configuration pass `TEST_ONLY` and then be applied with a
+    /// plane the test had cleared still live.
     #[must_use]
     pub fn new(
         device: &'a Device,
         map: &'a PlanePropertyMap,
-        candidates: Vec<u32>,
+        registry: &drmkit_planes::PlaneRegistry,
+        crtc_index: u32,
         flags: AtomicCommitFlags,
     ) -> Self {
         Self {
             device,
             map,
-            candidates,
+            candidates: registry
+                .force_disable_candidates(crtc_index)
+                .map(|plane| plane.id)
+                .collect(),
             flags,
             commits: 0,
         }
@@ -338,21 +349,22 @@ impl<'a> Modeset<'a> {
 pub fn emit_frame(
     request: &mut drmkit_core::AtomicRequest,
     map: &PlanePropertyMap,
-    candidates: &[u32],
-    plan: &[(u32, drmkit_planes::Layer)],
+    registry: &drmkit_planes::PlaneRegistry,
+    crtc_index: u32,
+    plan: &[crate::PlanePlan],
     modeset: Option<&Modeset<'_>>,
 ) -> Result<usize, CoreError> {
     let mut written = 0;
     if let Some(modeset) = modeset {
         written += modeset.emit(request)?;
     }
-    for plane_id in candidates {
-        if !plan.iter().any(|(assigned, _)| assigned == plane_id) {
-            written += emit_disable(request, map, *plane_id)?;
+    for plane in registry.force_disable_candidates(crtc_index) {
+        if !plan.iter().any(|entry| entry.plane_id == plane.id) {
+            written += emit_disable(request, map, plane.id)?;
         }
     }
-    for (plane_id, layer) in plan {
-        written += emit_layer(request, map, *plane_id, layer)?;
+    for entry in plan {
+        written += emit_layer(request, map, entry.plane_id, &entry.layer)?;
     }
     Ok(written)
 }

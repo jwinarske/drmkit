@@ -343,6 +343,47 @@ impl Allocator {
         );
     }
 
+    /// Replace the committed baseline with what a real commit just applied.
+    ///
+    /// Planes absent from `applied` are dropped rather than left behind: the
+    /// commit that carried this assignment explicitly disabled every candidate
+    /// plane it did not use, so any baseline they had describes state the
+    /// kernel no longer holds.
+    ///
+    /// Call after a successful **real** commit, never after a test -- see
+    /// [`record_committed`](Self::record_committed).
+    pub fn record_commit(&mut self, applied: &[(u32, LayerRef<'_>)]) {
+        self.last_committed.clear();
+        for (plane_id, entry) in applied {
+            self.record_committed(*plane_id, *entry);
+        }
+    }
+
+    /// Drop every trace of a layer the scene has removed.
+    ///
+    /// Without this the cached assignment still names the departed layer, so
+    /// the FB-only fast path sees "a previously-placed layer is gone" and
+    /// falls back to a tested pass on the frame after every removal -- one
+    /// wasted `TEST_ONLY` commit for a configuration that cannot have become
+    /// invalid, since dropping a layer only ever frees resources.
+    ///
+    /// Upstream nulls the committed baseline's layer pointer here rather than
+    /// erasing it, because it keys identity on the `Layer`'s address and the
+    /// allocator would otherwise mistake a fresh layer at a recycled address
+    /// for a continuation of the old one -- and suppress property writes the
+    /// kernel needs. Generation-tagged [`LayerId`]s make that unrepresentable
+    /// here, so the entry is simply dropped.
+    pub fn forget_layer(&mut self, layer: LayerId) {
+        while let Some(plane_id) = self.previous.get_plane_of(layer) {
+            self.previous.remove(plane_id);
+        }
+        self.last_committed
+            .retain(|_, baseline| baseline.layer != layer);
+        if self.previous.is_empty() {
+            self.previous_valid = false;
+        }
+    }
+
     /// Forget a plane's committed baseline, after detaching it.
     pub fn forget_plane(&mut self, plane_id: u32) {
         self.last_committed.remove(&plane_id);

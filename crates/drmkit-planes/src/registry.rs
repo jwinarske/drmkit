@@ -305,6 +305,20 @@ impl PlaneRegistry {
             .filter(move |plane| plane.compatible_with_crtc(crtc_index))
     }
 
+    /// Planes on `crtc_index` that a commit may force-disable.
+    ///
+    /// [`for_crtc`](Self::for_crtc) minus the cursor planes. A cursor plane is
+    /// owned by the cursor path, not the scene: clearing it here would erase
+    /// the cursor on every frame the scene commits. Upstream carves out the
+    /// same exception in `disable_unused_planes`.
+    pub fn force_disable_candidates(
+        &self,
+        crtc_index: u32,
+    ) -> impl Iterator<Item = &PlaneCapabilities> + '_ {
+        self.for_crtc(crtc_index)
+            .filter(|plane| plane.plane_type != PlaneType::Cursor)
+    }
+
     /// A plane by its KMS object id.
     #[must_use]
     pub fn by_id(&self, plane_id: u32) -> Option<&PlaneCapabilities> {

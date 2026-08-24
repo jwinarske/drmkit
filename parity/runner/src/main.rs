@@ -33,7 +33,6 @@ struct Runner<'a> {
     scene: LayerScene,
     flip: PageFlip,
     modeset: Modeset<'a>,
-    candidates: Vec<u32>,
     crtc_index: u32,
     /// Cleared after the first apply commit: the mode only needs setting once,
     /// and `ALLOW_MODESET` on every frame would let a mistake that silently
@@ -97,10 +96,28 @@ impl<'a> Runner<'a> {
                     mask |= 1 << index;
                 }
             }
+            // Read the real plane type rather than calling everything an
+            // overlay. The reference excludes the cursor plane from the
+            // allocator's candidates, so mislabeling it puts a plane in the
+            // trace that the other side never touches -- a diff that says
+            // nothing about either implementation.
+            let plane_id: u32 = handle.into();
+            let mut store = drmkit_core::PropertyStore::new();
+            store
+                .cache_properties(device, plane_id, drmkit_core::ObjectType::Plane)
+                .map_err(|e| format!("plane properties: {e}"))?;
+            let plane_type = match store.property_value(plane_id, "type") {
+                Ok(0) => PlaneType::Overlay,
+                Ok(1) => PlaneType::Primary,
+                Ok(2) => PlaneType::Cursor,
+                Ok(other) => return Err(format!("unknown plane type {other}")),
+                Err(e) => return Err(format!("plane type: {e}")),
+            };
+
             capabilities.push(PlaneCapabilities {
-                id: handle.into(),
+                id: plane_id,
                 possible_crtcs: mask,
-                plane_type: PlaneType::Overlay,
+                plane_type,
                 formats: vec![drmkit_fmt::fourcc::ARGB8888],
                 supports_scaling: true,
                 ..PlaneCapabilities::default()
@@ -113,8 +130,11 @@ impl<'a> Runner<'a> {
             .map_err(|e| format!("learn planes: {e}"))?;
 
         let crtc_index = 0;
-        let candidates: Vec<u32> = registry.for_crtc(crtc_index).map(|p| p.id).collect();
-        if candidates.is_empty() {
+        if registry
+            .force_disable_candidates(crtc_index)
+            .next()
+            .is_none()
+        {
             return Err("crtc has no compatible planes".into());
         }
 
@@ -128,7 +148,6 @@ impl<'a> Runner<'a> {
             scene: LayerScene::new(crtc_id),
             flip,
             modeset,
-            candidates,
             crtc_index,
             first_commit: true,
             handles: HashMap::new(),
@@ -175,7 +194,8 @@ impl<'a> Runner<'a> {
         let mut committer = DeviceCommitter::new(
             self.device,
             &self.map,
-            self.candidates.clone(),
+            &self.registry,
+            self.crtc_index,
             AtomicCommitFlags::empty(),
         );
         let build = self
@@ -193,7 +213,8 @@ impl<'a> Runner<'a> {
         emit_frame(
             &mut request,
             &self.map,
-            &self.candidates,
+            &self.registry,
+            self.crtc_index,
             build.plan(),
             modeset,
         )

@@ -44,7 +44,7 @@ pub use frame::{AcquireTally, CommitKind, FrameLifecycle, FrameOutcome, KernelRe
 pub use lower::{LoweringInput, lower_layer};
 pub use release::{Acquisition, ReleaseQueue, ReleaseReason, Released, ScenePendingFlip};
 pub use report::{CommitReport, LayerPlacement, Placement};
-pub use scene::{FrameBuild, LayerHandle, LayerScene, SceneError, SceneLayer};
+pub use scene::{FrameBuild, LayerHandle, LayerScene, PlanePlan, SceneError, SceneLayer};
 pub use source::{
     AcquiredBuffer, BindingModel, DamageRect, DmaBufDesc, LayerBufferSource, SourceError,
     SourceFormat,

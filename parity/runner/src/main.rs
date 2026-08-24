@@ -24,7 +24,8 @@ use drmkit_modeset::{PageFlip, Timeout};
 use drmkit_planes::{PlaneCapabilities, PlaneRegistry, PlaneType};
 use drmkit_scene::{
     AcquiredBuffer, CommitKind, DeviceCommitter, KernelResult, LayerBufferSource, LayerHandle,
-    LayerScene, Modeset, PlanePropertyMap, SourceError, SourceFormat, emit_frame,
+    LayerScene, Modeset, PlanePropertyMap, SourceError, SourceFormat, arm_acquire_fences,
+    emit_frame,
 };
 
 /// A [`DumbBufferSource`] that can be told to starve.
@@ -276,7 +277,7 @@ impl<'a> Runner<'a> {
             test_flags,
             modeset,
         );
-        let build = self
+        let mut build = self
             .scene
             .build_frame(
                 &self.registry,
@@ -296,6 +297,11 @@ impl<'a> Runner<'a> {
             modeset,
         )
         .map_err(|e| format!("emit: {e}"))?;
+
+        // After the plan is emitted and before the commit, so a fence the
+        // plane cannot take is waited on rather than ignored.
+        arm_acquire_fences(&mut build, &mut request, &self.map, true)
+            .map_err(|e| format!("arm fences: {e}"))?;
 
         let mut flags = AtomicCommitFlags::PAGE_FLIP_EVENT;
         if self.first_commit {

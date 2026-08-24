@@ -523,3 +523,109 @@ fn emit_color_props(
     request.add_property(plane_id, color.range_id, color.range_value)?;
     Ok(2)
 }
+
+/// What to do with a layer's acquire fence, given what its plane can take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FenceAction {
+    /// Hand the descriptor to KMS as `IN_FENCE_FD`.
+    Arm {
+        /// The plane's `IN_FENCE_FD` property.
+        property_id: u32,
+    },
+    /// The plane cannot take one, so the caller has to wait before committing.
+    CpuWait,
+}
+
+/// Decide between the two, from whether the plane exposes a writable
+/// `IN_FENCE_FD`.
+///
+/// Split out so the decision is testable without a device: the fallback is the
+/// branch that matters and the one a card that advertises `IN_FENCE_FD` on
+/// every plane -- vkms among them -- can never reach.
+#[must_use]
+pub const fn fence_action(property_id: Option<u32>) -> FenceAction {
+    match property_id {
+        Some(property_id) => FenceAction::Arm { property_id },
+        None => FenceAction::CpuWait,
+    }
+}
+
+/// Give each fenced layer's fence to its plane, or wait on it here.
+///
+/// A buffer's `acquire_fence` says its pixels are not valid yet. Where the
+/// assigned plane exposes `IN_FENCE_FD` the descriptor goes to KMS and the
+/// kernel holds scanout until it signals. Where it does not, there is nowhere
+/// to put it, so the wait happens here instead -- on the CPU, before the
+/// commit, which is slower but is the difference between a stalled frame and a
+/// half-rendered one reaching the screen.
+///
+/// This runs after allocation on purpose. Until a layer has a plane there is
+/// nothing to ask about `IN_FENCE_FD`, which is why the fence cannot simply be
+/// lowered into the property bag with everything else.
+///
+/// `real` gates the CPU wait only: a `TEST_ONLY` commit never scans out, so
+/// blocking on a fence for one would stall the search for no reason. The
+/// property write is not gated -- a test should carry what the apply will.
+///
+/// # Errors
+///
+/// [`CoreError`] if a property write is rejected before the commit.
+pub fn arm_acquire_fences(
+    build: &mut crate::FrameBuild,
+    request: &mut drmkit_core::AtomicRequest,
+    map: &PlanePropertyMap,
+    real: bool,
+) -> Result<(), CoreError> {
+    let mut armed = 0;
+    let mut waits = 0;
+
+    // Driven from the acquisitions rather than the plan, because the fence
+    // itself lives there. Carrying a bare descriptor on the plan instead would
+    // mean reconstructing a borrow from an integer, and the whole reason this
+    // is safe is that the buffer -- and so the fence -- is owned by the frame
+    // being built.
+    for acquisition in &build.acquisitions {
+        let Some(fence) = acquisition.buffer.acquire_fence.as_ref() else {
+            continue;
+        };
+        let Some(fd) = drmkit_sync::SyncFence::as_fd(fence) else {
+            continue;
+        };
+        // A layer with no plane was composited or dropped. There is nothing to
+        // arm, and the buffer's own lifecycle still owns the fence.
+        let Some(entry) = build
+            .plan
+            .iter()
+            .find(|entry| entry.layer_id == acquisition.layer)
+        else {
+            continue;
+        };
+
+        match fence_action(map.property_id(entry.plane_id, PropTag::InFenceFd)) {
+            FenceAction::Arm { property_id } => {
+                let raw = std::os::fd::AsRawFd::as_raw_fd(&fd);
+                request.add_property(
+                    entry.plane_id,
+                    property_id,
+                    u64::from(raw.cast_unsigned()),
+                )?;
+                armed += 1;
+            }
+            FenceAction::CpuWait => {
+                if !real {
+                    continue;
+                }
+                waits += 1;
+                // Reported, not fatal. The producer may never signal this
+                // fence, and refusing to commit would wedge the display on one
+                // bad frame rather than showing it.
+                if let Err(error) = fence.wait(std::time::Duration::from_secs(1)) {
+                    drmkit_log::log_warn!("acquire-fence CPU wait failed: {error}");
+                }
+            }
+        }
+    }
+
+    build.note_fences(armed, waits);
+    Ok(())
+}

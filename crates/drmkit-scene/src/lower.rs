@@ -21,15 +21,6 @@ pub struct LoweringInput {
     pub fb_id: u32,
     /// The CRTC this scene drives.
     pub crtc_id: u32,
-    /// A render-done fence the plane must wait on before scanning out.
-    ///
-    /// The raw descriptor of the acquired buffer's `acquire_fence`, or `None`
-    /// when the producer handed over pixels that were already valid. The
-    /// descriptor is borrowed for the length of the commit, not given away:
-    /// the kernel does not take ownership of `IN_FENCE_FD`, so the fence rides
-    /// the buffer's lifecycle and closes with it.
-    pub acquire_fence_fd: Option<i32>,
-
     /// A stacking position to use when the caller set none.
     ///
     /// The scene derives this from the plane the layer is likely to land on;
@@ -79,14 +70,6 @@ pub fn lower_layer(input: &LoweringInput, dst: &mut PlaneLayer) {
     }
 
     dst.set_property(PropTag::CrtcId, u64::from(input.crtc_id));
-
-    // The producer is still rendering into this buffer. Handing the fence to
-    // KMS makes the kernel hold scanout until it signals; without it the plane
-    // displays whatever is in the buffer at flip time, which is a partially
-    // rendered frame.
-    if let Some(fd) = input.acquire_fence_fd {
-        dst.set_property(PropTag::InFenceFd, u64::from(fd.cast_unsigned()));
-    }
 
     // Destination is whole signed pixels; source is 16.16 fixed point.
     dst.set_property(

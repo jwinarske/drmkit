@@ -178,6 +178,7 @@ dependencies = [
  "drmkit-core",
  "drmkit-dumb",
  "drmkit-fmt",
+ "drmkit-log",
  "drmkit-planes",
  "drmkit-scene-sources",
  "drmkit-sync",

@@ -619,7 +619,6 @@ use drmkit_planes::{Layer as PlaneLayer, PropTag};
 
 fn lowering_input() -> LoweringInput {
     LoweringInput {
-        acquire_fence_fd: None,
         display: DisplayParams {
             dst_rect: Rect {
                 x: 10,
@@ -1161,49 +1160,32 @@ fn skipped_layers_keep_the_report_balanced() {
     );
 }
 
-/// A buffer that arrives with a render fence hands it to `IN_FENCE_FD`.
+// --- acquire fences ----------------------------------------------------------
+
+/// A plane that takes `IN_FENCE_FD` gets the fence.
 ///
-/// `AcquiredBuffer::acquire_fence` is documented as "the pixels are valid only
-/// once it signals", and the scene's side of that bargain is to give the
-/// descriptor to KMS so the kernel holds scanout until it does. Nothing did:
-/// the field was carried through the whole acquire path and then dropped at
-/// lowering, so an asynchronous producer's half-rendered frame went straight
-/// to the screen.
-///
-/// The failure is invisible on a source that renders synchronously, which is
-/// every source in the tree today — `DumbBufferSource` and friends hand over
-/// finished pixels and leave the fence `None`. It would first appear on the
-/// GPU-backed sources, as intermittent tearing under load.
+/// `AcquiredBuffer::acquire_fence` means the pixels are not valid yet. Giving
+/// the descriptor to KMS is what makes the kernel hold scanout until the
+/// producer signals; without it a half-rendered frame reaches the screen with
+/// nothing having waited.
 #[test]
-fn an_acquire_fence_reaches_the_in_fence_property() {
-    let mut input = lowering_input();
-    input.acquire_fence_fd = Some(42);
-
-    let mut layer = PlaneLayer::new();
-    lower_layer(&input, &mut layer);
-
+fn a_plane_that_takes_a_fence_is_armed_with_it() {
     assert_eq!(
-        layer.property(PropTag::InFenceFd),
-        Some(42),
-        "a fenced buffer must arrive at the plane with its fence"
+        crate::fence_action(Some(77)),
+        crate::FenceAction::Arm { property_id: 77 },
     );
 }
 
-/// A buffer with no fence writes no `IN_FENCE_FD`.
+/// A plane that does not falls back to waiting on the CPU.
 ///
-/// Writing one unconditionally would be worse than not writing it at all: the
-/// kernel treats the property as a descriptor to wait on, so a stale or
-/// absent-fence sentinel is either a wait on the wrong thing or an `EINVAL`
-/// that takes the whole commit down.
+/// There is nowhere to put the fence, so the wait has to happen before the
+/// commit instead. Slower, and the whole point: the alternative is not "no
+/// wait", it is scanning out a buffer the producer has not finished.
+///
+/// This branch is why the decision is a function rather than an `if` inside
+/// the arming loop. vkms advertises `IN_FENCE_FD` on all ten of its planes, so
+/// no test against it can ever reach the fallback.
 #[test]
-fn an_unfenced_buffer_writes_no_in_fence_property() {
-    let input = lowering_input();
-    let mut layer = PlaneLayer::new();
-    lower_layer(&input, &mut layer);
-
-    assert_eq!(
-        layer.property(PropTag::InFenceFd),
-        None,
-        "a synchronous producer's buffer needs no fence and must not claim one"
-    );
+fn a_plane_without_the_property_falls_back_to_a_cpu_wait() {
+    assert_eq!(crate::fence_action(None), crate::FenceAction::CpuWait);
 }

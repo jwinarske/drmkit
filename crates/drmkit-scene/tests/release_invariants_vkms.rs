@@ -33,12 +33,25 @@ fn card_guard() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn open_card() -> Device {
+fn open_card() -> Option<Device> {
     let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
-    let device = Device::open(path).expect("open test card");
+    // Absence of the device is a different condition from the device being
+    // there and misbehaving: locally it means vkms is not loaded, which is a
+    // skip; in the lane it means the lane is not testing what it claims.
+    let device = match Device::open(&path) {
+        Ok(device) => device,
+        Err(error) => {
+            assert!(
+                std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
+                "{path}: {error}, but DRMKIT_REQUIRE_MASTER is set"
+            );
+            println!("note: skipped -- no DRM device at {path} ({error})");
+            return None;
+        }
+    };
     device.enable_universal_planes().expect("universal planes");
     device.enable_atomic().expect("atomic");
-    device
+    Some(device)
 }
 
 /// Whether this process holds DRM master, which every real commit needs.
@@ -113,7 +126,7 @@ struct Harness {
 fn harness() -> Option<Harness> {
     use drm::control::Device as _;
 
-    let device = open_card();
+    let device = open_card()?;
     if !require_master(&device) {
         return None;
     }

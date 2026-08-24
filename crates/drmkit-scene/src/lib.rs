@@ -37,7 +37,8 @@ mod scene;
 mod source;
 
 pub use commit::{
-    DeviceCommitter, Modeset, PlanePropertyMap, classify, emit_disable, emit_frame, emit_layer,
+    DeviceCommitter, FenceAction, Modeset, PlanePropertyMap, arm_acquire_fences, classify,
+    emit_disable, emit_frame, emit_layer, fence_action,
 };
 pub use display::{DisplayParams, Rect, to_16_16};
 pub use frame::{AcquireTally, CommitKind, FrameLifecycle, FrameOutcome, KernelResult};

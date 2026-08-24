@@ -14,6 +14,7 @@ keywords = ["drm", "kms", "compositor", "scene", "scanout"]
 [dependencies]
 drmkit-core = { workspace = true }
 drmkit-dumb = { workspace = true }
+drmkit-log = { workspace = true }
 drmkit-planes = { workspace = true }
 drmkit-sync = { workspace = true }
 rustix = { workspace = true, features = ["std"] }

@@ -31,7 +31,23 @@ jobs:
       - name: install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgbm-dev libdisplay-info-dev
+          sudo apt-get install -y libgbm-dev meson ninja-build
+          # Ubuntu ships libdisplay-info 0.1.1, three minor versions behind the
+          # 0.3 API the EDID parser uses -- the accessors for colour primaries,
+          # HDR static metadata and signal colorimetry do not exist before it.
+          # libdisplay-info-sys probes the system version through pkg-config and
+          # fails the build rather than silently compiling a smaller API, which
+          # is the right behaviour and leaves building it as the fix.
+          #
+          # Pinned to the tag the bindings target, so the version CI tests
+          # against is the one the crate was written for.
+          git clone --depth 1 --branch 0.3.0 \
+            https://gitlab.freedesktop.org/emersion/libdisplay-info.git /tmp/ldi
+          meson setup /tmp/ldi/build /tmp/ldi --prefix=/usr/local --buildtype=release
+          sudo meson install -C /tmp/ldi/build
+          sudo ldconfig
+          echo "PKG_CONFIG_PATH=/usr/local/lib/x86_64-linux-gnu/pkgconfig:/usr/local/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/usr/local/lib/x86_64-linux-gnu:/usr/local/lib" >> "$GITHUB_ENV"
 
       - name: rustfmt
         run: cargo fmt --all --check
@@ -67,10 +83,23 @@ jobs:
       - name: install system libraries
         run: |
           sudo apt-get update
-          # libgbm for gbm-sys, libdisplay-info for the EDID parser. Both are
-          # linked, not loaded, so a missing one is a linker error naming a
-          # library nobody mentioned asking for.
-          sudo apt-get install -y libgbm-dev libdisplay-info-dev
+          sudo apt-get install -y libgbm-dev meson ninja-build
+          # Ubuntu ships libdisplay-info 0.1.1, three minor versions behind the
+          # 0.3 API the EDID parser uses -- the accessors for colour primaries,
+          # HDR static metadata and signal colorimetry do not exist before it.
+          # libdisplay-info-sys probes the system version through pkg-config and
+          # fails the build rather than silently compiling a smaller API, which
+          # is the right behaviour and leaves building it as the fix.
+          #
+          # Pinned to the tag the bindings target, so the version CI tests
+          # against is the one the crate was written for.
+          git clone --depth 1 --branch 0.3.0 \
+            https://gitlab.freedesktop.org/emersion/libdisplay-info.git /tmp/ldi
+          meson setup /tmp/ldi/build /tmp/ldi --prefix=/usr/local --buildtype=release
+          sudo meson install -C /tmp/ldi/build
+          sudo ldconfig
+          echo "PKG_CONFIG_PATH=/usr/local/lib/x86_64-linux-gnu/pkgconfig:/usr/local/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/usr/local/lib/x86_64-linux-gnu:/usr/local/lib" >> "$GITHUB_ENV"
       # T0 unit, T1 property, T4 doctests.
       - run: cargo test --workspace --all-features
 

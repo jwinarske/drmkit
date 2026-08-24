@@ -198,6 +198,19 @@ int main(int argc, char** argv) {
       continue;
     }
 
+    if (cmd == "zpos") {
+      // Reorder the stack without changing anything else about the layers.
+      std::string name;
+      int z = 0;
+      if (!(in >> name >> z)) return fail("zpos: bad args");
+      auto it = handles.find(name);
+      if (it == handles.end()) return fail("zpos: unknown layer");
+      auto* layer = scene.get_layer(it->second);
+      if (layer == nullptr) return fail("zpos: stale handle");
+      layer->set_zpos(z);
+      continue;
+    }
+
     if (cmd == "move") {
       // A geometry change, which must defeat the FB-only fast path: the
       // kernel accepted the old rectangle, not this one.

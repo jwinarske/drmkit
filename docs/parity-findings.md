@@ -18,6 +18,7 @@ Three scenarios in the corpus, all **byte-identical** on both sides:
 | `fast-path-classification` | Which frames may skip the `TEST_ONLY` commit — in both directions, including that the fast path returns after an invalidation rather than being lost for good. |
 | `eagain-skip-accounting` | A source with no frame ready: the layer holds its plane and its last framebuffer, and the report's identity still balances. |
 | `plane-migration` | A changing layer set that forces every overlay onto a different plane: the ordering inside one commit, and z-order on planes that cannot be reordered. |
+| `zorder-reorder` | Restacking with the layer set unchanged. Both sides drop the restack on a driver with no plane `zpos` — see [drm-cxx#239](https://github.com/jwinarske/drm-cxx/issues/239); the scenario holds that shared behavior. |
 
 ## Open
 

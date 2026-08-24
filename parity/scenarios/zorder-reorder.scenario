@@ -1,0 +1,43 @@
+# T7-005 -- restacking without changing the layer set
+#
+# Three layers stay exactly where they are on screen; only which one is on
+# top changes. Nothing is added, nothing is removed, no geometry moves.
+#
+# On a card whose planes carry a settable zpos this is two property writes
+# and the layers stay where they are. On a card whose planes do not -- vkms,
+# and plenty of embedded display controllers -- stacking *is* plane index, so
+# the only way to restack is to move the layers between planes, and the whole
+# assignment has to be rebuilt bottom-up.
+#
+# The two behaviors look completely different in a trace, which is the point:
+# whichever the driver forces, both implementations have to reach the same
+# one. A port that got the plane order right on the initial assignment can
+# still get it wrong on a restack, because a restack is the case where the
+# warm-start cache holds an assignment that is now in the wrong order -- and
+# reusing it is exactly what warm-start is for.
+#
+# What both implementations actually do here, as of drm-cxx @ HEAD: nothing.
+# The restack changes property_hash, which defeats the FB-only fast path, so
+# the frame does issue a TEST_ONLY. Warm-start then re-tests the cached
+# assignment, the kernel accepts it -- it is still perfectly *valid*, just no
+# longer in zpos order -- and it is kept. The layers do not move planes, so on
+# vkms they do not restack.
+#
+# That is drm-cxx#239, filed from this scenario. The scenario asserts the
+# shared behavior rather than the desired one, which is what parity means
+# while an upstream decision is outstanding: the two traces are byte-identical
+# here, and this scenario is what will show the change when upstream fixes it.
+
+add bottom 0 0 0 0 0
+add mid    1 64 64 256 256
+add top    2 400 200 256 256
+
+frame
+frame
+
+# Send the top layer to the back and promote the middle one.
+zpos top 0
+zpos bottom 1
+zpos mid 2
+frame
+frame

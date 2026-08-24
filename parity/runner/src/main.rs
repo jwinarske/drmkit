@@ -242,6 +242,16 @@ impl<'a> Runner<'a> {
         Ok(())
     }
 
+    /// Reorder the stack without changing anything else about the layers.
+    fn set_zpos(&mut self, name: &str, zpos: i32) -> Result<(), String> {
+        let handle = *self.handles.get(name).ok_or("zpos: unknown layer")?;
+        let layer = self.scene.layer_mut(handle).ok_or("zpos: stale handle")?;
+        let mut display = *layer.display();
+        display.zpos = Some(u64::from(zpos.unsigned_abs()));
+        layer.set_display(display);
+        Ok(())
+    }
+
     fn del(&mut self, name: &str) -> Result<(), String> {
         let handle = self.handles.remove(name).ok_or("del: unknown layer")?;
         self.scene.remove_layer(handle);
@@ -330,6 +340,16 @@ fn run() -> Result<(), String> {
             "starve" | "unstarve" => {
                 let name = parts.next().ok_or("starve: missing name")?;
                 runner.set_starved(name, cmd == "starve")?;
+            }
+            "zpos" => {
+                let args: Vec<&str> = parts.collect();
+                let [name, z] = args.as_slice() else {
+                    return Err("zpos: bad args".into());
+                };
+                let z = z
+                    .parse::<i32>()
+                    .map_err(|_| format!("zpos: bad number {z}"))?;
+                runner.set_zpos(name, z)?;
             }
             "move" => {
                 let args: Vec<&str> = parts.collect();

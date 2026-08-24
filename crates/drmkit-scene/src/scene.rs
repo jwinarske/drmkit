@@ -61,6 +61,12 @@ pub struct SceneLayer {
     /// values written to a chosen plane, so the scene drops the allocator's
     /// warm start for that frame and lets the layer move.
     hints_dirty: bool,
+    /// The framebuffer this layer last put on screen.
+    ///
+    /// Kept so a frame where the source has nothing ready can re-attach it:
+    /// the layer goes on showing what it already had, rather than being
+    /// dropped from the commit and switched off.
+    last_fb_id: Option<u32>,
 }
 
 impl std::fmt::Debug for SceneLayer {
@@ -359,6 +365,7 @@ impl LayerScene {
             update_hint_hz: 0,
             app_priority: 0,
             hints_dirty: false,
+            last_fb_id: None,
         });
 
         if let Some(slot_index) = self.free.pop() {
@@ -481,6 +488,10 @@ impl LayerScene {
         }
 
         let mut tally = AcquireTally::default();
+        // Layers holding their previous frame. They are programmed but not
+        // acquired, so the report must not count them as assigned -- the
+        // identity is assigned + composited + unassigned + skipped.
+        let mut starved: Vec<LayerId> = Vec::new();
         let mut acquisitions = Vec::new();
         let mut plane_layers: Vec<(LayerId, PlaneLayer)> = Vec::new();
 
@@ -496,7 +507,23 @@ impl LayerScene {
             let acquired = match layer.source.acquire() {
                 Ok(buffer) => buffer,
                 Err(SourceError::WouldBlock) => {
+                    // Flow control, not failure: the source has no frame this
+                    // vblank. The layer keeps its plane and its last
+                    // framebuffer, so it goes on showing what it already had.
+                    //
+                    // Dropping it from the frame instead would take its plane
+                    // out of the assignment and the commit would disable it --
+                    // a layer whose source hiccups would blink off, which is
+                    // the visible failure this path exists to avoid.
                     tally.record(false);
+                    let Some(fb_id) = layer.last_fb_id else {
+                        // Starved before it ever produced anything. There is
+                        // no previous frame to hold, so there is nothing to
+                        // program and the layer really is absent.
+                        continue;
+                    };
+                    starved.push(layer_id);
+                    plane_layers.push((layer_id, lower(layer, fb_id, self.crtc_id)));
                     continue;
                 }
                 Err(other) => {
@@ -508,22 +535,9 @@ impl LayerScene {
             };
             tally.record(true);
 
-            let mut plane_layer = PlaneLayer::new();
-            lower_layer(
-                &LoweringInput {
-                    display: layer.display,
-                    format: layer.source.format(),
-                    binding: layer.source.binding_model(),
-                    fb_id: acquired.fb_id,
-                    crtc_id: self.crtc_id,
-                    default_zpos: None,
-                },
-                &mut plane_layer,
-            );
-            plane_layer.set_content_type(layer.content_type);
-            plane_layer.set_update_hint(layer.update_hint_hz);
-            plane_layer.set_app_priority(layer.app_priority);
+            let plane_layer = lower(layer, acquired.fb_id, self.crtc_id);
 
+            layer.last_fb_id = Some(acquired.fb_id);
             plane_layers.push((layer_id, plane_layer));
             acquisitions.push(Acquisition::new(layer_id, acquired));
         }
@@ -550,7 +564,7 @@ impl LayerScene {
             }
         };
 
-        let report = build_report(&tally, &allocation, registry);
+        let report = build_report(&tally, &allocation, registry, &starved);
 
         // Clear the hint flags now the allocation has seen them.
         for handle in self.handles().collect::<Vec<_>>() {
@@ -686,7 +700,20 @@ fn build_report(
     tally: &AcquireTally,
     allocation: &drmkit_planes::Allocation,
     registry: &PlaneRegistry,
+    starved: &[LayerId],
 ) -> CommitReport {
+    // A starved layer holds its plane so it keeps showing its last frame, so
+    // it is in the assignment -- but it is also counted as skipped, and the
+    // report's identity is
+    //
+    //     total = assigned + composited + unassigned + skipped
+    //
+    // so counting it in both would make every starved frame report one layer
+    // too many. It is skipped, not assigned: nothing new was put on screen.
+    let starved_assigned = starved
+        .iter()
+        .filter(|layer| allocation.assignment.get_plane_of(**layer).is_some())
+        .count();
     let placements = allocation
         .assignment
         .entries()
@@ -709,7 +736,7 @@ fn build_report(
 
     CommitReport {
         layers_total: tally.considered(),
-        layers_assigned: allocation.assignment.len(),
+        layers_assigned: allocation.assignment.len() - starved_assigned,
         layers_unassigned: allocation.composited.len(),
         layers_skipped_no_frame: tally.skipped_no_frame,
         test_commits_issued: allocation.diagnostics.test_commits_issued,
@@ -717,6 +744,30 @@ fn build_report(
         placements,
         ..CommitReport::default()
     }
+}
+
+/// Lower one scene layer into the property bag a plane is programmed from.
+///
+/// Shared by the ordinary path and the starved path, which differ only in
+/// which framebuffer they name: a fresh acquisition, or the one the layer
+/// already has on screen.
+fn lower(layer: &SceneLayer, fb_id: u32, crtc_id: u32) -> drmkit_planes::Layer {
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(
+        &LoweringInput {
+            display: layer.display,
+            format: layer.source.format(),
+            binding: layer.source.binding_model(),
+            fb_id,
+            crtc_id,
+            default_zpos: None,
+        },
+        &mut plane_layer,
+    );
+    plane_layer.set_content_type(layer.content_type);
+    plane_layer.set_update_hint(layer.update_hint_hz);
+    plane_layer.set_app_priority(layer.app_priority);
+    plane_layer
 }
 
 /// Work out what this frame writes: which layer goes on which plane, with what

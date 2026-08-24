@@ -8,7 +8,7 @@
 //! first time. Everything is host-side: the allocator's test commits go to a
 //! fake, and the kernel's answer to a real commit is a parameter.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use drmkit_fmt::fourcc;
@@ -59,6 +59,12 @@ struct TestSource {
     starved: bool,
     /// Fail for a real reason.
     fails: bool,
+    /// Starve on demand, after the source has been handed to the scene.
+    ///
+    /// `starved` is fixed at construction, which suits a source that never
+    /// produces. A layer that starves *after* putting a frame up is a
+    /// different case, and the interesting one: it has something to hold.
+    toggle: Rc<Cell<bool>>,
 }
 
 impl TestSource {
@@ -68,7 +74,13 @@ impl TestSource {
             next_fb: 100,
             starved: false,
             fails: false,
+            toggle: Rc::new(Cell::new(false)),
         }
+    }
+
+    /// A handle to this source's starve switch, to keep before boxing it.
+    fn starve_switch(&self) -> Rc<Cell<bool>> {
+        Rc::clone(&self.toggle)
     }
 }
 
@@ -77,7 +89,7 @@ impl LayerBufferSource for TestSource {
         if self.fails {
             return Err(SourceError::Failed(rustix::io::Errno::IO));
         }
-        if self.starved {
+        if self.starved || self.toggle.get() {
             return Err(SourceError::WouldBlock);
         }
         self.log.borrow_mut().acquired += 1;
@@ -711,4 +723,96 @@ fn the_plane_a_removed_layer_held_is_disabled() {
         "plane {vacated} still holds the removed layer's framebuffer and was \
          not disabled; disables were {disables:?}"
     );
+}
+
+// --- EAGAIN flow control -----------------------------------------------------
+
+/// A starved layer keeps its plane, and the report still balances.
+///
+/// `WouldBlock` from a source is flow control, not failure: the layer has no
+/// new frame this vblank and goes on showing the one it already put up. It
+/// must not be dropped from the commit, because a layer dropped from the
+/// commit has its plane disabled — a source that hiccups for one frame would
+/// blink the layer off screen.
+///
+/// Holding the plane is what makes the accounting delicate. The layer is in
+/// the assignment *and* counted as skipped, so a report that took
+/// `layers_assigned` straight from the assignment counts it twice and the
+/// identity
+///
+/// ```text
+/// total = assigned + composited + unassigned + skipped
+/// ```
+///
+/// stops holding. A compositor watching those counters for dropped frames then
+/// sees phantom ones.
+#[test]
+fn a_starved_layer_holds_its_plane_and_the_report_still_balances() {
+    let log = Rc::new(RefCell::new(SourceLog::default()));
+    let mut scene = LayerScene::new(1);
+    let steady = scene.add_layer(Box::new(TestSource::new(&log)));
+    let hiccup_source = TestSource::new(&log);
+    let switch = hiccup_source.starve_switch();
+    let hiccup = scene.add_layer(Box::new(hiccup_source));
+    for handle in [steady, hiccup] {
+        scene
+            .layer_mut(handle)
+            .expect("layer")
+            .set_display(full_screen());
+    }
+
+    let registry = registry();
+    let mut committer = Accepting::default();
+
+    // One good frame, so the layer has something to hold.
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("first frame");
+    let plane_of_hiccup = build
+        .plan()
+        .iter()
+        .find(|entry| entry.layer_id == hiccup.layer_id())
+        .map(|entry| entry.plane_id)
+        .expect("both layers must be placed");
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+
+    switch.set(true);
+
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("starved frame");
+    let still_programmed = build
+        .plan()
+        .iter()
+        .any(|entry| entry.plane_id == plane_of_hiccup);
+    let disabled = build.disables().contains(&plane_of_hiccup);
+    let report = scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+
+    assert!(
+        still_programmed,
+        "a starved layer must keep its plane and re-attach the frame it \
+         already had"
+    );
+    assert!(
+        !disabled,
+        "plane {plane_of_hiccup} was switched off; the layer would blink"
+    );
+    assert_eq!(
+        report.layers_skipped_no_frame, 1,
+        "the starved layer must be counted as skipped"
+    );
+    assert!(
+        report.accounting_balances(),
+        "report double-counts the starved layer: total {} != assigned {} + \
+         composited {} + unassigned {} + skipped {}",
+        report.layers_total,
+        report.layers_assigned,
+        report.layers_composited,
+        report.layers_unassigned,
+        report.layers_skipped_no_frame
+    );
+
+    scene.drain();
 }

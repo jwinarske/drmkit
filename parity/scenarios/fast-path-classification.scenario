@@ -1,0 +1,29 @@
+# T7-002 -- FB-only fast-path frame classification (plan T7 corpus)
+#
+# Which frames are allowed to skip the TEST_ONLY commit, and which are not.
+# Invariant 4 turns on getting this exactly right in both directions:
+#
+#   * too strict, and every frame pays for a test the kernel has already
+#     answered -- an ioctl per frame, forever;
+#   * too permissive, and a real geometry change reaches the kernel without
+#     ever being validated. The commit's own atomic_check still catches it,
+#     so the failure is a dropped frame rather than corruption, but a
+#     dropped frame is visible and this is the code that exists to avoid it.
+#
+# The reference's answer, for the record: frames 1 and 2 configure and then
+# warm the cache; frame 3 is steady and skips the test; `move` marks the
+# layer dirty so frame 4 must test again; frame 5 is steady once more, which
+# proves the fast path comes *back* rather than being lost for good after a
+# single invalidation.
+
+add bg  0 0 0 0 0
+add ov1 1 64 64 256 256
+
+frame
+frame
+frame
+
+# Geometry change: the kernel accepted the old rectangle, not this one.
+move ov1 300 300
+frame
+frame

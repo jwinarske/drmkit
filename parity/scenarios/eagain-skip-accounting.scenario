@@ -1,0 +1,37 @@
+# T7-003 -- EAGAIN skip accounting (plan T7 corpus)
+#
+# A source with no frame ready returns EAGAIN from acquire. That is a
+# documented, routine condition -- V4L2 before its first sample, an appsink
+# mid-preroll -- and the contract is that the layer is *skipped* for this
+# frame and counted, not that the frame fails.
+#
+# What the trace shows is the consequence the counters cannot: the starved
+# layer's plane must keep scanning out what it already has. It must not be
+# disabled (the layer is still there, it just has nothing new), and it must
+# not be handed a stale framebuffer id as though a fresh one had arrived.
+# The other layers carry on being updated around it.
+#
+# The residual arithmetic is what usually drifts here. `layers_skipped_no_frame`
+# has to come out of the assigned/composited totals rather than being added
+# alongside them, or the report double-counts and a compositor watching for
+# dropped frames sees phantom ones.
+#
+# The reference's answer: the starved frame writes FB_ID only for the layers
+# that produced one, leaves the starved layer's plane untouched entirely, and
+# resumes it on the frame after it is fed again.
+
+add bg  0 0 0 0 0
+add ov1 1 64 64 256 256
+
+frame
+frame
+
+# ov1 has nothing to show this frame.
+starve ov1
+frame
+frame
+
+# ...and now it does again.
+unstarve ov1
+frame
+frame

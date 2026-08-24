@@ -10,10 +10,12 @@
 //! default Linux backend issues syscalls directly, so `LD_PRELOAD` never gets
 //! a look at them. `parity/run.sh` sets it.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::process::ExitCode;
+use std::rc::Rc;
 use std::time::Duration;
 
 use drm::control::Device as _;
@@ -21,9 +23,38 @@ use drmkit_core::{AtomicCommitFlags, AtomicRequest, Device};
 use drmkit_modeset::{PageFlip, Timeout};
 use drmkit_planes::{PlaneCapabilities, PlaneRegistry, PlaneType};
 use drmkit_scene::{
-    CommitKind, DeviceCommitter, KernelResult, LayerHandle, LayerScene, Modeset, PlanePropertyMap,
-    emit_frame,
+    AcquiredBuffer, CommitKind, DeviceCommitter, KernelResult, LayerBufferSource, LayerHandle,
+    LayerScene, Modeset, PlanePropertyMap, SourceError, SourceFormat, emit_frame,
 };
+
+/// A [`DumbBufferSource`] that can be told to starve.
+///
+/// `WouldBlock` from `acquire` is the documented "no frame yet" signal: the
+/// layer is skipped for this frame and counted, rather than the frame failing.
+/// Live sources -- V4L2 before its first sample, an appsink mid-preroll -- do
+/// this routinely, so the accounting has to be right or a compositor cannot
+/// tell a starved layer from a dropped one.
+struct StarvableSource {
+    inner: drmkit_scene_sources::DumbBufferSource,
+    starved: Rc<Cell<bool>>,
+}
+
+impl LayerBufferSource for StarvableSource {
+    fn acquire(&mut self) -> Result<AcquiredBuffer, SourceError> {
+        if self.starved.get() {
+            return Err(SourceError::WouldBlock);
+        }
+        self.inner.acquire()
+    }
+
+    fn release(&mut self, acquired: AcquiredBuffer) {
+        self.inner.release(acquired);
+    }
+
+    fn format(&self) -> SourceFormat {
+        self.inner.format()
+    }
+}
 
 /// The device, the scene, and everything needed to commit a frame.
 struct Runner<'a> {
@@ -39,6 +70,7 @@ struct Runner<'a> {
     /// re-modesets go unnoticed -- it is meant to be a full-frame stall.
     first_commit: bool,
     handles: HashMap<String, LayerHandle>,
+    starve_flags: HashMap<String, Rc<Cell<bool>>>,
     width: u32,
     height: u32,
 }
@@ -151,6 +183,7 @@ impl<'a> Runner<'a> {
             crtc_index,
             first_commit: true,
             handles: HashMap::new(),
+            starve_flags: HashMap::new(),
             width: u32::from(mode.size().0),
             height: u32::from(mode.size().1),
             device,
@@ -170,7 +203,12 @@ impl<'a> Runner<'a> {
             drmkit_fmt::fourcc::ARGB8888,
         )
         .map_err(|e| format!("dumb source: {e}"))?;
-        let handle = self.scene.add_layer(Box::new(source));
+        let starved = Rc::new(Cell::new(false));
+        let handle = self.scene.add_layer(Box::new(StarvableSource {
+            inner: source,
+            starved: Rc::clone(&starved),
+        }));
+        self.starve_flags.insert(name.to_owned(), starved);
         self.scene
             .layer_mut(handle)
             .ok_or("layer vanished")?
@@ -181,6 +219,26 @@ impl<'a> Runner<'a> {
                 ..drmkit_scene::DisplayParams::default()
             });
         self.handles.insert(name.to_owned(), handle);
+        Ok(())
+    }
+
+    /// A geometry change, which must defeat the FB-only fast path: the kernel
+    /// accepted the old rectangle, not this one.
+    fn move_layer(&mut self, name: &str, x: i32, y: i32) -> Result<(), String> {
+        let handle = *self.handles.get(name).ok_or("move: unknown layer")?;
+        let layer = self.scene.layer_mut(handle).ok_or("move: stale handle")?;
+        let mut display = *layer.display();
+        display.dst_rect.x = x;
+        display.dst_rect.y = y;
+        layer.set_display(display);
+        Ok(())
+    }
+
+    fn set_starved(&mut self, name: &str, starved: bool) -> Result<(), String> {
+        self.starve_flags
+            .get(name)
+            .ok_or("starve: unknown layer")?
+            .set(starved);
         Ok(())
     }
 
@@ -269,6 +327,21 @@ fn run() -> Result<(), String> {
         let Some(cmd) = parts.next() else { continue };
         match cmd {
             "frame" => runner.frame()?,
+            "starve" | "unstarve" => {
+                let name = parts.next().ok_or("starve: missing name")?;
+                runner.set_starved(name, cmd == "starve")?;
+            }
+            "move" => {
+                let args: Vec<&str> = parts.collect();
+                let [name, x, y] = args.as_slice() else {
+                    return Err("move: bad args".into());
+                };
+                let signed = |s: &str| {
+                    s.parse::<i32>()
+                        .map_err(|_| format!("move: bad number {s}"))
+                };
+                runner.move_layer(name, signed(x)?, signed(y)?)?;
+            }
             "del" => {
                 let name = parts.next().ok_or("del: missing name")?;
                 runner.del(name)?;

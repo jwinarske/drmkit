@@ -10,8 +10,13 @@ and get filed as issues instead.
 
 ## Status
 
-`warm-start-stability` now produces a **byte-identical** trace on both
-sides, across all five commits of the scenario.
+Three scenarios in the corpus, all **byte-identical** on both sides:
+
+| Scenario | What it covers |
+|---|---|
+| `warm-start-stability` | The stability bonus: a layer removed from the middle of the stack must not make the survivors move. |
+| `fast-path-classification` | Which frames may skip the `TEST_ONLY` commit — in both directions, including that the fast path returns after an invalidation rather than being lost for good. |
+| `eagain-skip-accounting` | A source with no frame ready: the layer holds its plane and its last framebuffer, and the report's identity still balances. |
 
 ## Open
 
@@ -28,6 +33,8 @@ sides, across all five commits of the scenario.
 | P-4 | The port wrote the whole property bag on every apply where the reference wrote only what changed: 46/43/35/35 properties against 46/4/5/3 over the scenario's four applies. Every apply now matches the reference exactly. | Fixed. The allocator's per-plane baseline now keeps the full property snapshot, not just a hash, and the apply path writes a property only when it differs from what the kernel took. `FB_ID` and `IN_FENCE_FD` are written unconditionally: `FB_ID` re-attachment is how KMS is told a new frame exists and is what schedules the page-flip event, so diffing it away on a single-buffered source leaves an empty request the kernel accepts and never sends an event for, wedging the flip; `IN_FENCE_FD` is a one-shot the kernel consumes every commit. Planes the kernel already has off are no longer re-disabled. The search's test commits still write everything — a throwaway request proposes a configuration the kernel has not got, so a diff against current state would be testing the wrong thing, and upstream splits into two functions for the same reason. |
 | P-2 | The port never wrote `COLOR_ENCODING` or `COLOR_RANGE`. | Fixed. Not by adding `PropTag` entries — upstream's tag list is the same sixteen, and these are written by a separate scene-level pass, because they are **sticky across clients**: whatever the last compositor left is what this one inherits, and the wrong YCbCr matrix or range tints every YUV layer. The enum integers are looked up by name per plane via the new `PropertyStore::enum_value`, since the value a driver assigns to a name is its own business and a hardcoded one silently selects a different variant elsewhere. Written once per plane and then diffed away, matching upstream's `sticky_props_` cache — the cache updates only after a commit the kernel accepted. |
 | P-3 | The port emitted the modeset properties only in the apply commit; the reference includes them in the `TEST_ONLY` commits too. | Fixed, and it was worse than first recorded. This is not "the test does not match the apply": while the CRTC is inactive the kernel rejects **every** plane bound to it with `EINVAL`, so the whole search would find nothing placeable and composite the entire scene on the first frame. Upstream carries a `test_preparer_` hook for exactly this and says so. `DeviceCommitter` now takes an optional `Modeset` and prepends it to each test request. Invisible here for the same reason as P-0: fbcon keeps the CRTC lit. |
+| P-7 | A layer whose source returned `WouldBlock` was dropped from the frame entirely, so its plane was **disabled**: a source that hiccups for one frame blinked its layer off screen. The reference re-attaches the framebuffer the layer already had. | Fixed. The scene remembers each layer's last framebuffer and re-attaches it when the source has nothing ready, so the layer goes on showing what it put up. A layer starved before it ever produced anything is still absent — there is nothing to hold. |
+| P-8 | Holding the plane made the report double-count: the starved layer was in the assignment *and* counted as skipped, so `total = assigned + composited + unassigned + skipped` stopped holding and a compositor watching those counters for dropped frames would see phantom ones. | Fixed by excluding starved layers from `layers_assigned` — they are skipped, not assigned, because nothing new reached the screen. This is the EAGAIN accounting drift the plan lists as a named risk; it appeared the moment P-7 was fixed, which is roughly when it was predicted to. |
 | P-5 | The port force-disabled **cursor** planes on every commit. | Fixed: `PlaneRegistry::force_disable_candidates` excludes them, and both the test and apply paths go through it. Upstream carves out the same exception in `disable_unused_planes` — a cursor plane belongs to the cursor path, and clearing it here would erase the cursor on every frame the scene commits. |
 
 ### A bug P-4's own fix introduced, and the harness caught

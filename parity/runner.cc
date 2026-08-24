@@ -41,6 +41,45 @@ using drm::scene::LayerScene;
 
 namespace {
 
+/// A DumbBufferSource that can be told to starve.
+///
+/// EAGAIN from acquire() is the documented "no frame yet" signal: the layer is
+/// skipped for this frame and counted, rather than the frame failing. Live
+/// sources (V4L2 before the first sample, a GStreamer appsink mid-preroll) do
+/// this routinely, so the accounting has to be right or a compositor cannot
+/// tell a starved layer from a dropped one.
+class StarvableSource : public drm::scene::LayerBufferSource {
+ public:
+  explicit StarvableSource(std::unique_ptr<drm::scene::DumbBufferSource> inner)
+      : inner_(std::move(inner)) {}
+
+  void set_starved(bool starved) noexcept { starved_ = starved; }
+
+  drm::expected<drm::scene::AcquiredBuffer, std::error_code> acquire() override {
+    if (starved_) {
+      return drm::unexpected<std::error_code>(
+          std::make_error_code(std::errc::resource_unavailable_try_again));
+    }
+    return inner_->acquire();
+  }
+
+  void release(drm::scene::AcquiredBuffer buf) noexcept override {
+    inner_->release(std::move(buf));
+  }
+
+  [[nodiscard]] drm::scene::BindingModel binding_model() const noexcept override {
+    return inner_->binding_model();
+  }
+
+  [[nodiscard]] drm::scene::SourceFormat format() const noexcept override {
+    return inner_->format();
+  }
+
+ private:
+  std::unique_ptr<drm::scene::DumbBufferSource> inner_;
+  bool starved_{false};
+};
+
 int fail(const char* what) {
   std::fprintf(stderr, "parity-runner: %s\n", what);
   return 1;
@@ -146,6 +185,34 @@ int main(int argc, char** argv) {
       continue;
     }
 
+    if (cmd == "starve" || cmd == "unstarve") {
+      std::string name;
+      if (!(in >> name)) return fail("starve: missing name");
+      auto it = handles.find(name);
+      if (it == handles.end()) return fail("starve: unknown layer");
+      auto* layer = scene.get_layer(it->second);
+      if (layer == nullptr) return fail("starve: stale handle");
+      auto* src = dynamic_cast<StarvableSource*>(&layer->source());
+      if (src == nullptr) return fail("starve: not a starvable source");
+      src->set_starved(cmd == "starve");
+      continue;
+    }
+
+    if (cmd == "move") {
+      // A geometry change, which must defeat the FB-only fast path: the
+      // kernel accepted the old rectangle, not this one.
+      std::string name;
+      int x = 0, y = 0;
+      if (!(in >> name >> x >> y)) return fail("move: bad args");
+      auto it = handles.find(name);
+      if (it == handles.end()) return fail("move: unknown layer");
+      auto* layer = scene.get_layer(it->second);
+      if (layer == nullptr) return fail("move: stale handle");
+      const auto r = layer->display().dst_rect;
+      layer->set_dst_rect(drm::scene::Rect{x, y, r.w, r.h});
+      continue;
+    }
+
     if (cmd == "del") {
       std::string name;
       if (!(in >> name)) return fail("del: missing name");
@@ -169,7 +236,7 @@ int main(int argc, char** argv) {
       if (!src) return fail("DumbBufferSource::create");
 
       LayerDesc layer;
-      layer.source = std::move(*src);
+      layer.source = std::make_unique<StarvableSource>(std::move(*src));
       layer.display.src_rect = drm::scene::Rect{0, 0, w, h};
       layer.display.dst_rect = drm::scene::Rect{x, y, w, h};
       layer.display.zpos = zpos;

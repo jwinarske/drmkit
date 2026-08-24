@@ -1,4 +1,11 @@
 # aarch64 cross lane. Targets: RK3588, RK3566, SA8155P, Jetson Orin Nano.
+#
+# The library path below assumes a populated target sysroot, which a Debian host
+# gets from `crossbuild-essential-arm64` and a Fedora host does not:
+# `gcc-aarch64-linux-gnu` installs the compiler and leaves
+# `/usr/aarch64-linux-gnu/sys-root` empty, so every link fails at once on `-lc`
+# and `crtn.o` and reads like a broken toolchain. `docs/cross-to-a-board.md` has
+# a way round it that installs nothing, by taking the sysroot off the board.
 # The ToneMapper NEON fp16 lane (DR-7) is runtime-detected, not baked in here —
 # the same binary must run on cores without fp16.
 [target.aarch64-unknown-linux-gnu]

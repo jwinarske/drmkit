@@ -115,3 +115,24 @@ shift up. The reference does exactly that, correctly.
 instead. It exercises the same stability bonus — the survivors must not compact
 into the hole — without a constraint that dominates the answer. The plan's
 wording should be amended to match.
+
+## A note on how properties were counted
+
+Two findings above were first written from a `modetest -p` dump and were wrong,
+in the same way and for the same reason.
+
+The kernel hides atomic-only properties from clients that have not set
+`DRM_CLIENT_CAP_ATOMIC` — `IN_FENCE_FD` and `OUT_FENCE_PTR` among them.
+`modetest -p` does not set that cap, so it reports those properties as absent
+on hardware that fully supports them. Measured on the same vc4 device, same
+boot, minutes apart:
+
+| | planes with `IN_FENCE_FD` | CRTCs with `OUT_FENCE_PTR` |
+|---|---|---|
+| client sets the atomic cap | 56 | 4 |
+| client does not | 0 | 0 |
+
+An absent property is therefore never evidence of a missing driver feature
+unless the tool that looked for it was an atomic client. Probe with the cap
+set, or read the driver source; do not infer capability from a `modetest`
+dump.

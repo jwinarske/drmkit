@@ -121,6 +121,12 @@ Two files keep the port honest as upstream moves:
 
 Both are enforced by `cargo xtask check`.
 
+Getting a build onto a board is written down too:
+[`docs/cross-to-a-board.md`](docs/cross-to-a-board.md). The committed cross
+fragment assumes a target sysroot the host distribution may not provide, and
+the way round it — borrowing one from the Pi itself — installs nothing on
+either machine.
+
 A third file records the flow in the other direction:
 [`docs/upstream-findings.md`](docs/upstream-findings.md) tracks every defect and
 improvement the port surfaces, the drm-cxx issue it was filed as, and what the

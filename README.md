@@ -70,8 +70,16 @@ by quietly doing nothing.
 | `drmkit-scene-sources` tier 1: dumb, external, ring, pool, cache | done — `GbmBufferSource` waits on `drmkit-gbm` |
 | T7 differential harness runs its first scenario | done — six scenarios, five diff-clean |
 
-**Phase 4 — started.** `drmkit-gbm` is in. `drmkit-display` (EDID, HDR,
-tone mapping), `-input`, `-session`, `-cursor` and `-capture` are next.
+**Phase 4 — started.**
+
+| Item | State |
+|---|---|
+| `drmkit-gbm` | done |
+| `drmkit-display`: tone mapper and colour curves | done — diffed pixel-for-pixel against the reference |
+| `drmkit-display`: EDID via libdisplay-info | done — behind the `edid` feature |
+| Fuzz target for EDID | done — seeded, closing phase 1's carry-over |
+| `allocator_torture` thresholds asserted on vkms | done — four of five cases discriminate there; one cannot ([P-14](docs/parity-findings.md)) |
+| `plane_stress`, `DriverProfile`, HDR cache, `-input`, `-session`, `-cursor`, `-capture` | ahead |
 
 ### The differential harness
 

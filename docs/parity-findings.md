@@ -25,6 +25,7 @@ Three scenarios in the corpus, all **byte-identical** on both sides:
 | # | Scenario | Divergence | Status |
 |---|---|---|---|
 | P-13 | — | `GbmBuffer::modifier` is unpinned on vkms: its buffers really are linear, so an implementation that ignored the driver and returned zero passes every assertion — verified by injecting exactly that. | Open — needs a driver that reports a non-linear layout. A GPU or vc4 would; vkms cannot. |
+| P-14 | — | The `rapid churn` allocator threshold (average under 1.5 test commits per frame) cannot fail on vkms: its planes are interchangeable, so a cold search lands first try at exactly one test commit and the number is identical with the warm-start cache disabled. Verified by disabling it. | Open — needs hardware whose planes differ enough (formats, scaling, zpos ranges) that a cold search must backtrack. The other four torture cases do discriminate and were checked. |
 | P-6 | — | The port has no equivalent of upstream's `zpos_is_fixed`: a plane whose advertised zpos range is degenerate (`min == max`) is not settable even though the kernel does not flag it `IMMUTABLE`, and writing it returns `EINVAL`. Upstream skips the write; the port would make it. | Open — vkms exposes no zpos property at all, so no scenario here can reach it. Wants a driver that does (vc4's primary is upstream's cited case). |
 
 ## Closed

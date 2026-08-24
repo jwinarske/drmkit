@@ -33,6 +33,8 @@
 //! read as a native `u32` is `0xAARRGGBB`. The arithmetic here is written in
 //! those terms, as upstream's is.
 
+use drmkit_core::Device;
+use drmkit_dumb::{Buffer, DumbError};
 use drmkit_fmt::fourcc;
 
 /// A rectangle in whole pixels, half-open in extent.
@@ -336,6 +338,186 @@ pub fn blend_into(
                 u32::from_ne_bytes([dst[d_at], dst[d_at + 1], dst[d_at + 2], dst[d_at + 3]]);
             let out = blend_pixel_over(pixel, under).to_ne_bytes();
             dst[d_at..d_at + 4].copy_from_slice(&out);
+        }
+    }
+}
+
+/// Copy `height` tightly packed rows into a buffer that may be strided wider.
+///
+/// A dumb buffer's stride is whatever the kernel chose and may exceed
+/// `row_bytes`; the shadow is always tight. Copying the whole shadow in one
+/// block would walk that padding into the next row and shear the image
+/// progressively down the canvas.
+///
+/// Split out because vkms never pads — its stride is exactly `width * 4` — so
+/// no test against a real device can reach the case this exists for.
+fn copy_rows(dst: &mut [u8], dst_stride: usize, shadow: &[u8], row_bytes: usize, height: usize) {
+    if row_bytes > dst_stride {
+        return;
+    }
+    if dst.len() < dst_stride * height || shadow.len() < row_bytes * height {
+        return;
+    }
+    for y in 0..height {
+        let to = y * dst_stride;
+        let from = y * row_bytes;
+        dst[to..to + row_bytes].copy_from_slice(&shadow[from..from + row_bytes]);
+    }
+}
+
+// --- the surface ------------------------------------------------------------
+
+/// A double-buffered software composition surface.
+///
+/// Owns two ARGB8888 dumb buffers and alternates between them: the CPU paints
+/// the back while the kernel scans out the front. A single buffer tears
+/// visibly — the scanout reads the same memory the CPU is writing, so a
+/// horizontal seam appears wherever it caught a half-painted frame. The cost
+/// is one extra canvas-sized allocation: 3 MB at 1024×768, 33 MB at 4K.
+///
+/// Painting goes to a **shadow** in ordinary memory, not to the buffer. The
+/// kernel typically maps a dumb buffer write-combined, where scattered
+/// per-pixel writes are slow but one long linear copy runs at streaming
+/// bandwidth. [`flush`](Self::flush) is that copy.
+pub struct CompositeCanvas {
+    buffers: [Buffer; 2],
+    /// Index of the buffer being painted into.
+    back: usize,
+    /// Cached-memory paint target, `width * height * 4`.
+    shadow: Vec<u8>,
+    width: u32,
+    height: u32,
+}
+
+impl CompositeCanvas {
+    /// Allocate the pair at `width` × `height`.
+    ///
+    /// # Errors
+    ///
+    /// [`DumbError`] if either allocation or its framebuffer fails.
+    pub fn create(device: &Device, width: u32, height: u32) -> Result<Self, DumbError> {
+        let config = drmkit_dumb::Config {
+            width,
+            height,
+            fourcc: fourcc::ARGB8888,
+            bpp: 32,
+            add_fb: true,
+        };
+        let buffers = [
+            Buffer::create(device, &config)?,
+            Buffer::create(device, &config)?,
+        ];
+        Ok(Self {
+            buffers,
+            back: 0,
+            shadow: vec![0; (width as usize) * (height as usize) * 4],
+            width,
+            height,
+        })
+    }
+
+    /// Swap back and front before painting.
+    ///
+    /// Call once per frame, before the first paint. Calling it twice in one
+    /// frame would paint into the buffer just handed to the kernel.
+    pub const fn begin_frame(&mut self) {
+        self.back = 1 - self.back;
+    }
+
+    /// Zero the whole shadow: transparent black, the `SRC_OVER` identity.
+    pub fn clear(&mut self) {
+        self.shadow.fill(0);
+    }
+
+    /// Zero one rectangle of the shadow.
+    ///
+    /// Scrubbing only the union of last frame's and this frame's painted
+    /// region turns the per-frame cost from `width * height * 4` bytes into
+    /// something proportional to what actually moved.
+    pub fn clear_rect(&mut self, rect: CompositeRect) {
+        let (w, h) = (self.width, self.height);
+        clear_into(&mut self.shadow, w * 4, w, h, rect);
+    }
+
+    /// Blend one source over the shadow.
+    pub fn blend(
+        &mut self,
+        src: &CompositeSrc<'_>,
+        src_rect: CompositeRect,
+        dst_rect: CompositeRect,
+    ) {
+        let (w, h) = (self.width, self.height);
+        blend_into(&mut self.shadow, w * 4, w, h, src, src_rect, dst_rect);
+    }
+
+    /// Copy the painted shadow into the back buffer.
+    ///
+    /// Row by row rather than one call, because the kernel is free to pad a
+    /// dumb buffer's stride above `width * 4`; copying straight through would
+    /// walk the padding into the next row and shear the image.
+    pub fn flush(&mut self) {
+        let stride = self.buffers[self.back].stride() as usize;
+        let row_bytes = (self.width as usize) * 4;
+        let height = self.height as usize;
+        let dst = self.buffers[self.back].data_mut();
+        copy_rows(dst, stride, &self.shadow, row_bytes, height);
+    }
+
+    /// The framebuffer to arm on the canvas plane — the one just painted.
+    #[must_use]
+    pub fn fb_id(&self) -> Option<u32> {
+        self.buffers[self.back].fb_id()
+    }
+
+    /// Canvas width in pixels.
+    #[must_use]
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Canvas height in pixels.
+    #[must_use]
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Read one pixel back out of the buffer being painted.
+    ///
+    /// Reads the framebuffer's own memory rather than the shadow, which is the
+    /// only way to tell that [`flush`](Self::flush) actually reached the buffer
+    /// the kernel will scan out. Zero for a pixel outside the canvas, or once
+    /// the mapping has been dropped.
+    #[must_use]
+    pub fn back_pixel(&self, x: u32, y: u32) -> u32 {
+        if x >= self.width || y >= self.height {
+            return 0;
+        }
+        let stride = self.buffers[self.back].stride() as usize;
+        let data = self.buffers[self.back].data();
+        let at = y as usize * stride + x as usize * 4;
+        data.get(at..at + 4).map_or(0, |bytes| {
+            u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+        })
+    }
+
+    /// Whether the canvas can be armed.
+    ///
+    /// False once [`forget`](Self::forget) has run, so a scene that resumes
+    /// without re-allocating cannot commit a framebuffer id the kernel no
+    /// longer knows.
+    #[must_use]
+    pub fn armable(&self) -> bool {
+        !self.buffers[0].is_empty() && !self.buffers[1].is_empty() && self.fb_id().is_some()
+    }
+
+    /// Drop both buffers' kernel state without issuing ioctls.
+    ///
+    /// For session pause, where the descriptor has been revoked and cannot
+    /// service the ioctls a normal teardown would make. The shadow survives —
+    /// it is ordinary memory and owes the device nothing.
+    pub fn forget(&mut self) {
+        for buffer in &mut self.buffers {
+            buffer.forget();
         }
     }
 }
@@ -648,5 +830,58 @@ mod tests {
             );
         }
         assert_eq!(px(&dst, 8, 0, 0), 0xFF00_FF00);
+    }
+}
+
+#[cfg(test)]
+mod stride_tests {
+    use super::copy_rows;
+
+    /// Padding stays between rows instead of shifting them.
+    ///
+    /// The failure this guards against is not a crash — it is every row after
+    /// the first landing a few pixels further left than the last, so the image
+    /// shears diagonally. Unreachable on vkms, which never pads.
+    #[test]
+    fn a_padded_stride_does_not_shear_the_image() {
+        let row_bytes = 8; // two pixels
+        let stride = 12; // one pixel of padding per row
+        let height = 3;
+        let shadow: Vec<u8> = (0..u8::try_from(row_bytes * height).expect("fits")).collect();
+        let mut dst = vec![0xEE; stride * height];
+
+        copy_rows(&mut dst, stride, &shadow, row_bytes, height);
+
+        for y in 0..height {
+            let at = y * stride;
+            assert_eq!(
+                &dst[at..at + row_bytes],
+                &shadow[y * row_bytes..(y + 1) * row_bytes],
+                "row {y} landed at the wrong offset"
+            );
+            assert_eq!(
+                &dst[at + row_bytes..at + stride],
+                &[0xEE; 4],
+                "row {y}'s padding must be left alone, not written through"
+            );
+        }
+    }
+
+    /// A destination too small for its stated geometry is left untouched.
+    #[test]
+    fn a_short_destination_copies_nothing() {
+        let mut dst = vec![0u8; 8];
+        let before = dst.clone();
+        copy_rows(&mut dst, 8, &[1, 2, 3, 4, 5, 6, 7, 8], 8, 4);
+        assert_eq!(dst, before);
+    }
+
+    /// A stride narrower than a row is refused rather than truncating.
+    #[test]
+    fn a_stride_narrower_than_a_row_copies_nothing() {
+        let mut dst = vec![0u8; 16];
+        let before = dst.clone();
+        copy_rows(&mut dst, 4, &[9u8; 16], 8, 2);
+        assert_eq!(dst, before);
     }
 }

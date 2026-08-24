@@ -37,7 +37,9 @@ mod report;
 mod scene;
 mod source;
 
-pub use canvas::{CompositeRect, CompositeSrc, blend_into, clear_into, format_supported};
+pub use canvas::{
+    CompositeCanvas, CompositeRect, CompositeSrc, blend_into, clear_into, format_supported,
+};
 pub use commit::{
     DeviceCommitter, FenceAction, Modeset, PlanePropertyMap, arm_acquire_fences, classify,
     emit_disable, emit_frame, emit_layer, fence_action,

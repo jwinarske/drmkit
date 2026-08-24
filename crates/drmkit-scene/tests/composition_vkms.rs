@@ -152,8 +152,16 @@ fn fixture() -> Option<Fixture> {
         });
     }
     let registry = PlaneRegistry::from_capabilities(capabilities);
+    // However many the device offers. vkms exposes a different number
+    // depending on kernel version and module parameters -- ten here, fewer in
+    // the lane -- so every case below is written against this count rather
+    // than a number that happened to be true on one machine.
     let planes = registry.force_disable_candidates(0).count();
-    assert!(planes > 1, "this CRTC has too few planes to overflow");
+    assert!(
+        planes > 0,
+        "a CRTC with no usable plane cannot display anything"
+    );
+    println!("note: {planes} candidate plane(s) on this CRTC");
 
     let mut map = PlanePropertyMap::new();
     map.learn_all(&device, &registry).expect("learn planes");
@@ -227,15 +235,18 @@ fn a_scene_that_fits_composites_nothing_vkms() {
     let _guard = card_guard();
     let Some(mut fx) = fixture() else { return };
 
-    fill(&mut fx, 2);
+    // Exactly as many layers as there are planes: the search can place all of
+    // them, so no reservation is taken and no canvas is armed.
+    let planes = fx.planes;
+    fill(&mut fx, planes);
     let build = build(&mut fx);
     let report = build.report().clone();
     let planned = build.plan().len();
     fx.scene.finalize_frame(build, KernelResult::Ok);
 
     assert_eq!(report.layers_composited, 0, "nothing needed rescuing");
-    assert_eq!(report.layers_assigned, 2);
-    assert_eq!(planned, 2, "one plane per layer, no canvas");
+    assert_eq!(report.layers_assigned, planes);
+    assert_eq!(planned, planes, "one plane per layer, no canvas");
     assert!(report.accounting_balances());
 
     fx.scene.drain();
@@ -346,11 +357,18 @@ fn the_canvas_plane_is_not_also_disabled_vkms() {
     fx.scene.drain();
 }
 
-/// A source the CPU cannot read stays dropped, and is reported as such.
+/// A source the CPU cannot read stays dropped; one that can is rescued.
 ///
-/// Composition rescues a layer by reading its pixels. One that cannot be
-/// mapped has no route in, so it stays off the screen — reported unassigned,
-/// not composited, because it did not reach hardware.
+/// Composition reads a layer's pixels to blend them. A layer that cannot be
+/// mapped has no route in, so it stays off the screen — and must be reported
+/// unassigned, not composited, because `composited` means "reached hardware".
+///
+/// The counts are arranged so both outcomes are certain. With `planes + 2` of
+/// each kind and only `planes` placeable, at least two mappable and at least
+/// two unmappable layers are dropped whatever order the search picks. An
+/// earlier version added only two unmappable layers, and those happened to be
+/// the only two dropped — so no canvas was armed, and the case proved nothing
+/// about the split it was named for.
 #[test]
 #[ignore = "needs a DRM device"]
 fn an_unmappable_source_is_not_rescued_vkms() {
@@ -358,8 +376,8 @@ fn an_unmappable_source_is_not_rescued_vkms() {
     let Some(mut fx) = fixture() else { return };
 
     let planes = fx.planes;
-    fill(&mut fx, planes);
-    for _ in 0..2 {
+    fill(&mut fx, planes + 2);
+    for _ in 0..planes + 2 {
         let source =
             drmkit_scene_sources::DumbBufferSource::create(&fx.device, 32, 32, fourcc::ARGB8888)
                 .expect("dumb source");
@@ -386,6 +404,19 @@ fn an_unmappable_source_is_not_rescued_vkms() {
     assert!(
         report.accounting_balances(),
         "the identity has to hold when a rescue fails too: {report:?}"
+    );
+    // The identity alone cannot tell a rescued layer from a lost one — both
+    // keep the total right. Only the split does.
+    assert!(
+        report.layers_composited >= 2,
+        "at least two mappable layers were dropped and must have been \
+         rescued: {report:?}"
+    );
+    assert!(
+        report.layers_unassigned >= 2,
+        "at least two unmappable layers were dropped and cannot have been \
+         rescued; counting them composited would report them on screen: \
+         {report:?}"
     );
 
     fx.scene.drain();

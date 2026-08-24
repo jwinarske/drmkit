@@ -584,11 +584,12 @@ impl LayerScene {
         // canvas takes a plane, and a plane carrying the canvas must not also
         // appear in the disable pass.
         let canvas_plane = self.compose_unassigned(&allocation, registry, crtc_index);
-        let composited = if canvas_plane.is_some() {
-            allocation.composited.len()
-        } else {
-            0
-        };
+        // What actually landed in the canvas, not what the allocator dropped.
+        // A layer whose source the CPU cannot read, or whose format the blend
+        // does not handle, is dropped *and* unrescued -- counting it composited
+        // would report a layer as on screen when it is not. The identity holds
+        // either way, so only the split tells them apart.
+        let composited = canvas_plane.as_ref().map_or(0, |c| c.blended);
 
         let report = build_report(&tally, &allocation, registry, &starved, composited);
 
@@ -606,14 +607,15 @@ impl LayerScene {
             registry,
             crtc_index,
         );
-        let disables = if let Some((plane_id, layer)) = canvas_plane {
+        let disables = if let Some(composition) = canvas_plane {
+            let plane_id = composition.plane_id;
             plan.push(PlanePlan {
                 plane_id,
                 // The canvas is the scene's own surface, not any one layer's,
                 // so it carries no layer identity and no committed baseline:
                 // every property is written every frame it is armed.
                 layer_id: LayerId(0),
-                layer,
+                layer: composition.layer,
                 baseline: None,
             });
             disables.into_iter().filter(|id| *id != plane_id).collect()
@@ -671,7 +673,7 @@ impl LayerScene {
         allocation: &drmkit_planes::Allocation,
         registry: &PlaneRegistry,
         crtc_index: u32,
-    ) -> Option<(u32, drmkit_planes::Layer)> {
+    ) -> Option<Composition> {
         if allocation.composited.is_empty() {
             return None;
         }
@@ -743,7 +745,11 @@ impl LayerScene {
         }
         canvas.flush();
 
-        Some((plane_id, lower_canvas(canvas, *crtc_id, zpos)?))
+        Some(Composition {
+            plane_id,
+            layer: lower_canvas(canvas, *crtc_id, zpos)?,
+            blended,
+        })
     }
 
     /// Reconcile scene state with the kernel's answer, releasing buffers per
@@ -905,6 +911,19 @@ fn build_report(
         placements,
         ..CommitReport::default()
     }
+}
+
+/// What a frame's composition pass produced.
+struct Composition {
+    /// The plane the canvas is armed on.
+    plane_id: u32,
+    /// The canvas's lowered properties.
+    layer: PlaneLayer,
+    /// How many layers actually reached the canvas.
+    ///
+    /// Not the same as how many the allocator dropped: a source the CPU cannot
+    /// read has no route in and stays off the screen.
+    blended: usize,
 }
 
 /// Which planes to hold back from the search, if any.

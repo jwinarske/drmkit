@@ -7,10 +7,15 @@ composition, and scanout.
 [![ci](https://github.com/jwinarske/drmkit/actions/workflows/ci.yml/badge.svg)](https://github.com/jwinarske/drmkit/actions/workflows/ci.yml)
 [![vkms](https://github.com/jwinarske/drmkit/actions/workflows/vkms.yml/badge.svg)](https://github.com/jwinarske/drmkit/actions/workflows/vkms.yml)
 
-> **Status: Phase 0.** The workspace, toolchain pin, CI, and drift linters are
-> in place, along with the two leaf crates. Nothing here is usable as a display
-> library yet. See [`plan.md`](plan.md) for the full porting plan and
-> [`docs/phase0-spikes.md`](docs/phase0-spikes.md) for the dependency gap list.
+> **Status: phases 0–3 met, phase 4 started.** Twelve crates, 357 tests, and
+> all six [`INVARIANTS.md`](INVARIANTS.md) contracts pinned against a real
+> device. A scene can build a frame, allocate planes, commit it, composite
+> what it cannot place, and hand buffers back on the right vblank.
+>
+> Not yet a display library you would ship: EDID, colour management, the
+> cursor and capture paths, and the whole present spine are still ahead, and
+> nothing has run on non-vkms hardware. See [`plan.md`](plan.md) for the full
+> porting plan.
 
 ### Phase gates
 
@@ -53,6 +58,40 @@ stays green, and the lane runs them with `--include-ignored` under
 tolerated local condition into a lane failure, so a card test cannot pass in CI
 by quietly doing nothing.
 
+**Phase 3 — met.**
+
+| Item | State |
+|---|---|
+| `LayerScene`: build/finalize split, EAGAIN flow control, commit report | done |
+| Invariants 1, 2 and 5 pinned against a device | done — `release_invariants_vkms` |
+| Invariant 4 pinned end to end | done — reachability *and* the steady-state write census |
+| Real commit path: property map, modeset, emission | done |
+| Composition fallback: blend, canvas, plane arming | done |
+| `drmkit-scene-sources` tier 1: dumb, external, ring, pool, cache | done — `GbmBufferSource` waits on `drmkit-gbm` |
+| T7 differential harness runs its first scenario | done — six scenarios, five diff-clean |
+
+**Phase 4 — started.** `drmkit-gbm` is in. `drmkit-display` (EDID, HDR,
+tone mapping), `-input`, `-session`, `-cursor` and `-capture` are next.
+
+### The differential harness
+
+The [T7 harness](parity/README.md) runs identical scenario scripts through both
+implementations against one vkms instance and diffs the property writes that
+reach the kernel, captured at the ioctl boundary so neither side is
+instrumented.
+
+Building it found eleven defects in this port — a missing modeset path, a
+composition fallback that blinked layers off screen, inverted z-order on
+hardware that cannot reorder planes — most of them invisible to every counter
+and test in the tree. Five scenarios now produce byte-identical traces; the
+sixth is a reproduction for an open upstream question and is expected to
+diverge. See [`docs/parity-findings.md`](docs/parity-findings.md).
+
+**Upstream first.** drm-cxx is the origin of authority: anything this port
+surfaces is [filed there](docs/upstream-findings.md) rather than fixed only
+here, and the default for a bug is to reproduce the C++ behaviour so the two
+agree byte for byte. Eight issues filed so far.
+
 **Upstream baseline:** `jwinarske/drm-cxx` @ `dc2915b` (v2.0.1, PR #231).
 
 ## What this is
@@ -87,14 +126,17 @@ lived only here would make the two implementations diverge.
 | `xtask` | TEST_PARITY / INVARIANTS drift linters | 0 ✅ |
 | `drmkit-fmt` | Format modifiers, `IN_FORMATS` tables, bandwidth cost (`no_std`) | 1 ✅ |
 | `drmkit-sync` | `sync_file` fences for explicit synchronization | 1 ✅ |
-| `drmkit-core` | Device handles, property cache, atomic requests | 1 ✅ |
+| `drmkit-core` | Device handles, property cache, atomic requests, property blobs | 1 ✅ |
 | `drmkit-modeset` | Mode selection, page-flip dispatch — **invariant 3** | 1 ✅ |
 | `drmkit-dumb` | Dumb buffers, lifetime mmaps — **invariant 6** | 1 ✅ |
-
 | `drmkit-planes` | Registry, layer model, matcher, allocator — **invariant 4** | 2 ✅ |
+| `drmkit-scene` | Scene, commit path, release ring, software composition — **invariants 1, 2, 5** | 3 ✅ |
+| `drmkit-scene-sources` | Tier-1 sources: dumb, external dma-buf, ring, pool, cache | 3 ✅ |
+| `drmkit-gbm` | GBM allocation and dma-buf export | 4 ✅ |
+| `drmkit` | Umbrella re-export, feature-gated | — |
 
-| `drmkit-scene` | Buffer sources, release ring, commit lifecycle — **invariants 1, 2, 5** | 3 (in progress) |
-| `drmkit-scene-sources` | Tier-1 sources: dumb buffers | 3 (in progress) |
+Plus [`parity/`](parity/README.md): the T7 differential harness — an
+`LD_PRELOAD` trace shim, a scenario runner per implementation, and the corpus.
 
 The remaining ~25 crates and the phase that lands each are listed in
 [`plan.md`](plan.md) §5 and §8.

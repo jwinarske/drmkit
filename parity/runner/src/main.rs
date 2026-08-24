@@ -191,12 +191,22 @@ impl<'a> Runner<'a> {
     }
 
     fn frame(&mut self) -> Result<(), String> {
+        // The search's test commits carry the modeset too, until the CRTC is
+        // up: a plane bound to an inactive CRTC is rejected, so without it the
+        // very first frame would find nothing placeable.
+        let modeset = self.first_commit.then_some(&self.modeset);
+        let test_flags = if self.first_commit {
+            AtomicCommitFlags::ALLOW_MODESET
+        } else {
+            AtomicCommitFlags::empty()
+        };
         let mut committer = DeviceCommitter::new(
             self.device,
             &self.map,
             &self.registry,
             self.crtc_index,
-            AtomicCommitFlags::empty(),
+            test_flags,
+            modeset,
         );
         let build = self
             .scene
@@ -224,11 +234,16 @@ impl<'a> Runner<'a> {
             flags |= AtomicCommitFlags::ALLOW_MODESET;
         }
 
+        let programmed: Vec<u32> = build.plan().iter().map(|entry| entry.plane_id).collect();
         let result = match request.commit(self.device, flags) {
             Ok(()) => KernelResult::Ok,
             Err(e) => return Err(format!("commit: {e}")),
         };
         self.first_commit = false;
+        // Only now: a commit the kernel refused carried nothing.
+        for plane_id in programmed {
+            self.map.note_color_committed(plane_id);
+        }
 
         // finalize_frame is what arms the flip, so it has to run before the
         // event is landed -- landing first leaves the scene believing a flip

@@ -6,7 +6,7 @@
 //! This is the seam between the device-free search in `drmkit-planes` and the
 //! kernel. The allocator decides *what* to try; this knows *how* to ask.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use drmkit_core::{
     AtomicCommitFlags, CoreError, Device, Mode, ObjectType, PropertyBlob, PropertyStore,
@@ -14,6 +14,26 @@ use drmkit_core::{
 use drmkit_planes::{LayerRef, PropTag, TestCommitter, TestFailure};
 
 use crate::frame::KernelResult;
+
+/// A plane's colorimetry properties, resolved to the values this scene writes.
+///
+/// The KMS names are strings but the wire values are driver-assigned integers,
+/// so both are looked up per plane rather than assumed.
+#[derive(Debug, Clone, Copy)]
+struct ColorProps {
+    encoding_id: u32,
+    encoding_value: u64,
+    range_id: u32,
+    range_value: u64,
+}
+
+/// The colorimetry this scene asks for on every plane it programs.
+///
+/// BT.709 with limited range, matching upstream's default. A per-layer
+/// override is not modelled yet; when it is, it replaces these two values and
+/// nothing else about the emission changes.
+const DEFAULT_COLOR_ENCODING: &str = "ITU-R BT.709 YCbCr";
+const DEFAULT_COLOR_RANGE: &str = "YCbCr limited range";
 
 /// Resolves a layer's [`PropTag`]s to the DRM property ids of a given plane.
 ///
@@ -30,6 +50,15 @@ pub struct PlanePropertyMap {
     /// stray write poisons the whole commit — including every other layer in
     /// it.
     immutable: HashMap<u32, Vec<PropTag>>,
+    /// Colorimetry properties, for the planes that expose them.
+    color: HashMap<u32, ColorProps>,
+    /// Planes whose colorimetry the kernel has already taken.
+    ///
+    /// These properties are sticky across clients, so they have to be written
+    /// once to displace whatever the previous compositor left -- and then not
+    /// again, because restating an unchanged value every frame is exactly the
+    /// per-frame traffic the rest of the emit path works to avoid.
+    color_committed: HashSet<u32>,
 }
 
 impl PlanePropertyMap {
@@ -50,6 +79,35 @@ impl PlanePropertyMap {
     pub fn learn_plane(&mut self, device: &Device, plane_id: u32) -> Result<(), CoreError> {
         let mut store = PropertyStore::new();
         store.cache_properties(device, plane_id, ObjectType::Plane)?;
+
+        // Colorimetry is optional -- plenty of planes expose neither property,
+        // and a plane with only one of the pair is treated as having neither
+        // rather than being left half-configured.
+        let color = match (
+            store.property_id(plane_id, "COLOR_ENCODING"),
+            store.property_id(plane_id, "COLOR_RANGE"),
+        ) {
+            (Ok(encoding_id), Ok(range_id)) => Some(ColorProps {
+                encoding_id,
+                encoding_value: store.enum_value(
+                    device,
+                    plane_id,
+                    "COLOR_ENCODING",
+                    DEFAULT_COLOR_ENCODING,
+                )?,
+                range_id,
+                range_value: store.enum_value(
+                    device,
+                    plane_id,
+                    "COLOR_RANGE",
+                    DEFAULT_COLOR_RANGE,
+                )?,
+            }),
+            _ => None,
+        };
+        if let Some(color) = color {
+            self.color.insert(plane_id, color);
+        }
 
         let mut ids = HashMap::new();
         let mut immutable = Vec::new();
@@ -88,6 +146,15 @@ impl PlanePropertyMap {
             self.learn_plane(device, plane.id)?;
         }
         Ok(())
+    }
+
+    /// Record that a real commit carried `plane_id`'s colorimetry.
+    ///
+    /// Call only after the kernel accepted the commit. A `TEST_ONLY` applies
+    /// nothing, so noting one would suppress the write on the commit that
+    /// actually matters and leave the plane on the previous client's settings.
+    pub fn note_color_committed(&mut self, plane_id: u32) {
+        self.color_committed.insert(plane_id);
     }
 
     /// The DRM property id for a tag on a plane, if it is writable there.
@@ -216,6 +283,9 @@ pub struct DeviceCommitter<'a> {
     map: &'a PlanePropertyMap,
     /// Planes on this CRTC that a test may need to disable.
     candidates: Vec<u32>,
+    /// Modeset writes to prepend to every test request, if the CRTC still
+    /// needs bringing up.
+    modeset: Option<&'a Modeset<'a>>,
     flags: AtomicCommitFlags,
     /// How many test commits have been issued, for diagnostics.
     pub commits: usize,
@@ -237,6 +307,7 @@ impl<'a> DeviceCommitter<'a> {
         registry: &drmkit_planes::PlaneRegistry,
         crtc_index: u32,
         flags: AtomicCommitFlags,
+        modeset: Option<&'a Modeset<'a>>,
     ) -> Self {
         Self {
             device,
@@ -246,6 +317,7 @@ impl<'a> DeviceCommitter<'a> {
                 .map(|plane| plane.id)
                 .collect(),
             flags,
+            modeset,
             commits: 0,
         }
     }
@@ -255,6 +327,17 @@ impl TestCommitter for DeviceCommitter<'_> {
     fn test_assignment(&mut self, assignment: &[(u32, LayerRef<'_>)]) -> Result<(), TestFailure> {
         self.commits += 1;
         let mut request = drmkit_core::AtomicRequest::new();
+
+        // A test request is plane-only otherwise, and while the CRTC is still
+        // inactive the kernel rejects every plane bound to it with EINVAL. The
+        // search would then find nothing placeable and composite the whole
+        // scene -- on the first frame, on a machine that boots without a DRM
+        // fbdev client to leave the CRTC lit for it.
+        if let Some(modeset) = self.modeset
+            && modeset.emit(&mut request).is_err()
+        {
+            return Err(TestFailure::Rejected);
+        }
 
         // Disable first: a plane inheriting stale state from the previous
         // commit is what makes an otherwise-valid migration look invalid.
@@ -411,6 +494,32 @@ pub fn emit_frame(
             &entry.layer,
             entry.baseline.as_ref(),
         )?;
+        written += emit_color_props(request, map, entry.plane_id)?;
     }
     Ok(written)
+}
+
+/// Emit a plane's colorimetry, if it has any.
+///
+/// Written on every frame, exempt from the diff that governs everything else
+/// in [`emit_layer`]. These properties are sticky across clients: whatever the
+/// last compositor left is what this one inherits, and inheriting the wrong
+/// YCbCr matrix or range tints every YUV layer -- cyan or magenta, depending
+/// which is wrong. Restating them costs two writes per programmed plane and
+/// removes a dependency on what ran before.
+///
+fn emit_color_props(
+    request: &mut drmkit_core::AtomicRequest,
+    map: &PlanePropertyMap,
+    plane_id: u32,
+) -> Result<usize, CoreError> {
+    let Some(color) = map.color.get(&plane_id) else {
+        return Ok(0);
+    };
+    if map.color_committed.contains(&plane_id) {
+        return Ok(0);
+    }
+    request.add_property(plane_id, color.encoding_id, color.encoding_value)?;
+    request.add_property(plane_id, color.range_id, color.range_value)?;
+    Ok(2)
 }

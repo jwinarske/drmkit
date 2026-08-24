@@ -149,6 +149,47 @@ impl PropertyStore {
         self.find(object_id, name).map(|p| p.value)
     }
 
+    /// The raw value of an enum property's named variant.
+    ///
+    /// Enum properties are named by string in the KMS ABI but written as
+    /// integers, and the integer a driver assigns to a given name is its own
+    /// business. Hardcoding one that happened to be right on the card in front
+    /// of you silently selects a different variant elsewhere -- for
+    /// `COLOR_ENCODING` that is a wrong YCbCr matrix, which is a visible tint
+    /// rather than an error.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::NoSuchProperty`] if the object has no such property, if it
+    /// is not an enum, or if it has no variant by that name.
+    pub fn enum_value(
+        &self,
+        device: &Device,
+        object_id: u32,
+        property: &str,
+        variant: &str,
+    ) -> Result<u64> {
+        let id = self.property_id(object_id, property)?;
+        let missing = || CoreError::NoSuchProperty {
+            object_id,
+            name: property.to_owned(),
+        };
+        // `RawResourceHandle` is a `NonZeroU32`; a zero id is not a property.
+        let handle = drm::control::RawResourceHandle::new(id).ok_or_else(missing)?;
+        let info =
+            drm::control::Device::get_property(device, handle.into()).map_err(|_| missing())?;
+        let drm::control::property::ValueType::Enum(values) = info.value_type() else {
+            return Err(missing());
+        };
+        let (raw, enums) = values.values();
+        enums
+            .iter()
+            .zip(raw.iter())
+            .find(|(entry, _)| entry.name().to_string_lossy() == variant)
+            .map(|(_, value)| *value)
+            .ok_or_else(missing)
+    }
+
     /// Whether a named property is `DRM_MODE_PROP_IMMUTABLE`.
     ///
     /// Writing an immutable property in an atomic commit is rejected with

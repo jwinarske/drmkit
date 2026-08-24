@@ -18,9 +18,7 @@ Tests suffixed `_vkms` need the VKMS virtual driver (or any modeset card via
 runners, drmkit runs them under virtme-ng on every PR — they are
 merge-blocking from Phase 0 onward (plan §9, §10).
 
-> **Status.** Invariants 1, 2, 3, 5 and 6 are pinned end to end. Invariant 4's
-> mechanism is pinned host-side; its steady-state property-write census still
-> wants a vkms pin, which lands with the property-minimization work.
+> **Status.** All six are pinned end to end.
 >
 > Each entry says which of its pins are host tests and which run against a
 > device.
@@ -148,6 +146,21 @@ without classifying it fails to compile rather than silently defaulting to
 - **Fast path pinned by:** `fb_only_frame_skips_the_test_commit`,
   `a_placement_change_defeats_the_fast_path`, and
   `a_vanished_layer_defeats_the_fast_path`.
+- **Reachability pinned by:** `a_steady_frame_issues_no_test_commit` and
+  `removing_a_layer_does_not_force_a_search`, which count test commits from
+  outside the allocator. The three above set up the committed baseline
+  themselves, so they prove the predicate works and cannot show whether
+  anything ever satisfies it — for a while nothing did, and the fast path was
+  unreachable in production while they stayed green.
+- **Steady-state census pinned by:**
+  `a_steady_frame_writes_only_the_framebuffer_vkms` and
+  `colorimetry_is_written_once_not_every_frame_vkms`. Skipping the test commit
+  is only half the saving; a frame that then restates every property has moved
+  the cost rather than removed it. The census needs a device because it is a
+  claim about a count, and a host test with a synthetic property map would be
+  counting the tags it had itself installed.
+- **Emission pinned end to end by:** the T7 `warm-start-stability` scenario,
+  whose trace is byte-identical to the reference's across all five commits.
 - **Reject-invalidates-cache pinned by:**
   `a_rejected_fast_path_frame_invalidates_the_cached_allocation` and
   `an_ordinary_rejection_does_not_invalidate_the_cache`. The second matters as

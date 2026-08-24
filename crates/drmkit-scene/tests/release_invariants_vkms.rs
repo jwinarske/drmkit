@@ -216,6 +216,7 @@ fn cycle(h: &mut Harness, result: KernelResult) -> drmkit_scene::CommitReport {
         &h.registry,
         h.crtc_index,
         AtomicCommitFlags::empty(),
+        None,
     );
     let build = h
         .scene
@@ -348,6 +349,7 @@ fn an_armed_flip_keeps_teardown_unsafe_until_landed_vkms() {
         &h.registry,
         h.crtc_index,
         AtomicCommitFlags::empty(),
+        None,
     );
     let build = h
         .scene

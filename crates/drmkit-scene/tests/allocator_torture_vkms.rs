@@ -305,7 +305,11 @@ fn slow_drift_holds_at_one_test_commit_vkms() {
     let Some(mut rig) = rig() else { return };
 
     let drifting = rig.add(0, 0, 0);
-    rig.add(96, 0, 1);
+    // A second layer only where there is a plane for it; on a single-plane
+    // CRTC the drift is what is being measured, not the composition path.
+    if rig.planes > 1 {
+        rig.add(96, 0, 1);
+    }
     rig.frame(); // warm
     rig.scene.flip_landed();
 
@@ -337,7 +341,10 @@ fn a_burst_settles_within_a_few_frames_vkms() {
     let _guard = card_guard();
     let Some(mut rig) = rig() else { return };
 
-    let layers: Vec<LayerHandle> = (0..3).map(|i| rig.add(0, 0, i)).collect();
+    let count = rig.planes.clamp(1, 3);
+    let layers: Vec<LayerHandle> = (0..count)
+        .map(|i| rig.add(0, 0, u64::try_from(i).expect("small")))
+        .collect();
     rig.frame();
     rig.scene.flip_landed();
 
@@ -378,8 +385,16 @@ fn a_steady_frame_costs_no_test_commit_vkms() {
     let _guard = card_guard();
     let Some(mut rig) = rig() else { return };
 
-    rig.add(0, 0, 0);
-    rig.add(96, 0, 1);
+    // Exactly as many layers as there are planes, so everything is placed and
+    // the frame is a pure fast path. Two layers hardcoded overflows a CRTC
+    // with one usable plane -- which the lane has, and this machine does not.
+    for i in 0..rig.planes {
+        rig.add(
+            i32::try_from(i).expect("small") * 64,
+            0,
+            u64::try_from(i).expect("small"),
+        );
+    }
     rig.frame();
     rig.scene.flip_landed();
 

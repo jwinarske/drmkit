@@ -61,7 +61,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_dumb_scanout_sink.cpp` | _drmkit-present_ (phase 6+) | pending |  |
 | `tests/unit/test_egl_stream_builder.cpp` | _drmkit-scene-streams_ (phase 6+) | pending |  |
 | `tests/unit/test_egl_stream_source.cpp` | _drmkit-scene-streams_ (phase 6+) | pending |  |
-| `tests/unit/test_external_dma_buf_pool.cpp` | _drmkit-scene-sources_ (phase 3) | pending |  |
+| `tests/unit/test_external_dma_buf_pool.cpp` | `drmkit-scene-sources` `pool.rs` | partial | Lazy import, key reuse, failed-import hold, generation reset with deferred retirement, session pause. Bounded LRU eviction is upstream's own follow-up and is not ported |
 | `tests/unit/test_external_dma_buf_ring.cpp` | `drmkit-scene-sources` `ring.rs` + `presenter.rs` | ported | Per-slot import, idle-hold, release on supersede, fence forwarding, session pause |
 | `tests/unit/test_external_dma_buf_source.cpp` | _drmkit-scene-sources_ (phase 3) | pending |  |
 | `tests/unit/test_format.cpp` | `drmkit-fmt` `src/tests.rs` | ported |  |

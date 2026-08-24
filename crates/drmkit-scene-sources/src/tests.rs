@@ -1099,3 +1099,223 @@ fn an_out_of_range_submit_is_ignored() {
     assert!(!ring.has_fresh_frame(), "nothing was queued");
     assert!(matches!(ring.acquire(), Err(SourceError::WouldBlock)));
 }
+
+// --- ExternalDmaBufPool ------------------------------------------------------
+
+fn pool_format() -> SourceFormat {
+    SourceFormat {
+        fourcc: XRGB8888,
+        modifier: 0,
+        width: 64,
+        height: 64,
+    }
+}
+
+/// A key is imported once and reused thereafter.
+#[test]
+fn a_pool_imports_each_key_once() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((fd, pitch)) = real_dma_buf(&device, 64, 64) else {
+        panic!("dma-buf export");
+    };
+    let planes = [ExternalPlane {
+        fd: fd.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+
+    let mut pool = ExternalDmaBufPool::new(pool_format(), None);
+    assert_eq!(pool.cached_count(), 0, "a pool starts empty");
+
+    assert!(pool.submit(&device, 42, &planes, None, &[]));
+    let first = pool.acquire().expect("first frame").fb_id;
+    assert_eq!(pool.cached_count(), 1);
+
+    assert!(pool.submit(&device, 42, &planes, None, &[]));
+    let second = pool.acquire().expect("second frame").fb_id;
+
+    assert_eq!(first, second, "the same key must reuse its import");
+    assert_eq!(pool.cached_count(), 1, "and not import a second time");
+}
+
+/// Distinct keys are distinct buffers.
+#[test]
+fn a_pool_keeps_keys_apart() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((a_fd, a_pitch)) = real_dma_buf(&device, 64, 64) else {
+        panic!("dma-buf export");
+    };
+    let Some((b_fd, b_pitch)) = real_dma_buf(&device, 64, 64) else {
+        panic!("dma-buf export");
+    };
+
+    let mut pool = ExternalDmaBufPool::new(pool_format(), None);
+    pool.submit(
+        &device,
+        1,
+        &[ExternalPlane {
+            fd: a_fd.as_fd(),
+            offset: 0,
+            pitch: a_pitch,
+        }],
+        None,
+        &[],
+    );
+    let first = pool.acquire().expect("first").fb_id;
+
+    pool.submit(
+        &device,
+        2,
+        &[ExternalPlane {
+            fd: b_fd.as_fd(),
+            offset: 0,
+            pitch: b_pitch,
+        }],
+        None,
+        &[],
+    );
+    let second = pool.acquire().expect("second").fb_id;
+
+    assert_ne!(first, second, "two keys must not share a framebuffer");
+    assert_eq!(pool.cached_count(), 2);
+}
+
+/// A failed import skips the frame and holds the last good buffer.
+///
+/// The producer is on its own thread with no commit to fail, so reporting
+/// upward has nowhere to go. A frozen layer beats a blank one.
+#[test]
+fn a_failed_import_holds_the_last_frame() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((fd, pitch)) = real_dma_buf(&device, 64, 64) else {
+        panic!("dma-buf export");
+    };
+    let planes = [ExternalPlane {
+        fd: fd.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+
+    let mut pool = ExternalDmaBufPool::new(pool_format(), None);
+    pool.submit(&device, 1, &planes, None, &[]);
+    let good = pool.acquire().expect("a good frame").fb_id;
+
+    // A key the pool has never seen, with a plane list it must refuse.
+    assert!(
+        !pool.submit(&device, 2, &[], None, &[]),
+        "an empty plane list cannot be imported"
+    );
+    assert_eq!(pool.cached_count(), 1, "the bad key cached nothing");
+
+    let held = pool.acquire().expect("the layer must not go blank");
+    assert_eq!(held.fb_id, good, "the last good buffer stays up");
+}
+
+/// A new generation retires the old buffers, but not while they are on screen.
+///
+/// Tearing down a framebuffer the kernel is still scanning out is exactly the
+/// hazard the deferred-release protocol exists to avoid; a resolution change
+/// must not become a way around it.
+#[test]
+fn a_generation_reset_retires_buffers_only_once_unreferenced() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((old_fd, old_pitch)) = real_dma_buf(&device, 64, 64) else {
+        panic!("dma-buf export");
+    };
+    let Some((new_fd, new_pitch)) = real_dma_buf(&device, 32, 32) else {
+        panic!("dma-buf export");
+    };
+
+    let mut pool = ExternalDmaBufPool::new(pool_format(), None);
+    pool.submit(
+        &device,
+        1,
+        &[ExternalPlane {
+            fd: old_fd.as_fd(),
+            offset: 0,
+            pitch: old_pitch,
+        }],
+        None,
+        &[],
+    );
+    let old_token = pool.acquire().expect("the old generation").token;
+    assert_eq!(pool.cached_count(), 1);
+
+    pool.reset_generation(SourceFormat {
+        fourcc: XRGB8888,
+        modifier: 0,
+        width: 32,
+        height: 32,
+    });
+
+    // Still on screen, so still imported.
+    pool.acquire().expect("holding the old buffer");
+    assert_eq!(
+        pool.cached_count(),
+        1,
+        "the retiring buffer is on screen and must not be torn down under it"
+    );
+
+    // The new generation arrives under a fresh key, as the contract requires.
+    pool.submit(
+        &device,
+        2,
+        &[ExternalPlane {
+            fd: new_fd.as_fd(),
+            offset: 0,
+            pitch: new_pitch,
+        }],
+        None,
+        &[],
+    );
+    pool.acquire().expect("the new generation");
+    pool.release(AcquiredBuffer {
+        token: old_token,
+        ..AcquiredBuffer::default()
+    });
+    pool.acquire().expect("a later frame sweeps");
+
+    assert_eq!(
+        pool.cached_count(),
+        1,
+        "once nothing references it, the old buffer is torn down"
+    );
+    assert_eq!(
+        LayerBufferSource::format(&pool).width,
+        32,
+        "and future imports use the new geometry"
+    );
+}
+
+/// A paused pool drops its imports so the producer re-imports on resume.
+#[test]
+fn a_paused_pool_forgets_its_imports() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((fd, pitch)) = real_dma_buf(&device, 64, 64) else {
+        panic!("dma-buf export");
+    };
+    let planes = [ExternalPlane {
+        fd: fd.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+
+    let mut pool = ExternalDmaBufPool::new(pool_format(), None);
+    pool.submit(&device, 1, &planes, None, &[]);
+    pool.acquire().expect("a frame");
+    assert_eq!(pool.cached_count(), 1);
+
+    pool.on_session_paused();
+
+    assert_eq!(
+        pool.cached_count(),
+        0,
+        "every framebuffer id belonged to a descriptor that is now revoked"
+    );
+    assert!(matches!(pool.acquire(), Err(SourceError::WouldBlock)));
+}

@@ -11,12 +11,14 @@
 mod cache;
 mod dumb;
 mod external;
+mod pool;
 mod presenter;
 mod ring;
 
 pub use cache::DmaBufSourceCache;
 pub use dumb::DumbBufferSource;
 pub use external::{ExternalDmaBufSource, ExternalError, ExternalPlane};
+pub use pool::ExternalDmaBufPool;
 pub use presenter::{Acquired, MAX_DAMAGE, Present, RingPresenter, SlotKey};
 pub use ring::{ExternalDmaBufRing, OnRelease};
 

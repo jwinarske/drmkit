@@ -523,7 +523,7 @@ impl LayerScene {
                         continue;
                     };
                     starved.push(layer_id);
-                    plane_layers.push((layer_id, lower(layer, fb_id, self.crtc_id)));
+                    plane_layers.push((layer_id, lower(layer, fb_id, self.crtc_id, None)));
                     continue;
                 }
                 Err(other) => {
@@ -535,7 +535,14 @@ impl LayerScene {
             };
             tally.record(true);
 
-            let plane_layer = lower(layer, acquired.fb_id, self.crtc_id);
+            // Borrowed for the commit only -- the kernel does not take
+            // ownership of IN_FENCE_FD, and the fence closes with the buffer.
+            let fence_fd = acquired
+                .acquire_fence
+                .as_ref()
+                .and_then(drmkit_sync::SyncFence::as_fd)
+                .map(|fd| std::os::fd::AsRawFd::as_raw_fd(&fd));
+            let plane_layer = lower(layer, acquired.fb_id, self.crtc_id, fence_fd);
 
             layer.last_fb_id = Some(acquired.fb_id);
             plane_layers.push((layer_id, plane_layer));
@@ -748,10 +755,17 @@ fn build_report(
 
 /// Lower one scene layer into the property bag a plane is programmed from.
 ///
-/// Shared by the ordinary path and the starved path, which differ only in
-/// which framebuffer they name: a fresh acquisition, or the one the layer
-/// already has on screen.
-fn lower(layer: &SceneLayer, fb_id: u32, crtc_id: u32) -> drmkit_planes::Layer {
+/// Shared by the ordinary path and the starved path, which differ in which
+/// framebuffer they name -- a fresh acquisition, or the one the layer already
+/// has on screen -- and in whether there is a fence to wait on. A held frame
+/// has none: it was already on screen, so whatever fence it arrived with
+/// signalled long ago and the scene no longer owns it.
+fn lower(
+    layer: &SceneLayer,
+    fb_id: u32,
+    crtc_id: u32,
+    acquire_fence_fd: Option<i32>,
+) -> drmkit_planes::Layer {
     let mut plane_layer = PlaneLayer::new();
     lower_layer(
         &LoweringInput {
@@ -760,6 +774,7 @@ fn lower(layer: &SceneLayer, fb_id: u32, crtc_id: u32) -> drmkit_planes::Layer {
             binding: layer.source.binding_model(),
             fb_id,
             crtc_id,
+            acquire_fence_fd,
             default_zpos: None,
         },
         &mut plane_layer,

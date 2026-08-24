@@ -5,6 +5,8 @@
 //!
 //! Port of `src/modeset/atomic.{hpp,cpp}`.
 
+use std::os::fd::{FromRawFd as _, OwnedFd};
+
 use drm::control::{AtomicCommitFlags, Device as ControlDevice, atomic::AtomicModeReq};
 
 use crate::device::Device;
@@ -173,4 +175,48 @@ impl AtomicRequest {
             .atomic_commit(flags, self.build()?)
             .map_err(|e| CoreError::from_io(&e))
     }
+}
+
+/// Commit `build`'s request and collect the CRTC's out-fence.
+///
+/// `OUT_FENCE_PTR` is unlike every other atomic property: its value is not
+/// data, it is the address of a signed 32-bit slot the **kernel writes into**.
+/// Getting a fence back therefore means handing the kernel a pointer that has
+/// to stay put from the moment the property is added until the ioctl returns.
+///
+/// The closure is why this is a function rather than a property write the
+/// caller makes itself. The slot lives on this frame's stack for exactly the
+/// commit, `build` receives only the value to write, and the fence is taken
+/// afterwards — so there is no arrangement of the safe API that lets the
+/// pointer outlive what it points at, or that lets a caller commit a request
+/// carrying a stale one.
+///
+/// Returns `None` when the commit succeeded but the kernel left the slot
+/// alone: a `TEST_ONLY` never produces a fence, and neither does a driver
+/// without `OUT_FENCE_PTR`.
+///
+/// # Errors
+///
+/// As [`AtomicRequest::commit`], plus whatever `build` returns.
+pub fn commit_with_out_fence<F>(
+    device: &Device,
+    flags: AtomicCommitFlags,
+    build: F,
+) -> Result<Option<OwnedFd>>
+where
+    F: FnOnce(&mut AtomicRequest, u64) -> Result<()>,
+{
+    // -1 is the kernel's "nothing here" value, and stays that way if the
+    // driver has no OUT_FENCE_PTR or the commit was a test.
+    let mut slot: i32 = -1;
+    let mut request = AtomicRequest::new();
+    build(&mut request, (&raw mut slot) as u64)?;
+    request.commit(device, flags)?;
+
+    if slot < 0 {
+        return Ok(None);
+    }
+    // SAFETY: the kernel returned a fresh sync_file descriptor in `slot` and
+    // nothing else holds it, so this is the sole owner.
+    Ok(Some(unsafe { OwnedFd::from_raw_fd(slot) }))
 }

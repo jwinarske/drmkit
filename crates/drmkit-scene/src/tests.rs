@@ -619,6 +619,7 @@ use drmkit_planes::{Layer as PlaneLayer, PropTag};
 
 fn lowering_input() -> LoweringInput {
     LoweringInput {
+        acquire_fence_fd: None,
         display: DisplayParams {
             dst_rect: Rect {
                 x: 10,
@@ -1157,5 +1158,52 @@ fn skipped_layers_keep_the_report_balanced() {
     assert!(
         report.accounting_balances(),
         "a skipped layer must be counted somewhere, or the invariant breaks"
+    );
+}
+
+/// A buffer that arrives with a render fence hands it to `IN_FENCE_FD`.
+///
+/// `AcquiredBuffer::acquire_fence` is documented as "the pixels are valid only
+/// once it signals", and the scene's side of that bargain is to give the
+/// descriptor to KMS so the kernel holds scanout until it does. Nothing did:
+/// the field was carried through the whole acquire path and then dropped at
+/// lowering, so an asynchronous producer's half-rendered frame went straight
+/// to the screen.
+///
+/// The failure is invisible on a source that renders synchronously, which is
+/// every source in the tree today — `DumbBufferSource` and friends hand over
+/// finished pixels and leave the fence `None`. It would first appear on the
+/// GPU-backed sources, as intermittent tearing under load.
+#[test]
+fn an_acquire_fence_reaches_the_in_fence_property() {
+    let mut input = lowering_input();
+    input.acquire_fence_fd = Some(42);
+
+    let mut layer = PlaneLayer::new();
+    lower_layer(&input, &mut layer);
+
+    assert_eq!(
+        layer.property(PropTag::InFenceFd),
+        Some(42),
+        "a fenced buffer must arrive at the plane with its fence"
+    );
+}
+
+/// A buffer with no fence writes no `IN_FENCE_FD`.
+///
+/// Writing one unconditionally would be worse than not writing it at all: the
+/// kernel treats the property as a descriptor to wait on, so a stale or
+/// absent-fence sentinel is either a wait on the wrong thing or an `EINVAL`
+/// that takes the whole commit down.
+#[test]
+fn an_unfenced_buffer_writes_no_in_fence_property() {
+    let input = lowering_input();
+    let mut layer = PlaneLayer::new();
+    lower_layer(&input, &mut layer);
+
+    assert_eq!(
+        layer.property(PropTag::InFenceFd),
+        None,
+        "a synchronous producer's buffer needs no fence and must not claim one"
     );
 }

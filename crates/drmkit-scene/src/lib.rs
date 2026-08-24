@@ -27,6 +27,7 @@
 //! is enforced by the type. The *timing* half still needs the vkms pins, which
 //! land with the commit path.
 
+mod canvas;
 mod commit;
 mod display;
 mod frame;
@@ -36,6 +37,7 @@ mod report;
 mod scene;
 mod source;
 
+pub use canvas::{CompositeRect, CompositeSrc, blend_into, clear_into, format_supported};
 pub use commit::{
     DeviceCommitter, FenceAction, Modeset, PlanePropertyMap, arm_acquire_fences, classify,
     emit_disable, emit_frame, emit_layer, fence_action,

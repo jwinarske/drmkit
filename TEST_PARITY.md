@@ -39,7 +39,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_capture_snapshot.cpp` | _drmkit-capture_ (phase 4) | pending |  |
 | `tests/unit/test_color_pipeline_curves.cpp` | _drmkit-display_ (phase 4) | pending |  |
 | `tests/unit/test_commit_report.cpp` | _drmkit-scene_ (phase 3) | pending |  |
-| `tests/unit/test_composite_canvas.cpp` | _drmkit-scene_ (phase 3) | pending |  |
+| `tests/unit/test_composite_canvas.cpp` | `drmkit-scene` `canvas.rs` + `tests/canvas_oracle.rs` | partial | Blend arithmetic ported and diffed against the reference's own output; the buffer-owning canvas and its scene integration are still to come |
 | `tests/unit/test_connector_capabilities.cpp` | _drmkit-display_ (phase 4) | pending |  |
 | `tests/unit/test_csd_animator.cpp` | _drmkit-csd_ (phase 6+) | pending |  |
 | `tests/unit/test_csd_overlay_reservation.cpp` | _drmkit-csd_ (phase 6+) | pending |  |

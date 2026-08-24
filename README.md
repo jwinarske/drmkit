@@ -79,7 +79,8 @@ by quietly doing nothing.
 | `drmkit-display`: EDID via libdisplay-info | done — behind the `edid` feature |
 | Fuzz target for EDID | done — seeded, closing phase 1's carry-over |
 | `allocator_torture` thresholds asserted on vkms | done — four of five cases discriminate there; one cannot ([P-14](docs/parity-findings.md)) |
-| `plane_stress`, `DriverProfile`, HDR cache, `-input`, `-session`, `-cursor`, `-capture` | ahead |
+| `plane_stress` measurement tool | done — `benches/plane-stress`, CSV per frame |
+| `DriverProfile`, HDR cache, `-input`, `-session`, `-cursor`, `-capture` | ahead |
 
 ### The differential harness
 

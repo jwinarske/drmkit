@@ -1,0 +1,11 @@
+plane-stress -- what the allocator does under load, as numbers
+
+  --device PATH      DRM node (default /dev/dri/card0)
+  --layers N         scene layers (default 4)
+  --size WxH         layer size (default 256x256)
+  --churn MODE       none | move | alpha | toggle (default move)
+  --churn-rate N     churn once every N frames (default 1)
+  --frames N         frames to run (default 300)
+  --csv PATH         write CSV here instead of stdout
+
+Needs DRM master, so run it with no compositor holding the device.

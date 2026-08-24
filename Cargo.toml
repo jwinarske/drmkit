@@ -21,6 +21,7 @@ members = [
     "crates/drmkit-sync",
     "crates/drmkit-time",
     "tests-integration",
+    "benches/plane-stress",
     "parity/runner",
     "xtask",
 ]

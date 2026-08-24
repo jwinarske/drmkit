@@ -80,7 +80,10 @@ jobs:
             echo 'rc=0'
             while read -r bin; do
               echo "echo \"===== $(basename "$bin") =====\""
-              echo "\"$bin\" --include-ignored || rc=1"
+              # --nocapture so the metric lines the torture cases print reach
+              # the log. A threshold whose margin is invisible is one nobody
+              # notices tightening until it fails.
+              echo "\"$bin\" --include-ignored --nocapture || rc=1"
             done < test-binaries.txt
             echo 'echo "guest runner exiting with $rc"'
             echo 'exit "$rc"'

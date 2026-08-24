@@ -206,6 +206,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "drmkit-plane-stress"
+version = "0.0.0"
+dependencies = [
+ "drm 0.15.0",
+ "drmkit-core",
+ "drmkit-dumb",
+ "drmkit-fmt",
+ "drmkit-planes",
+ "drmkit-scene",
+ "drmkit-scene-sources",
+ "drmkit-time",
+]
+
+[[package]]
 name = "drmkit-planes"
 version = "0.0.0"
 dependencies = [

@@ -19,10 +19,18 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 drmkit-fmt = { path = "../crates/drmkit-fmt" }
+drmkit-display = { path = "../crates/drmkit-display", features = ["edid"] }
 
 [[bin]]
 name = "in_formats_blob"
 path = "fuzz_targets/in_formats_blob.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "edid_blob"
+path = "fuzz_targets/edid_blob.rs"
 test = false
 doc = false
 bench = false

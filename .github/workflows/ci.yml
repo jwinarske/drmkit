@@ -175,8 +175,26 @@ jobs:
       - run: rustup toolchain install nightly
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-fuzz --locked
+      # The EDID target pulls drmkit-display with the edid feature, so this job
+      # needs the same library the lint and test jobs build. Ubuntu's is 0.1.1;
+      # see those jobs for why that is not enough.
+      - name: install libdisplay-info
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build
+          git clone --depth 1 --branch 0.3.0 \
+            https://gitlab.freedesktop.org/emersion/libdisplay-info.git /tmp/ldi
+          meson setup /tmp/ldi/build /tmp/ldi --prefix=/usr/local --buildtype=release
+          sudo meson install -C /tmp/ldi/build
+          sudo ldconfig
+          echo "PKG_CONFIG_PATH=/usr/local/lib/x86_64-linux-gnu/pkgconfig:/usr/local/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/usr/local/lib/x86_64-linux-gnu:/usr/local/lib" >> "$GITHUB_ENV"
       # Short runs on every PR; the corpus is what makes them cumulative.
       - run: cargo +nightly fuzz run in_formats_blob -- -max_total_time=60
+        working-directory: fuzz
+      # EDID arrives over a wire nobody controls and is malformed in the field
+      # constantly, so it earns its own target rather than sharing one.
+      - run: cargo +nightly fuzz run edid_blob -- -max_total_time=60
         working-directory: fuzz
 
   miri:

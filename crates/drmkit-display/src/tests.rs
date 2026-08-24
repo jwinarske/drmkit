@@ -385,3 +385,83 @@ mod edid {
         );
     }
 }
+#[cfg(feature = "edid")]
+#[test]
+fn edid_fuzz_invariants_hold_on_random_blobs() {
+    // A cheap xorshift so this needs no dependency; the point is volume and
+    // shape variety, not cryptographic quality.
+    let mut state = 0x2545_F491_4F6C_DD1Du64;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+
+    let mut parsed = 0usize;
+    for round in 0..20_000u32 {
+        // Mix sizes, including exactly 128 and 256 so real EDID shapes appear.
+        let len = match round % 4 {
+            0 => 128,
+            1 => 256,
+            2 => usize::try_from(next() % 300).unwrap_or(0),
+            _ => usize::try_from(next() % 32).unwrap_or(0),
+        };
+        let mut blob: Vec<u8> = (0..len)
+            .map(|_| u8::try_from(next() & 0xFF).expect("masked to a byte"))
+            .collect();
+        // Half the time, give it a valid EDID header so it gets further in.
+        if round % 2 == 0 && blob.len() >= 8 {
+            blob[..8].copy_from_slice(&[0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00]);
+            if blob.len() >= 128 {
+                let sum: u32 = blob[..127].iter().map(|b| u32::from(*b)).sum();
+                blob[127] = u8::try_from((256 - (sum % 256)) % 256).expect("a byte");
+            }
+        }
+
+        let Ok(info) = crate::edid::parse_edid(&blob) else {
+            continue;
+        };
+        parsed += 1;
+
+        if !info.make.is_empty() {
+            assert!(
+                info.name.contains(&info.make),
+                "name {:?} omits make {:?}",
+                info.name,
+                info.make
+            );
+        }
+        if !info.model.is_empty() {
+            assert!(
+                info.name.contains(&info.model),
+                "name {:?} omits model {:?}",
+                info.name,
+                info.model
+            );
+        }
+        assert!(
+            info.width_mm >= 0 && info.height_mm >= 0,
+            "negative size {} x {}",
+            info.width_mm,
+            info.height_mm
+        );
+        if let Some(hdr) = info.hdr {
+            assert!(
+                hdr.type1 || hdr.traditional_hdr || hdr.pq || hdr.hlg,
+                "empty HDR {hdr:?}"
+            );
+        }
+        if let Some(g) = info.wide_gamut {
+            assert!(
+                g.bt2020_cycc || g.bt2020_ycc || g.bt2020_rgb || g.st2113_rgb || g.ictcp,
+                "empty gamut {g:?}"
+            );
+        }
+    }
+    eprintln!("note: {parsed} of 20000 random blobs parsed");
+    assert!(
+        parsed > 0,
+        "no blob parsed at all; the smoke proved nothing"
+    );
+}

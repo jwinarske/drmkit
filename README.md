@@ -26,7 +26,7 @@ green, drift linters negative-tested, and the dependency gap list decided
 `drmkit-dumb` allocate, map, and register framebuffers against the vkms card in
 the lane on every push.
 
-**Phase 1 — met, with one carry-over.**
+**Phase 1 — met.** Its one carry-over closed in phase 4.
 
 | Item | State |
 |---|---|
@@ -35,10 +35,10 @@ the lane on every push.
 | Invariant 3 pinned (`PageFlip::dispatch`) | done |
 | Invariant 6 pinned (`Buffer::map`) | done |
 | Fuzz target seeded for `IN_FORMATS` | done — ~1.5M execs per CI run |
-| Fuzz target seeded for EDID-adjacent parsers | **carried to phase 4** |
+| Fuzz target seeded for EDID-adjacent parsers | done in phase 4 — `edid_blob`, once the parser it targets existed |
 
-The EDID parser lands with `drmkit-display` in phase 4, so its fuzz target
-cannot be seeded before the code it targets exists.
+The EDID parser landed with `drmkit-display` in phase 4 and the target was
+seeded then, closing phase 1's one carry-over.
 
 **Phase 2 — met.**
 

@@ -465,3 +465,35 @@ fn edid_fuzz_invariants_hold_on_random_blobs() {
         "no blob parsed at all; the smoke proved nothing"
     );
 }
+#[cfg(feature = "edid")]
+#[test]
+fn every_fuzz_seed_parses() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fuzz/seeds/edid_blob");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(dir).expect("the seed corpus must exist") {
+        let path = entry.expect("entry").path();
+        let blob = std::fs::read(&path).expect("read seed");
+        assert!(
+            crate::edid::parse_edid(&blob).is_ok(),
+            "seed {} does not parse, so it teaches the fuzzer nothing",
+            path.display()
+        );
+        checked += 1;
+    }
+    assert!(checked >= 2, "expected at least two seeds, found {checked}");
+}
+#[cfg(feature = "edid")]
+#[test]
+fn the_cta_seed_reaches_the_hdr_path() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fuzz/seeds/edid_blob/dell_with_hdr_cta.bin"
+    );
+    let blob = std::fs::read(path).expect("read the CTA seed");
+    let info = crate::edid::parse_edid(&blob).expect("parse");
+    assert!(
+        info.hdr.is_some(),
+        "this seed exists to carry the fuzzer into the HDR gate; without an \
+         HDR block it is just another copy of the base seed"
+    );
+}

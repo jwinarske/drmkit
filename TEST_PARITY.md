@@ -37,7 +37,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_canvas_format.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/unit/test_capture_jpg.cpp` | _drmkit-capture_ (phase 6+) | pending |  |
 | `tests/unit/test_capture_snapshot.cpp` | _drmkit-capture_ (phase 4) | pending |  |
-| `tests/unit/test_color_pipeline_curves.cpp` | _drmkit-display_ (phase 4) | pending |  |
+| `tests/unit/test_color_pipeline_curves.cpp` | `drmkit-display` `curves.rs` | partial | PQ, HLG, sRGB and BT.1886 transfer functions ported and exercised through the tone mapper's oracle. The LUT-blob builders and the CRTC pipeline are not ported |
 | `tests/unit/test_commit_report.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/unit/test_composite_canvas.cpp` | `drmkit-scene` `canvas.rs`, `tests/canvas_oracle.rs`, `tests/canvas_surface_vkms.rs`, `tests/composition_vkms.rs` | ported | Blend diffed against the reference's own output; surface and scene integration pinned against a device. Multi-canvas and the primary-anchor reservation are not ported |
 | `tests/unit/test_connector_capabilities.cpp` | _drmkit-display_ (phase 4) | pending |  |
@@ -94,7 +94,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_stream_capability.cpp` | _drmkit-scene-streams_ (phase 6+) | pending |  |
 | `tests/unit/test_sync_fence.cpp` | `drmkit-sync` `src/tests.rs` | ported |  |
 | `tests/unit/test_test_patterns.cpp` | — (covers `examples/`, outside the ported `src/` surface) | n/a |  |
-| `tests/unit/test_tone_mapper.cpp` | _drmkit-display_ (phase 4) | pending |  |
+| `tests/unit/test_tone_mapper.cpp` | `drmkit-display` `tone_mapper.rs` | ported | Fifteen pixels diffed against the reference's own output, plus monotonicity, alpha passthrough, and black preservation |
 | `tests/unit/test_v4l2_camera_source.cpp` | _drmkit-scene-v4l2_ (phase 6+) | pending |  |
 | `tests/unit/test_v4l2_decoder_source.cpp` | _drmkit-scene-v4l2_ (phase 6+) | pending |  |
 | `tests/unit/test_v4l2_plane_layout.cpp` | _drmkit-scene-v4l2_ (phase 6+) | pending |  |

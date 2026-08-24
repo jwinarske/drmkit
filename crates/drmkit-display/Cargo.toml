@@ -1,0 +1,13 @@
+[package]
+name = "drmkit-display"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Display characterisation and colour handling for drmkit"
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

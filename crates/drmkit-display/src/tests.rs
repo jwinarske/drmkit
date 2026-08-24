@@ -244,3 +244,144 @@ fn a_mapper_reports_its_configuration() {
     assert_eq!(m.curve(), ToneMapCurve::Hable);
     assert!((m.target_max_nits() - 203.0).abs() < f32::EPSILON);
 }
+
+// --- EDID --------------------------------------------------------------------
+
+#[cfg(feature = "edid")]
+mod edid {
+    use crate::edid::{EdidError, parse_edid};
+
+    /// The fixture from drm-cxx's own unit suite, with one byte corrected.
+    ///
+    /// Byte 127 is the checksum, and upstream stores `0x21` where EDID's
+    /// all-bytes-sum-to-zero rule needs `0x3F`. libdisplay-info rejects the
+    /// blob as written, which is why every assertion in the reference's test
+    /// sits inside an `if (result)` that has never run — see drm-cxx#241.
+    const DELL: [u8; 128] = [
+        0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, //
+        0x10, 0xAC, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, //
+        0x01, 0x11, 0x01, 0x03, 0x80, 0x34, 0x20, 0x78, //
+        0xEA, 0xEE, 0x95, 0xA3, 0x54, 0x4C, 0x99, 0x26, //
+        0x0F, 0x50, 0x54, 0xA5, 0x4B, 0x00, 0x71, 0x4F, //
+        0x81, 0x80, 0xA9, 0xC0, 0xD1, 0xC0, 0x01, 0x01, //
+        0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x02, 0x3A, //
+        0x80, 0x18, 0x71, 0x38, 0x2D, 0x40, 0x58, 0x2C, //
+        0x45, 0x00, 0x09, 0x25, 0x21, 0x00, 0x00, 0x1E, //
+        0x00, 0x00, 0x00, 0xFF, 0x00, 0x46, 0x4F, 0x4F, //
+        0x42, 0x41, 0x52, 0x0A, 0x20, 0x20, 0x20, 0x20, //
+        0x20, 0x20, 0x00, 0x00, 0x00, 0xFC, 0x00, 0x44, //
+        0x45, 0x4C, 0x4C, 0x0A, 0x20, 0x20, 0x20, 0x20, //
+        0x20, 0x20, 0x20, 0x20, 0x00, 0x00, 0x00, 0xFD, //
+        0x00, 0x38, 0x4C, 0x1E, 0x51, 0x11, 0x00, 0x0A, //
+        0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x00, 0x3F, //
+    ];
+
+    /// The fixture is a valid EDID, which the reference's copy is not.
+    ///
+    /// Checked here rather than assumed: a blob that fails checksum parses as
+    /// nothing, and a test built on one asserts nothing while looking like it
+    /// asserts a great deal.
+    #[test]
+    fn the_fixture_checksums() {
+        let sum: u32 = DELL.iter().map(|b| u32::from(*b)).sum();
+        assert_eq!(
+            sum % 256,
+            0,
+            "EDID requires all 128 bytes to sum to zero mod 256"
+        );
+    }
+
+    /// Identity, physical size and primaries, against the reference's reading.
+    ///
+    /// Every value here came from running drm-cxx's own `parse_edid` over this
+    /// blob (`parity/edid-oracle.cc`), not from reading the bytes by hand. EDID
+    /// is a format where a field offset off by one still parses, still
+    /// checksums, and yields a plausible wrong answer.
+    #[test]
+    fn a_real_blob_matches_the_reference() {
+        let info = parse_edid(&DELL).expect("a checksummed EDID must parse");
+
+        assert_eq!(info.make, "Dell Inc.");
+        assert_eq!(info.model, "DELL");
+        assert_eq!(info.name, "Dell Inc. DELL");
+        assert_eq!(info.serial.as_deref(), Some("FOOBAR"));
+        assert_eq!((info.width_mm, info.height_mm), (520, 320));
+
+        let c = info
+            .colorimetry
+            .expect("this blob carries chromaticity bytes");
+        assert!(c.has_primaries && c.has_default_white);
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        assert!(
+            close(c.red.x, 0.639_648) && close(c.red.y, 0.330_078),
+            "red {:?}",
+            c.red
+        );
+        assert!(
+            close(c.green.x, 0.299_805) && close(c.green.y, 0.599_609),
+            "green {:?}",
+            c.green
+        );
+        assert!(
+            close(c.blue.x, 0.150_391) && close(c.blue.y, 0.059_570),
+            "blue {:?}",
+            c.blue
+        );
+        assert!(
+            close(c.white.x, 0.313_477) && close(c.white.y, 0.329_102),
+            "white {:?}",
+            c.white
+        );
+    }
+
+    /// A display that advertises no HDR reports none.
+    ///
+    /// **A deliberate divergence from drm-cxx as it stands.** It populates both
+    /// optionals whenever the C accessor returns non-null, and
+    /// libdisplay-info returns a zeroed struct rather than null when there is
+    /// nothing to report — so upstream's `hdr` is `Some` for every display
+    /// ever. Its own test asserts the opposite, and never ran to find out.
+    ///
+    /// This blob is pre-CTA EDID 1.3 with no extension block, so there is no
+    /// HDR metadata in it to report. Tracked as drm-cxx#241; the port follows
+    /// whichever way that goes.
+    #[test]
+    fn a_display_advertising_no_hdr_reports_none() {
+        let info = parse_edid(&DELL).expect("parse");
+        assert_eq!(
+            info.hdr, None,
+            "a pre-CTA EDID 1.3 blob carries no HDR static metadata block"
+        );
+        assert_eq!(info.wide_gamut, None, "nor any extended colorimetry block");
+    }
+
+    /// An empty blob is refused.
+    #[test]
+    fn an_empty_blob_is_refused() {
+        assert!(matches!(parse_edid(&[]), Err(EdidError::Unparseable)));
+    }
+
+    /// Garbage is refused rather than half-read.
+    #[test]
+    fn garbage_is_refused() {
+        assert!(matches!(
+            parse_edid(&[0xDE, 0xAD, 0xBE, 0xEF]),
+            Err(EdidError::Unparseable)
+        ));
+    }
+
+    /// A blob whose checksum is wrong is refused.
+    ///
+    /// This is the exact failure that hid upstream's untested assertions, so
+    /// it is worth its own case: the port should refuse it, loudly, rather
+    /// than return a half-populated struct a caller would trust.
+    #[test]
+    fn a_bad_checksum_is_refused() {
+        let mut broken = DELL;
+        broken[127] = 0x21; // the reference's value
+        assert!(
+            matches!(parse_edid(&broken), Err(EdidError::Unparseable)),
+            "a blob that does not checksum must not parse"
+        );
+    }
+}

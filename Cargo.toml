@@ -51,6 +51,10 @@ drmkit-time = { version = "0.0.0", path = "crates/drmkit-time" }
 
 drm = { version = "0.15" }
 gbm = { version = "0.18", default-features = false, features = ["drm-support"] }
+# v0_3 gates the accessors this port needs -- colour primaries, HDR static
+# metadata, signal colorimetry -- against the system library's version. It
+# matches the 0.3.0 libdisplay-info these bindings are for.
+libdisplay-info = { version = "0.3", features = ["v0_3"] }
 drm-ffi = { version = "0.9" }
 rustix = { version = "1", default-features = false }
 thiserror = { version = "2", default-features = false }

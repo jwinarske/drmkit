@@ -10,4 +10,14 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+# EDID parsing, off by default because libdisplay-info-sys links against a
+# system library. Keeping it optional is what lets the cross lanes build this
+# crate at all: they have no sysroot for it, and drmkit-display carries the
+# tone mapper and colour curves that everything downstream wants.
+default = []
+edid = ["dep:libdisplay-info"]
+
 [dependencies]
+libdisplay-info = { workspace = true, optional = true }
+thiserror = { workspace = true }

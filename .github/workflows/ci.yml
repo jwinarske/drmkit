@@ -25,6 +25,13 @@ jobs:
       # rust-toolchain.toml pins 1.94.1; every component comes from it.
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
+      # This job runs --all-features too, so it builds the same -sys crates the
+      # test job does. Their build scripts want pkg-config even where clippy
+      # itself never links.
+      - name: install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgbm-dev libdisplay-info-dev
 
       - name: rustfmt
         run: cargo fmt --all --check
@@ -57,10 +64,13 @@ jobs:
       # gbm-sys links against libgbm, which the runner image does not carry.
       # Named explicitly rather than left to chance: without it the failure is
       # a linker error naming a library nobody mentioned asking for.
-      - name: install libgbm
+      - name: install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgbm-dev
+          # libgbm for gbm-sys, libdisplay-info for the EDID parser. Both are
+          # linked, not loaded, so a missing one is a linker error naming a
+          # library nobody mentioned asking for.
+          sudo apt-get install -y libgbm-dev libdisplay-info-dev
       # T0 unit, T1 property, T4 doctests.
       - run: cargo test --workspace --all-features
 

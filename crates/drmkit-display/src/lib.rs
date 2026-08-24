@@ -7,6 +7,8 @@
 //! they reach it.
 
 pub mod curves;
+#[cfg(feature = "edid")]
+pub mod edid;
 mod tone_mapper;
 
 #[cfg(test)]

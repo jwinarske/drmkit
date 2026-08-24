@@ -139,7 +139,10 @@ dependencies = [
 name = "drmkit-display"
 version = "0.0.0"
 dependencies = [
+ "drm 0.15.0",
+ "drmkit-core",
  "libdisplay-info",
+ "rustix 1.1.4",
  "thiserror",
 ]
 

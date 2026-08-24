@@ -497,3 +497,133 @@ fn the_cta_seed_reaches_the_hdr_path() {
          HDR block it is just another copy of the base seed"
     );
 }
+
+// --- DriverProfile -----------------------------------------------------------
+
+mod profile {
+    use crate::{PanelSelfRefresh, PrimeCaps, connector_type_self_refreshes, decode_prime_caps};
+
+    /// The PRIME bitmask decodes to the right pair.
+    ///
+    /// Bit positions are the kind of thing that is silently wrong on hardware
+    /// nobody has: a device that only imports would be told it can export, and
+    /// the failure surfaces as a refused ioctl somewhere far away.
+    #[test]
+    fn prime_caps_decode_each_bit() {
+        assert_eq!(decode_prime_caps(0), PrimeCaps::default());
+
+        let import = decode_prime_caps(0x1);
+        assert!(import.can_import && !import.can_export);
+
+        let export = decode_prime_caps(0x2);
+        assert!(!export.can_import && export.can_export);
+
+        let both = decode_prime_caps(0x3);
+        assert!(both.can_import && both.can_export);
+
+        // Unknown bits are not import or export, and must not be read as either.
+        let future = decode_prime_caps(0xFF00);
+        assert!(!future.can_import && !future.can_export);
+    }
+
+    /// Only internal panels can hold an image without a flip.
+    #[test]
+    fn only_internal_panels_self_refresh() {
+        const EDP: u32 = 14;
+        const DSI: u32 = 16;
+        const HDMI_A: u32 = 11;
+        const DISPLAY_PORT: u32 = 10;
+        const VGA: u32 = 1;
+
+        assert!(connector_type_self_refreshes(EDP));
+        assert!(connector_type_self_refreshes(DSI));
+        for external in [HDMI_A, DISPLAY_PORT, VGA, 0] {
+            assert!(
+                !connector_type_self_refreshes(external),
+                "connector type {external} is on a cable and has to be fed"
+            );
+        }
+    }
+
+    /// A driver that reports nothing gets the fallback.
+    ///
+    /// Zero counts as "said nothing": a maximum cursor of zero would mean no
+    /// cursor at all, which no KMS driver means, and taking it literally gives
+    /// a cursor path that silently refuses every plane. Tested directly
+    /// because vkms reports a real 512x512 and never exercises the fallback.
+    #[test]
+    fn an_unreported_capability_falls_back() {
+        use crate::profile::nonzero_or;
+        assert_eq!(nonzero_or(Some(256), 64), 256, "a real value is kept");
+        assert_eq!(nonzero_or(None, 64), 64, "an absent one falls back");
+        assert_eq!(nonzero_or(Some(0), 64), 64, "and so does a zero");
+    }
+
+    /// Unknown is the default, and means "could not tell" rather than "no".
+    ///
+    /// The distinction matters because nothing may gate behaviour on this: a
+    /// frame-economy decision that skipped a commit on a guess, and guessed
+    /// wrong, freezes the display.
+    #[test]
+    fn self_refresh_defaults_to_unknown() {
+        assert_eq!(PanelSelfRefresh::default(), PanelSelfRefresh::Unknown);
+    }
+}
+
+#[cfg(test)]
+mod profile_vkms {
+    use std::sync::Mutex;
+
+    use drmkit_core::Device;
+
+    use crate::DriverProfile;
+
+    static CARD_LOCK: Mutex<()> = Mutex::new(());
+
+    fn open_card_or_skip() -> Option<Device> {
+        let _guard = CARD_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let path =
+            std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
+        match Device::open(&path) {
+            Ok(device) => Some(device),
+            Err(error) => {
+                assert!(
+                    std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
+                    "{path}: {error}, but DRMKIT_REQUIRE_MASTER is set"
+                );
+                println!("note: skipped -- no DRM device at {path} ({error})");
+                None
+            }
+        }
+    }
+
+    /// A real device probes to something coherent.
+    ///
+    /// The values themselves are the driver's to choose, so what is asserted is
+    /// the shape: a name, a cursor size that could hold a cursor, and PRIME
+    /// support, which every KMS driver that can share a buffer reports.
+    #[test]
+    #[ignore = "needs a DRM device"]
+    fn a_real_device_probes_coherently_vkms() {
+        let Some(device) = open_card_or_skip() else {
+            return;
+        };
+        let profile = DriverProfile::probe(&device).expect("probe a KMS node");
+        println!("note: {profile:?}");
+
+        assert!(!profile.name.is_empty(), "every driver reports a name");
+        assert!(
+            profile.cursor_width >= 64 && profile.cursor_height >= 64,
+            "the 64x64 fallback is the floor, not a value to fall below: {}x{}",
+            profile.cursor_width,
+            profile.cursor_height
+        );
+        assert!(
+            profile.prime_import || profile.prime_export,
+            "a KMS node that can share no buffer in either direction cannot \
+             participate in anything"
+        );
+    }
+}

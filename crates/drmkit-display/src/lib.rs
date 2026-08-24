@@ -9,9 +9,13 @@
 pub mod curves;
 #[cfg(feature = "edid")]
 pub mod edid;
+mod profile;
 mod tone_mapper;
 
 #[cfg(test)]
 mod tests;
 
+pub use profile::{
+    DriverProfile, PanelSelfRefresh, PrimeCaps, connector_type_self_refreshes, decode_prime_caps,
+};
 pub use tone_mapper::{Direction, LUT_SIZE, ToneMapCurve, ToneMapper};

@@ -13,7 +13,8 @@ use std::sync::Mutex;
 
 use drmkit_core::Device;
 use drmkit_dumb::MapAccess;
-use drmkit_scene::{BindingModel, DamageRect, LayerBufferSource, SourceError};
+use drmkit_scene::{AcquiredBuffer, BindingModel, DamageRect, LayerBufferSource, SourceError};
+use drmkit_sync::SyncFence;
 
 /// `Device::open` acquires DRM master, which is per open file description, so
 /// card-dependent cases serialize rather than racing for it.
@@ -809,4 +810,292 @@ fn a_failed_import_leaves_the_cache_untouched() {
         "a failed import must leave no entry behind to be handed out later"
     );
     assert!(cache.is_empty());
+}
+
+// --- ExternalDmaBufRing ------------------------------------------------------
+
+/// Build a ring of `n` slots over real exported dma-bufs.
+///
+/// Returns the ring and the descriptors, which the caller must keep alive only
+/// because the test wants them — the ring duplicates its own.
+fn ring_of(device: &Device, n: usize) -> Option<(ExternalDmaBufRing, Vec<OwnedFd>)> {
+    let mut fds = Vec::new();
+    let mut pitches = Vec::new();
+    for _ in 0..n {
+        let (fd, pitch) = real_dma_buf(device, 64, 64)?;
+        fds.push(fd);
+        pitches.push(pitch);
+    }
+    let planes: Vec<Vec<ExternalPlane<'_>>> = fds
+        .iter()
+        .zip(&pitches)
+        .map(|(fd, pitch)| {
+            vec![ExternalPlane {
+                fd: fd.as_fd(),
+                offset: 0,
+                pitch: *pitch,
+            }]
+        })
+        .collect();
+    let slots: Vec<&[ExternalPlane<'_>]> = planes.iter().map(Vec::as_slice).collect();
+
+    let ring = ExternalDmaBufRing::create(
+        device,
+        SourceFormat {
+            fourcc: XRGB8888,
+            modifier: 0,
+            width: 64,
+            height: 64,
+        },
+        &slots,
+        None,
+    )
+    .expect("import the ring");
+    Some((ring, fds))
+}
+
+/// Every slot gets its own framebuffer.
+///
+/// One id shared across slots would mean the producer's rotation changed
+/// nothing on screen — every frame would present whichever buffer that id
+/// happened to name.
+#[test]
+fn each_slot_gets_its_own_framebuffer() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((mut ring, _fds)) = ring_of(&device, 3) else {
+        panic!("dma-buf export");
+    };
+    assert_eq!(ring.slot_count(), 3);
+
+    let mut seen = std::collections::HashSet::new();
+    for slot in 0..3 {
+        ring.submit(slot, None, &[]);
+        let fb = ring.acquire().expect("acquire").fb_id;
+        assert!(fb != 0, "slot {slot} has no framebuffer");
+        assert!(
+            seen.insert(fb),
+            "slot {slot} reused another slot's framebuffer"
+        );
+    }
+}
+
+/// With nothing new submitted, the ring re-presents what is on screen.
+///
+/// Returning `WouldBlock` instead would have the scene drop the layer, which
+/// blanks the plane — a producer that pauses for one vblank should freeze, not
+/// disappear.
+#[test]
+fn an_idle_ring_holds_the_last_frame() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((mut ring, _fds)) = ring_of(&device, 2) else {
+        panic!("dma-buf export");
+    };
+
+    ring.submit(1, None, &[]);
+    let first = ring.acquire().expect("first frame");
+    assert!(!ring.has_fresh_frame(), "the submission was taken");
+
+    let held = ring.acquire().expect("an idle vblank still presents");
+    assert_eq!(held.fb_id, first.fb_id, "the same buffer stays up");
+    assert_eq!(
+        held.token, first.token,
+        "and under the same token, so it is not mistaken for a superseded frame"
+    );
+}
+
+/// A slot is handed back only once something newer is on screen.
+#[test]
+fn a_slot_is_released_when_superseded() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((mut ring, _fds)) = ring_of(&device, 2) else {
+        panic!("dma-buf export");
+    };
+
+    let freed = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&freed);
+    ring.set_on_release(Box::new(move |slot, fence| {
+        sink.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((slot, fence.is_some()));
+    }));
+
+    ring.submit(0, None, &[]);
+    let first_token = ring.acquire().expect("first").token;
+    // Release keys on the token alone, so a buffer carrying it says the same
+    // thing as the one the scene held. `AcquiredBuffer` owns its fence and so
+    // is deliberately not `Clone`.
+    ring.release(AcquiredBuffer {
+        token: first_token,
+        ..AcquiredBuffer::default()
+    });
+    assert!(
+        freed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty(),
+        "slot 0 is still on screen; telling the producer it is free would race \
+         it into overwriting live scanout"
+    );
+
+    ring.submit(1, None, &[]);
+    let second_token = ring.acquire().expect("second").token;
+    ring.release(AcquiredBuffer {
+        token: first_token,
+        ..AcquiredBuffer::default()
+    });
+    assert_eq!(
+        &*freed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        &[(0, false)],
+        "slot 0 left the screen and must come back to the producer"
+    );
+
+    // And the newly live one still does not.
+    ring.release(AcquiredBuffer {
+        token: second_token,
+        ..AcquiredBuffer::default()
+    });
+    assert_eq!(
+        freed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len(),
+        1
+    );
+}
+
+/// The release fence reaches the producer.
+///
+/// A GPU producer waits on it and re-renders the slot with no CPU stall. Losing
+/// it would not break correctness — the callback edge still says "free" — but
+/// it forces the stall the fence exists to avoid.
+#[test]
+fn a_release_fence_is_forwarded_to_the_producer() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((mut ring, _fds)) = ring_of(&device, 2) else {
+        panic!("dma-buf export");
+    };
+
+    let fenced = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&fenced);
+    ring.set_on_release(Box::new(move |_, fence| {
+        if fence.is_some() {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }
+    }));
+    assert!(
+        ring.wants_release_fence(),
+        "with a listener attached the scene should ask the kernel for an \
+         out-fence"
+    );
+
+    ring.submit(0, None, &[]);
+    let first_token = ring.acquire().expect("first").token;
+    ring.submit(1, None, &[]);
+    ring.acquire().expect("second");
+
+    let stand_in =
+        rustix::event::eventfd(0, rustix::event::EventfdFlags::CLOEXEC).expect("eventfd");
+    ring.release_with_fence(
+        AcquiredBuffer {
+            token: first_token,
+            ..AcquiredBuffer::default()
+        },
+        Some(SyncFence::from_owned(stand_in)),
+    );
+
+    assert_eq!(
+        fenced.load(Ordering::SeqCst),
+        1,
+        "the displacing commit's fence must reach the producer"
+    );
+}
+
+/// Nothing listening means no reason to ask the kernel for an out-fence.
+#[test]
+fn a_ring_with_no_listener_wants_no_release_fence() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((ring, _fds)) = ring_of(&device, 1) else {
+        panic!("dma-buf export");
+    };
+    assert!(!ring.wants_release_fence());
+}
+
+/// A paused session leaves nothing presentable.
+///
+/// The descriptor is revoked, so the framebuffer ids are meaningless. Handing
+/// one to a commit would take the whole frame down, so the ring reports no
+/// frame until the producer submits against a re-imported ring.
+#[test]
+fn a_paused_ring_presents_nothing() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((mut ring, _fds)) = ring_of(&device, 2) else {
+        panic!("dma-buf export");
+    };
+
+    ring.submit(0, None, &[]);
+    ring.acquire().expect("a frame before the pause");
+
+    ring.on_session_paused();
+
+    assert_eq!(ring.scanning_slot(), None, "nothing is on screen any more");
+    assert!(
+        matches!(ring.acquire(), Err(SourceError::WouldBlock)),
+        "with nothing on screen there is nothing to hold"
+    );
+
+    // The part that needs the framebuffers actually forgotten. Clearing the
+    // presenter alone is not enough: a producer that keeps submitting across
+    // the pause would otherwise be handed a framebuffer id registered on a
+    // descriptor that no longer exists, and committing it takes the whole
+    // frame down.
+    ring.submit(0, None, &[]);
+    assert!(
+        matches!(ring.acquire(), Err(SourceError::Failed(_))),
+        "a slot whose framebuffer was forgotten must not be presented"
+    );
+}
+
+/// A ring needs at least one slot.
+#[test]
+fn an_empty_ring_is_refused() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let result = ExternalDmaBufRing::create(
+        &device,
+        SourceFormat {
+            fourcc: XRGB8888,
+            modifier: 0,
+            width: 64,
+            height: 64,
+        },
+        &[],
+        None,
+    );
+    assert!(result.is_err(), "a ring with no slots can never present");
+}
+
+/// A slot index the ring does not have is ignored.
+///
+/// The producer owns the indices it was built with. Failing loudly on its own
+/// thread, where there is no commit to fail, would give it nothing to do about
+/// it.
+#[test]
+fn an_out_of_range_submit_is_ignored() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((mut ring, _fds)) = ring_of(&device, 2) else {
+        panic!("dma-buf export");
+    };
+
+    ring.submit(99, None, &[]);
+    assert!(!ring.has_fresh_frame(), "nothing was queued");
+    assert!(matches!(ring.acquire(), Err(SourceError::WouldBlock)));
 }

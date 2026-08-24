@@ -45,6 +45,63 @@ pub enum ExternalError {
 /// Up to four planes, as KMS accepts.
 const MAX_PLANES: usize = 4;
 
+/// A DMA-BUF imported into the kernel and registered as a framebuffer.
+///
+/// Split out of [`ExternalDmaBufSource`] because a ring needs one of these per
+/// slot: the import, its duplicated descriptors and the framebuffer's teardown
+/// are the same work whether one buffer is presented or eight are rotated.
+pub(crate) struct ImportedFramebuffer {
+    /// Kept alive so the framebuffer's backing descriptors outlive the
+    /// caller's — the caller may close theirs the moment this returns.
+    _duped_fds: Vec<OwnedFd>,
+    fb: Option<framebuffer::Handle>,
+    /// The descriptor the framebuffer was registered on, for teardown.
+    device_fd: std::os::fd::RawFd,
+}
+
+impl ImportedFramebuffer {
+    /// Import `planes` and register a framebuffer over them.
+    ///
+    /// # Errors
+    ///
+    /// [`ExternalError`] if a descriptor cannot be duplicated or imported, or
+    /// the kernel refuses the framebuffer.
+    pub(crate) fn import(
+        device: &Device,
+        format: SourceFormat,
+        planes: &[ExternalPlane<'_>],
+    ) -> Result<Self, ExternalError> {
+        let source = ExternalDmaBufSource::create(device, format, planes, None)?;
+        Ok(source.into_imported())
+    }
+
+    /// The registered framebuffer id, or `None` once forgotten.
+    pub(crate) fn fb_id(&self) -> Option<u32> {
+        self.fb.map(Into::into)
+    }
+
+    /// Abandon the framebuffer without issuing an ioctl.
+    ///
+    /// For a revoked descriptor, which cannot service the teardown. Leaves
+    /// `fb_id` reporting `None`, so nothing commits an id the kernel has
+    /// forgotten.
+    pub(crate) fn forget(&mut self) {
+        self.fb = None;
+    }
+}
+
+impl Drop for ImportedFramebuffer {
+    fn drop(&mut self) {
+        if let Some(fb) = self.fb.take() {
+            // SAFETY: `device_fd` is the descriptor this framebuffer was
+            // registered on, borrowed only for this ioctl.
+            let borrowed = unsafe { BorrowedFd::borrow_raw(self.device_fd) };
+            let device = RawDevice { fd: borrowed };
+            let _ = device.destroy_framebuffer(fb);
+        }
+    }
+}
+
 /// A caller-owned DMA-BUF wrapped as a scanout-ready KMS framebuffer.
 ///
 /// The motivating consumer is a zero-copy capture pipeline — libcamera, V4L2,
@@ -70,11 +127,7 @@ const MAX_PLANES: usize = 4;
 /// the plane's `IN_FORMATS` or a `TEST_ONLY` commit rather than discover it
 /// here.
 pub struct ExternalDmaBufSource {
-    /// Kept alive so the framebuffer's backing descriptors outlive the caller's.
-    _duped_fds: Vec<OwnedFd>,
-    fb: Option<framebuffer::Handle>,
-    /// The descriptor the framebuffer was registered on, for teardown.
-    device_fd: std::os::fd::RawFd,
+    imported: ImportedFramebuffer,
     format: SourceFormat,
     /// The producer's render-done fence, duplicated on each acquire.
     pending_fence: Option<SyncFence>,
@@ -85,7 +138,7 @@ impl std::fmt::Debug for ExternalDmaBufSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExternalDmaBufSource")
             .field("format", &self.format)
-            .field("fb", &self.fb)
+            .field("fb", &self.imported.fb_id())
             .field("has_fence", &self.pending_fence.is_some())
             .finish_non_exhaustive()
     }
@@ -189,9 +242,11 @@ impl ExternalDmaBufSource {
             .map_err(|e| ExternalError::Io(errno_of(&e)))?;
 
         Ok(Self {
-            _duped_fds: duped,
-            fb: Some(fb),
-            device_fd: device.raw_fd(),
+            imported: ImportedFramebuffer {
+                _duped_fds: duped,
+                fb: Some(fb),
+                device_fd: device.raw_fd(),
+            },
             format,
             pending_fence: None,
             on_release,
@@ -216,7 +271,25 @@ impl ExternalDmaBufSource {
     /// The registered framebuffer id.
     #[must_use]
     pub fn fb_id(&self) -> Option<u32> {
-        self.fb.map(Into::into)
+        self.imported.fb_id()
+    }
+
+    /// Take the imported framebuffer, leaving the source inert.
+    ///
+    /// Used by the ring, which wants the import without the single-shot
+    /// release semantics wrapped around it.
+    fn into_imported(mut self) -> ImportedFramebuffer {
+        // The callback must not fire: nothing was ever presented, and the
+        // import is being kept rather than torn down.
+        self.on_release = None;
+        std::mem::replace(
+            &mut self.imported,
+            ImportedFramebuffer {
+                _duped_fds: Vec::new(),
+                fb: None,
+                device_fd: -1,
+            },
+        )
     }
 
     /// Fire the release callback if it has not fired yet.
@@ -230,8 +303,8 @@ impl ExternalDmaBufSource {
 impl LayerBufferSource for ExternalDmaBufSource {
     fn acquire(&mut self) -> Result<AcquiredBuffer, SourceError> {
         let fb_id = self
-            .fb
-            .map(Into::into)
+            .imported
+            .fb_id()
             .ok_or(SourceError::Failed(rustix::io::Errno::INVAL))?;
 
         // Hand back a **duplicate** of the producer's fence, without clearing
@@ -284,13 +357,8 @@ impl LayerBufferSource for ExternalDmaBufSource {
 
 impl Drop for ExternalDmaBufSource {
     fn drop(&mut self) {
-        if let Some(fb) = self.fb.take() {
-            // SAFETY: `device_fd` is the descriptor this framebuffer was
-            // registered on, borrowed only for this ioctl.
-            let borrowed = unsafe { BorrowedFd::borrow_raw(self.device_fd) };
-            let device = RawDevice { fd: borrowed };
-            let _ = device.destroy_framebuffer(fb);
-        }
+        // The framebuffer goes with `imported`'s own drop.
+        //
         // Torn down without ever being released: the upstream buffer still
         // needs re-queuing, or the producer's pipeline stalls waiting for a
         // slot that will never come back.

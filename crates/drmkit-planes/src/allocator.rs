@@ -288,6 +288,8 @@ pub struct Allocator {
     last_committed: HashMap<u32, LastCommitted>,
     /// Driver-quirk opt-out; see `set_force_full_property_writes`.
     force_full_writes: bool,
+    /// Planes the caller has claimed; see `set_reserved_planes`.
+    reserved: Vec<u32>,
     failure_cache: TestCache,
     probe_cache: ModifierProbeCache,
     max_test_commits: usize,
@@ -313,6 +315,7 @@ impl Allocator {
             previous_valid: false,
             last_committed: HashMap::new(),
             force_full_writes: false,
+            reserved: Vec::new(),
             failure_cache: TestCache::new(),
             probe_cache: ModifierProbeCache::new(),
             max_test_commits: Self::DEFAULT_MAX_TEST_COMMITS,
@@ -392,6 +395,22 @@ impl Allocator {
             .get(&plane_id)
             .filter(|baseline| baseline.layer == Some(layer))
             .map(|baseline| &baseline.properties)
+    }
+
+    /// Hold these planes back from the search.
+    ///
+    /// A reserved plane is not offered to any layer, and the caller arms it
+    /// itself. The composition canvas needs this: with more layers than planes
+    /// the search would otherwise claim every one of them, and the canvas that
+    /// exists to rescue the overflow would have nowhere to land — so the
+    /// overflow is dropped instead of composited, which is the opposite of
+    /// what the fallback is for.
+    ///
+    /// Reserving costs a plane whether or not it ends up used, so a caller
+    /// should reserve only when it can tell the search will overflow.
+    pub fn set_reserved_planes(&mut self, planes: &[u32]) {
+        self.reserved.clear();
+        self.reserved.extend_from_slice(planes);
     }
 
     /// Whether the kernel currently has nothing on `plane_id`.
@@ -660,7 +679,10 @@ impl Allocator {
         crtc_index: u32,
         committer: &mut C,
     ) -> Result<PlaneAssignment, TestFailure> {
-        let mut available: Vec<&PlaneCapabilities> = registry.for_crtc(crtc_index).collect();
+        let mut available: Vec<&PlaneCapabilities> = registry
+            .for_crtc(crtc_index)
+            .filter(|plane| !self.reserved.contains(&plane.id))
+            .collect();
         let layer_refs: Vec<&Layer> = placeable.iter().map(|entry| entry.layer).collect();
         let groups = split_independent_groups(&layer_refs);
 

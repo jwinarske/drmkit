@@ -6,14 +6,19 @@
 //! Ports the layer table and frame flow from `src/scene/layer_scene.cpp`.
 
 use drmkit_planes::{Allocator, LayerRef};
-use drmkit_planes::{Layer as PlaneLayer, LayerId, PlaneRegistry, TestCommitter, TestFailure};
+use drmkit_planes::{
+    Layer as PlaneLayer, LayerId, PlaneRegistry, Rect, TestCommitter, TestFailure,
+};
 
+use drmkit_core::Device;
+
+use crate::canvas::{CompositeCanvas, CompositeRect, CompositeSrc};
 use crate::display::DisplayParams;
 use crate::frame::{AcquireTally, CommitKind, FrameLifecycle, FrameOutcome, KernelResult};
 use crate::lower::{LoweringInput, lower_layer};
 use crate::release::{Acquisition, Released};
 use crate::report::{CommitReport, LayerPlacement, Placement};
-use crate::source::{LayerBufferSource, SourceError};
+use crate::source::{BindingModel, LayerBufferSource, SourceError, SourceFormat};
 
 /// Opaque, generation-tagged identity for a scene layer.
 ///
@@ -279,6 +284,7 @@ pub struct LayerScene {
     generations: Vec<u32>,
     free: Vec<u32>,
     allocator: Allocator,
+    canvas: Option<CompositeCanvas>,
     lifecycle: FrameLifecycle,
     /// Sources whose layers were removed while their buffers were still in
     /// flight.
@@ -311,6 +317,7 @@ impl LayerScene {
             generations: Vec::new(),
             free: Vec::new(),
             allocator: Allocator::new(),
+            canvas: None,
             lifecycle: FrameLifecycle::new(),
             retiring: Vec::new(),
         }
@@ -553,6 +560,9 @@ impl LayerScene {
             .map(|(id, layer)| LayerRef { id: *id, layer })
             .collect();
 
+        let reserved = canvas_reservation(self.canvas.is_some(), refs.len(), registry, crtc_index);
+        self.allocator.set_reserved_planes(&reserved);
+
         let allocation = match self
             .allocator
             .allocate(&refs, registry, crtc_index, committer)
@@ -570,7 +580,17 @@ impl LayerScene {
             }
         };
 
-        let report = build_report(&tally, &allocation, registry, &starved);
+        // Rescue what the allocator dropped, before the plan is built: the
+        // canvas takes a plane, and a plane carrying the canvas must not also
+        // appear in the disable pass.
+        let canvas_plane = self.compose_unassigned(&allocation, registry, crtc_index);
+        let composited = if canvas_plane.is_some() {
+            allocation.composited.len()
+        } else {
+            0
+        };
+
+        let report = build_report(&tally, &allocation, registry, &starved, composited);
 
         // Clear the hint flags now the allocation has seen them.
         for handle in self.handles().collect::<Vec<_>>() {
@@ -579,13 +599,27 @@ impl LayerScene {
             }
         }
 
-        let (plan, disables) = build_plan(
+        let (mut plan, disables) = build_plan(
             &self.allocator,
             &allocation,
             &plane_layers,
             registry,
             crtc_index,
         );
+        let disables = if let Some((plane_id, layer)) = canvas_plane {
+            plan.push(PlanePlan {
+                plane_id,
+                // The canvas is the scene's own surface, not any one layer's,
+                // so it carries no layer identity and no committed baseline:
+                // every property is written every frame it is armed.
+                layer_id: LayerId(0),
+                layer,
+                baseline: None,
+            });
+            disables.into_iter().filter(|id| *id != plane_id).collect()
+        } else {
+            disables
+        };
 
         Ok(FrameBuild {
             acquisitions,
@@ -595,6 +629,121 @@ impl LayerScene {
             kind,
             finalized: false,
         })
+    }
+
+    /// Give the scene a composition canvas.
+    ///
+    /// Layers the allocator cannot place are blended into this surface and it
+    /// goes on a plane of its own. Without one they are reported unassigned
+    /// and simply do not reach the screen.
+    ///
+    /// Separate from [`new`](Self::new) because the search itself is
+    /// device-free and this is not: the canvas owns two dumb buffers.
+    ///
+    /// # Errors
+    ///
+    /// [`DumbError`] if either buffer cannot be allocated.
+    pub fn enable_composition(
+        &mut self,
+        device: &Device,
+        width: u32,
+        height: u32,
+    ) -> Result<(), drmkit_dumb::DumbError> {
+        self.canvas = Some(CompositeCanvas::create(device, width, height)?);
+        Ok(())
+    }
+
+    /// Blend the layers the allocator dropped, and say which plane to put them
+    /// on.
+    ///
+    /// Returns the canvas plane and its lowered properties, or `None` when
+    /// nothing needs compositing or the frame cannot rescue them.
+    ///
+    /// The rescue is best-effort and silent by design, matching upstream: no
+    /// canvas, no free plane, or a source that cannot be read leaves those
+    /// layers off the screen for this frame rather than failing the commit.
+    /// That asymmetry is deliberate — the canvas's properties go into the same
+    /// atomic request as everything else, so once it is armed a kernel
+    /// rejection takes the whole frame down, including every layer that *was*
+    /// placed. Dropping one layer beats dropping all of them.
+    fn compose_unassigned(
+        &mut self,
+        allocation: &drmkit_planes::Allocation,
+        registry: &PlaneRegistry,
+        crtc_index: u32,
+    ) -> Option<(u32, drmkit_planes::Layer)> {
+        if allocation.composited.is_empty() {
+            return None;
+        }
+
+        // A plane the assignment did not take. Cursor planes are excluded for
+        // the same reason they are never force-disabled: they belong to the
+        // cursor path.
+        let plane_id = registry
+            .force_disable_candidates(crtc_index)
+            .map(|plane| plane.id)
+            .find(|id| allocation.assignment.get(*id).is_none())?;
+
+        // Above every layer that did get a plane, and above anything the
+        // composited layers themselves asked for. A canvas that lands at the
+        // same stacking slot as an assigned layer competes with it, and on a
+        // driver that pins its primary plane high the canvas ends up hidden
+        // underneath the very layers it is carrying.
+        let mut zpos = 0u64;
+        for handle in self.handles().collect::<Vec<_>>() {
+            if let Some(layer) = self.layer(handle) {
+                zpos = zpos.max(layer.display().zpos.unwrap_or(0));
+            }
+        }
+        let zpos = zpos.saturating_add(1);
+
+        // Resolve every composited layer to its slot before touching the
+        // canvas: `LayerId` packs a handle and a generation, and undoing that
+        // inside the blend loop would duplicate `resolve`'s staleness rules.
+        let mut targets: Vec<(u64, usize)> = Vec::new();
+        for handle in self.handles().collect::<Vec<_>>() {
+            let id = handle.layer_id();
+            if !allocation.composited.contains(&id) {
+                continue;
+            }
+            let Some(index) = self.resolve(handle) else {
+                continue;
+            };
+            let order = self
+                .layer(handle)
+                .and_then(|l| l.display().zpos)
+                .unwrap_or(0);
+            targets.push((order, index));
+        }
+        if targets.is_empty() {
+            return None;
+        }
+        // Bottom-up, so stacking inside the canvas matches what the layers
+        // asked for. `composited` comes back in allocation order, which is not
+        // it.
+        targets.sort_unstable();
+
+        // Disjoint field borrows: the sources live in `slots`, the canvas does
+        // not, and the blend needs both at once.
+        let Self {
+            slots,
+            canvas,
+            crtc_id,
+            ..
+        } = self;
+        let canvas = canvas.as_mut()?;
+
+        canvas.begin_frame();
+        canvas.clear();
+
+        let blended = blend_targets(canvas, slots, &targets);
+
+        if blended == 0 {
+            return None;
+        }
+        canvas.flush();
+
+        Some((plane_id, lower_canvas(canvas, *crtc_id, zpos)?))
     }
 
     /// Reconcile scene state with the kernel's answer, releasing buffers per
@@ -707,6 +856,7 @@ fn build_report(
     allocation: &drmkit_planes::Allocation,
     registry: &PlaneRegistry,
     starved: &[LayerId],
+    composited: usize,
 ) -> CommitReport {
     // A starved layer holds its plane so it keeps showing its last frame, so
     // it is in the assignment -- but it is also counted as skipped, and the
@@ -743,13 +893,140 @@ fn build_report(
     CommitReport {
         layers_total: tally.considered(),
         layers_assigned: allocation.assignment.len() - starved_assigned,
-        layers_unassigned: allocation.composited.len(),
+        // A layer the allocator dropped is only *unassigned* if composition
+        // did not rescue it. One that reached the canvas reached hardware, so
+        // reporting it unassigned would tell a caller a frame was lost when it
+        // was not.
+        layers_composited: composited,
+        layers_unassigned: allocation.composited.len() - composited,
         layers_skipped_no_frame: tally.skipped_no_frame,
         test_commits_issued: allocation.diagnostics.test_commits_issued,
         fb_delta_fast_path: allocation.diagnostics.fb_delta_fast_path,
         placements,
         ..CommitReport::default()
     }
+}
+
+/// Which planes to hold back from the search, if any.
+///
+/// The canvas is armed after the search, onto a plane the search did not take
+/// — so with more layers than planes there would be none left, and the
+/// overflow the canvas exists to rescue would be dropped instead. Reserving
+/// costs a plane whether or not it is needed, so it only happens when the
+/// counts say the search will overflow.
+///
+/// The *last* candidate, so the search keeps the lower-indexed planes for the
+/// layers that stack below the canvas — which matters on hardware where plane
+/// index is the stacking order and nothing can reorder it.
+fn canvas_reservation(
+    has_canvas: bool,
+    layers: usize,
+    registry: &PlaneRegistry,
+    crtc_index: u32,
+) -> Vec<u32> {
+    if !has_canvas {
+        return Vec::new();
+    }
+    let candidates: Vec<u32> = registry
+        .force_disable_candidates(crtc_index)
+        .map(|plane| plane.id)
+        .collect();
+    if layers > candidates.len() {
+        candidates.last().copied().into_iter().collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Blend each target's source into the canvas, and say how many landed.
+///
+/// A source that cannot be CPU-read, or whose format the blend does not
+/// support, is skipped rather than failing the frame — it simply stays off the
+/// screen. Returns zero when none could be read, which the caller treats as
+/// "no canvas this frame".
+fn blend_targets(
+    canvas: &mut CompositeCanvas,
+    slots: &mut [Slot],
+    targets: &[(u64, usize)],
+) -> usize {
+    let mut blended = 0;
+    for (_, index) in targets {
+        let Slot::Occupied(layer) = &mut slots[*index] else {
+            continue;
+        };
+        let display = layer.display;
+        let format = layer.source.format();
+        if !crate::format_supported(format.fourcc) {
+            continue;
+        }
+        let Ok(mapping) = layer.source.map(drmkit_dumb::MapAccess::Read) else {
+            // A source whose pixels never reach the CPU cannot be rescued this
+            // way. It stays dropped for the frame.
+            continue;
+        };
+        let src = CompositeSrc {
+            pixels: mapping.pixels(),
+            src_stride_bytes: mapping.stride(),
+            src_width: mapping.width(),
+            src_height: mapping.height(),
+            drm_fourcc: format.fourcc,
+            plane_alpha: display.alpha.unwrap_or(u16::MAX),
+        };
+        canvas.blend(
+            &src,
+            CompositeRect {
+                x: display.src_rect.x,
+                y: display.src_rect.y,
+                w: if display.src_rect.w == 0 {
+                    format.width
+                } else {
+                    display.src_rect.w
+                },
+                h: if display.src_rect.h == 0 {
+                    format.height
+                } else {
+                    display.src_rect.h
+                },
+            },
+            CompositeRect {
+                x: display.dst_rect.x,
+                y: display.dst_rect.y,
+                w: display.dst_rect.w,
+                h: display.dst_rect.h,
+            },
+        );
+        blended += 1;
+    }
+    blended
+}
+
+/// Lower the canvas itself into the property bag its plane is programmed from.
+fn lower_canvas(canvas: &CompositeCanvas, crtc_id: u32, zpos: u64) -> Option<PlaneLayer> {
+    let fb_id = canvas.fb_id()?;
+    let (w, h) = (canvas.width(), canvas.height());
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(
+        &LoweringInput {
+            display: DisplayParams {
+                src_rect: Rect { x: 0, y: 0, w, h },
+                dst_rect: Rect { x: 0, y: 0, w, h },
+                zpos: Some(zpos),
+                ..DisplayParams::default()
+            },
+            format: SourceFormat {
+                fourcc: drmkit_fmt::fourcc::ARGB8888,
+                modifier: 0,
+                width: w,
+                height: h,
+            },
+            binding: BindingModel::SceneSubmitsFbId,
+            fb_id,
+            crtc_id,
+            default_zpos: None,
+        },
+        &mut plane_layer,
+    );
+    Some(plane_layer)
 }
 
 /// Lower one scene layer into the property bag a plane is programmed from.

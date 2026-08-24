@@ -54,6 +54,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
+      # gbm-sys links against libgbm, which the runner image does not carry.
+      # Named explicitly rather than left to chance: without it the failure is
+      # a linker error naming a library nobody mentioned asking for.
+      - name: install libgbm
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgbm-dev
       # T0 unit, T1 property, T4 doctests.
       - run: cargo test --workspace --all-features
 
@@ -114,7 +121,7 @@ jobs:
       - run: cargo check -p drmkit-gbm --target ${{ matrix.target }}
       # qemu-user runs T0 under the cross target; the runner comes from the
       # per-target .cargo fragment.
-      - run: cargo test --workspace --exclude xtask --target ${{ matrix.target }}
+      - run: cargo test --workspace --exclude xtask --exclude drmkit-gbm --target ${{ matrix.target }}
 
   fuzz:
     name: fuzz smoke (T2)

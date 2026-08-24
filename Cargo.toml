@@ -11,6 +11,7 @@ members = [
     "crates/drmkit-core",
     "crates/drmkit-dumb",
     "crates/drmkit-fmt",
+    "crates/drmkit-gbm",
     "crates/drmkit-log",
     "crates/drmkit-modeset",
     "crates/drmkit-planes",
@@ -47,6 +48,7 @@ drmkit-sync = { version = "0.0.0", path = "crates/drmkit-sync" }
 drmkit-time = { version = "0.0.0", path = "crates/drmkit-time" }
 
 drm = { version = "0.15" }
+gbm = { version = "0.18", default-features = false, features = ["drm-support"] }
 drm-ffi = { version = "0.9" }
 rustix = { version = "1", default-features = false }
 thiserror = { version = "2", default-features = false }

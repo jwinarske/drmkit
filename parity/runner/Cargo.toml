@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 drm = { workspace = true }
 drmkit-core = { workspace = true }
+drmkit-dumb = { workspace = true }
 drmkit-fmt = { workspace = true }
 drmkit-modeset = { workspace = true }
 drmkit-planes = { workspace = true }

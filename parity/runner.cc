@@ -75,6 +75,15 @@ class StarvableSource : public drm::scene::LayerBufferSource {
     return inner_->format();
   }
 
+  // Forwarded so the composition fallback can read this layer's pixels. Without
+  // it a layer the allocator cannot place has no route into the canvas and just
+  // stays off screen -- a legitimate behaviour, but not the one a composition
+  // scenario is trying to compare.
+  [[nodiscard]] drm::expected<drm::BufferMapping, std::error_code> map(
+      drm::MapAccess access) override {
+    return inner_->map(access);
+  }
+
  private:
   std::unique_ptr<drm::scene::DumbBufferSource> inner_;
   bool starved_{false};
@@ -157,6 +166,12 @@ int main(int argc, char** argv) {
   if (!pick_crtc(dev.fd(), active)) return fail("no usable crtc");
 
   LayerScene::Config cfg;
+  // The port has only the CPU canvas; drm-cxx defaults to GL via EGL where a
+  // context can be created, which on this host is llvmpipe. Comparing a GL
+  // compositor against a CPU one would be comparing two different subsystems.
+  // ForceCpu is drm-cxx's own switch for exactly this -- its documentation
+  // cites deterministic output as a reason to use it.
+  cfg.composition = LayerScene::Composition::ForceCpu;
   cfg.crtc_id = active.crtc_id;
   cfg.connector_id = active.connector_id;
   cfg.mode = active.mode;

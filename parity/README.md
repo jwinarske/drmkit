@@ -45,6 +45,16 @@ Numbering buffers by first appearance is deliberate: what a trace asserts is
 that the same *distinct* buffer comes back on the same frame, not which handle
 the kernel happened to hand out.
 
+## Scenarios that are expected to diverge
+
+A scenario whose header says so is a **reproduction**, not a regression: both
+implementations are known to disagree and the upstream question is open. It is
+kept in the corpus because it is what will show the fix landing, and `run.sh`
+reports it dirty in the meantime.
+
+Everything without such a header is expected to diff clean, and a dirty result
+there is a real finding.
+
 ## Adding a scenario
 
 Scenario grammar is four commands — `add NAME ZPOS DST_X DST_Y W H`, `del NAME`,

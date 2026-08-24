@@ -1,0 +1,55 @@
+# T7-006 -- more layers than planes
+#
+# *** This scenario does NOT diff clean, and is not part of the clean set. ***
+# It is drm-cxx#240: on a driver whose planes have no settable zpos, the
+# composition canvas is placed below the layers it carries. Both sides get it
+# wrong and they get it wrong differently -- upstream puts the canvas on
+# plane[1], under all eight overlays; the port puts it one plane too low. The
+# scenario is kept because it is the reproduction, and it is what will show the
+# fix when upstream decides. run.sh will report it dirty until then.
+#
+# vkms offers nine usable planes on its CRTC. Twelve layers is three more
+# than can be scanned out directly, so the allocator places what it can and
+# the rest have to reach the screen some other way: blended on the CPU into
+# a full-screen canvas that takes a plane of its own.
+#
+# Two implementations can agree on every layer they place and still disagree
+# completely here. The choices are all invisible to the placement itself:
+# which plane carries the canvas, where it sits in the stack, whether the
+# planes the overflow would have used are cleared, and whether the canvas is
+# armed in the same atomic request as everything else -- which it must be,
+# because a kernel that refuses it refuses the whole frame, every placed
+# layer included.
+#
+# It is also the newest code in the port, and the only scenario so far whose
+# subject is a code path the allocator never reaches.
+#
+# Frames one and two configure and then settle. The `del` drops the scene
+# back under the plane count, so the canvas should disappear entirely and
+# every surviving layer go back to a plane of its own -- the return path
+# matters as much as the overflow, and a canvas left armed after it is no
+# longer needed costs a plane and a full-screen blend per frame forever.
+
+add bg  0 0 0 0 0
+add l1  1 0 0 64 64
+add l2  2 64 0 64 64
+add l3  3 128 0 64 64
+add l4  4 192 0 64 64
+add l5  5 256 0 64 64
+add l6  6 320 0 64 64
+add l7  7 384 0 64 64
+add l8  8 448 0 64 64
+add l9  9 512 0 64 64
+add l10 10 576 0 64 64
+add l11 11 640 0 64 64
+
+frame
+frame
+
+# Back under the plane count: the canvas should go away.
+del l11
+del l10
+del l9
+del l8
+frame
+frame

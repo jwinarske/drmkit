@@ -55,6 +55,18 @@ impl LayerBufferSource for StarvableSource {
     fn format(&self) -> SourceFormat {
         self.inner.format()
     }
+
+    /// Forwarded so the composition fallback can read this layer's pixels.
+    ///
+    /// Without it a layer the allocator cannot place has no route into the
+    /// canvas and simply stays off the screen -- which is a legitimate
+    /// behaviour, but not the one a composition scenario is trying to compare.
+    fn map(
+        &mut self,
+        access: drmkit_dumb::MapAccess,
+    ) -> Result<drmkit_dumb::Mapping<'_>, SourceError> {
+        self.inner.map(access)
+    }
 }
 
 /// The device, the scene, and everything needed to commit a frame.
@@ -173,12 +185,20 @@ impl<'a> Runner<'a> {
 
         let modeset = Modeset::learn(device, crtc_id, connector_id, &mode)
             .map_err(|e| format!("modeset: {e}"))?;
+
+        let mut scene = LayerScene::new(crtc_id);
+        // Layers the allocator cannot place are blended into this and it takes
+        // a plane of its own. Without it an overflowing scenario would compare
+        // two implementations that both simply dropped the extra layers.
+        scene
+            .enable_composition(device, u32::from(mode.size().0), u32::from(mode.size().1))
+            .map_err(|e| format!("composition canvas: {e}"))?;
         let flip = PageFlip::new(device).map_err(|e| format!("page flip: {e}"))?;
 
         Ok(Self {
             registry,
             map,
-            scene: LayerScene::new(crtc_id),
+            scene,
             flip,
             modeset,
             crtc_index,

@@ -11,10 +11,12 @@
 mod cache;
 mod dumb;
 mod external;
+mod presenter;
 
 pub use cache::DmaBufSourceCache;
 pub use dumb::DumbBufferSource;
 pub use external::{ExternalDmaBufSource, ExternalError, ExternalPlane};
+pub use presenter::{Acquired, MAX_DAMAGE, Present, RingPresenter, SlotKey};
 
 #[cfg(test)]
 mod tests;

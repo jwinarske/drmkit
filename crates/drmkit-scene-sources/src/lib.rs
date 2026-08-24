@@ -8,9 +8,11 @@
 //! [`LayerBufferSource`](drmkit_scene::LayerBufferSource), so a scene consumes
 //! them without knowing which it has.
 
+mod cache;
 mod dumb;
 mod external;
 
+pub use cache::DmaBufSourceCache;
 pub use dumb::DumbBufferSource;
 pub use external::{ExternalDmaBufSource, ExternalError, ExternalPlane};
 

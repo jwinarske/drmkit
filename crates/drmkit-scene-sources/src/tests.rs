@@ -25,9 +25,26 @@ fn card_guard() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn open_card() -> Device {
+/// Open the card, or `None` if this machine has no vkms.
+///
+/// Absence of the device is a different condition from the device being there
+/// and misbehaving. Locally it means vkms is not loaded, which is a skip; in
+/// the lane it means the lane is not testing what it claims, which is a
+/// failure — the same line `DRMKIT_REQUIRE_MASTER` already draws for DRM
+/// master. Everything past this point still asserts.
+fn open_card() -> Option<Device> {
     let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
-    Device::open(path).expect("open test card")
+    match Device::open(&path) {
+        Ok(device) => Some(device),
+        Err(error) => {
+            assert!(
+                std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
+                "{path}: {error}, but DRMKIT_REQUIRE_MASTER is set"
+            );
+            println!("note: skipped -- no DRM device at {path} ({error})");
+            None
+        }
+    }
 }
 
 /// The format every KMS driver accepts for a dumb buffer.
@@ -42,7 +59,7 @@ use drmkit_fmt::fourcc::XRGB8888;
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn a_dumb_source_hands_out_a_stable_framebuffer_vkms() {
     let _guard = card_guard();
-    let device = open_card();
+    let Some(device) = open_card() else { return };
     let mut source = DumbBufferSource::create(&device, 64, 64, XRGB8888).expect("create");
 
     assert_eq!(source.format().width, 64);
@@ -71,7 +88,7 @@ fn a_dumb_source_hands_out_a_stable_framebuffer_vkms() {
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn a_dumb_source_maps_a_writable_coherent_view_vkms() {
     let _guard = card_guard();
-    let device = open_card();
+    let Some(device) = open_card() else { return };
     let mut source = DumbBufferSource::create(&device, 32, 32, XRGB8888).expect("create");
 
     {
@@ -91,7 +108,7 @@ fn a_dumb_source_maps_a_writable_coherent_view_vkms() {
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn a_fresh_dumb_source_starts_zeroed_vkms() {
     let _guard = card_guard();
-    let device = open_card();
+    let Some(device) = open_card() else { return };
     let mut source = DumbBufferSource::create(&device, 32, 32, XRGB8888).expect("create");
 
     let view = source.map(MapAccess::Read).expect("map");
@@ -107,7 +124,7 @@ fn a_fresh_dumb_source_starts_zeroed_vkms() {
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn a_session_resume_preserves_the_source_format_vkms() {
     let _guard = card_guard();
-    let device = open_card();
+    let Some(device) = open_card() else { return };
     let mut source = DumbBufferSource::create(&device, 48, 24, XRGB8888).expect("create");
 
     let before = source.format();
@@ -134,7 +151,7 @@ fn a_session_resume_preserves_the_source_format_vkms() {
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn repeated_session_resumes_do_not_leak_vkms() {
     let _guard = card_guard();
-    let device = open_card();
+    let Some(device) = open_card() else { return };
     let mut source = DumbBufferSource::create(&device, 32, 32, XRGB8888).expect("create");
 
     let count = || {
@@ -182,7 +199,7 @@ fn acquiring_without_a_framebuffer_is_a_failure_not_a_skip() {
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn damage_is_reported_once_then_cleared_vkms() {
     let _guard = card_guard();
-    let device = open_card();
+    let Some(device) = open_card() else { return };
     let mut source = DumbBufferSource::create(&device, 64, 64, XRGB8888).expect("create");
 
     let dirty = [DamageRect {
@@ -213,7 +230,7 @@ fn damage_is_reported_once_then_cleared_vkms() {
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn setting_damage_replaces_the_previous_set_vkms() {
     let _guard = card_guard();
-    let device = open_card();
+    let Some(device) = open_card() else { return };
     let mut source = DumbBufferSource::create(&device, 64, 64, XRGB8888).expect("create");
 
     source.set_damage(&[DamageRect {
@@ -241,7 +258,7 @@ fn setting_damage_replaces_the_previous_set_vkms() {
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn empty_damage_means_full_frame_vkms() {
     let _guard = card_guard();
-    let device = open_card();
+    let Some(device) = open_card() else { return };
     let mut source = DumbBufferSource::create(&device, 64, 64, XRGB8888).expect("create");
 
     source.set_damage(&[DamageRect {
@@ -330,7 +347,7 @@ fn external_format() -> SourceFormat {
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn external_create_rejects_unusable_shapes_vkms() {
     let _guard = card_guard();
-    let device = open_card();
+    let Some(device) = open_card() else { return };
     let fd = placeholder_fd();
 
     let cases: [(SourceFormat, &str); 3] = [
@@ -390,7 +407,7 @@ fn external_create_rejects_unusable_shapes_vkms() {
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn a_failed_create_does_not_fire_the_release_callback_vkms() {
     let _guard = card_guard();
-    let device = open_card();
+    let Some(device) = open_card() else { return };
     let fd = placeholder_fd();
     let fired = Arc::new(AtomicUsize::new(0));
 
@@ -428,7 +445,7 @@ fn a_failed_create_does_not_fire_the_release_callback_vkms() {
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn two_acquires_yield_independently_closeable_fences_vkms() {
     let _guard = card_guard();
-    let device = open_card();
+    let Some(device) = open_card() else { return };
     let (dmabuf, pitch) = real_dma_buf(&device, 64, 64).expect("export a real dma-buf");
     let planes = [ExternalPlane {
         fd: dmabuf.as_fd(),
@@ -490,7 +507,7 @@ fn two_acquires_yield_independently_closeable_fences_vkms() {
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn acquires_are_unfenced_when_no_producer_fence_is_set_vkms() {
     let _guard = card_guard();
-    let device = open_card();
+    let Some(device) = open_card() else { return };
     let (dmabuf, pitch) = real_dma_buf(&device, 64, 64).expect("export a real dma-buf");
     let planes = [ExternalPlane {
         fd: dmabuf.as_fd(),
@@ -512,7 +529,7 @@ fn acquires_are_unfenced_when_no_producer_fence_is_set_vkms() {
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn the_release_callback_fires_exactly_once_vkms() {
     let _guard = card_guard();
-    let device = open_card();
+    let Some(device) = open_card() else { return };
     let (dmabuf, pitch) = real_dma_buf(&device, 64, 64).expect("export a real dma-buf");
     let planes = [ExternalPlane {
         fd: dmabuf.as_fd(),
@@ -563,7 +580,7 @@ fn the_release_callback_fires_exactly_once_vkms() {
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn dropping_without_releasing_still_fires_the_callback_vkms() {
     let _guard = card_guard();
-    let device = open_card();
+    let Some(device) = open_card() else { return };
     let (dmabuf, pitch) = real_dma_buf(&device, 64, 64).expect("export a real dma-buf");
     let planes = [ExternalPlane {
         fd: dmabuf.as_fd(),
@@ -591,4 +608,205 @@ fn dropping_without_releasing_still_fires_the_callback_vkms() {
         1,
         "teardown must re-queue the upstream buffer"
     );
+}
+
+// --- DmaBufSourceCache -------------------------------------------------------
+
+/// A repeated key returns the same source, framebuffer and all.
+///
+/// This is the whole point of the cache: a swapchain hands the same descriptors
+/// back every frame, and importing them again would be two ioctls per plane per
+/// frame to arrive at the framebuffer id the kernel already had.
+#[test]
+fn a_repeated_key_reuses_the_import() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((fd, pitch)) = real_dma_buf(&device, 64, 64) else {
+        panic!("a dumb buffer must export a dma-buf on any KMS driver");
+    };
+
+    let format = SourceFormat {
+        fourcc: XRGB8888,
+        modifier: 0,
+        width: 64,
+        height: 64,
+    };
+    let planes = [ExternalPlane {
+        fd: fd.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+
+    let mut cache = DmaBufSourceCache::new();
+    let first = cache
+        .get_or_create(7, &device, format, &planes)
+        .expect("first import")
+        .acquire()
+        .expect("acquire")
+        .fb_id;
+    let second = cache
+        .get_or_create(7, &device, format, &planes)
+        .expect("second lookup")
+        .acquire()
+        .expect("acquire")
+        .fb_id;
+
+    assert_eq!(
+        first, second,
+        "the same key must hand back the same framebuffer, not a fresh import"
+    );
+    assert_eq!(cache.len(), 1, "one buffer, one entry");
+}
+
+/// A key reused for a different buffer is re-imported, not handed back stale.
+///
+/// A producer reusing an index after a resize is normal. Returning the old
+/// source would scan out the wrong memory at the wrong stride — which the
+/// kernel accepts, because the framebuffer is perfectly valid; it is simply
+/// the previous buffer.
+#[test]
+fn a_key_reused_for_new_geometry_is_reimported() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((small_fd, small_pitch)) = real_dma_buf(&device, 64, 64) else {
+        panic!("dma-buf export");
+    };
+    let Some((large_fd, large_pitch)) = real_dma_buf(&device, 128, 128) else {
+        panic!("dma-buf export");
+    };
+
+    let mut cache = DmaBufSourceCache::new();
+    cache
+        .get_or_create(
+            1,
+            &device,
+            SourceFormat {
+                fourcc: XRGB8888,
+                modifier: 0,
+                width: 64,
+                height: 64,
+            },
+            &[ExternalPlane {
+                fd: small_fd.as_fd(),
+                offset: 0,
+                pitch: small_pitch,
+            }],
+        )
+        .expect("first import");
+
+    let bigger = SourceFormat {
+        fourcc: XRGB8888,
+        modifier: 0,
+        width: 128,
+        height: 128,
+    };
+    cache
+        .get_or_create(
+            1,
+            &device,
+            bigger,
+            &[ExternalPlane {
+                fd: large_fd.as_fd(),
+                offset: 0,
+                pitch: large_pitch,
+            }],
+        )
+        .expect("re-import");
+
+    // The cached source's own geometry, not its framebuffer id. The id proves
+    // nothing here: dropping the old source frees its framebuffer and the
+    // kernel hands the very same id straight back to the replacement -- which
+    // is what the first version of this case saw and mistook for a cache hit.
+    let cached = cache.find(1).expect("an entry under the reused key");
+    assert_eq!(
+        LayerBufferSource::format(cached),
+        bigger,
+        "the geometry changed under the same key, so the source must have been \
+         rebuilt rather than handed back stale"
+    );
+    assert_eq!(
+        cache.len(),
+        1,
+        "the replacement takes the old entry's place"
+    );
+}
+
+/// Evicting drops the import, so the next lookup builds a new one.
+#[test]
+fn eviction_forces_a_fresh_import() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((fd, pitch)) = real_dma_buf(&device, 64, 64) else {
+        panic!("dma-buf export");
+    };
+    let format = SourceFormat {
+        fourcc: XRGB8888,
+        modifier: 0,
+        width: 64,
+        height: 64,
+    };
+    let planes = [ExternalPlane {
+        fd: fd.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+
+    let mut cache = DmaBufSourceCache::new();
+    cache
+        .get_or_create(3, &device, format, &planes)
+        .expect("import");
+    assert!(cache.find(3).is_some());
+
+    assert!(
+        cache.evict(3),
+        "evicting a present key reports it was there"
+    );
+    assert!(!cache.evict(3), "evicting it twice does not");
+    assert!(cache.find(3).is_none());
+    assert!(cache.is_empty());
+
+    cache
+        .get_or_create(3, &device, format, &planes)
+        .expect("re-import after eviction");
+    assert_eq!(cache.len(), 1);
+
+    cache.clear();
+    assert!(cache.is_empty(), "clear drops everything");
+}
+
+/// A failed import caches nothing.
+///
+/// Otherwise a transient failure would poison the key: every later frame would
+/// find the broken entry and hand it back, and the layer would never recover.
+#[test]
+fn a_failed_import_leaves_the_cache_untouched() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((fd, pitch)) = real_dma_buf(&device, 64, 64) else {
+        panic!("dma-buf export");
+    };
+
+    let mut cache = DmaBufSourceCache::new();
+    let refused = cache.get_or_create(
+        9,
+        &device,
+        SourceFormat {
+            fourcc: XRGB8888,
+            modifier: 0,
+            width: 0, // rejected before any ioctl
+            height: 64,
+        },
+        &[ExternalPlane {
+            fd: fd.as_fd(),
+            offset: 0,
+            pitch,
+        }],
+    );
+
+    assert!(refused.is_err(), "a zero dimension must be refused");
+    assert!(
+        cache.find(9).is_none(),
+        "a failed import must leave no entry behind to be handed out later"
+    );
+    assert!(cache.is_empty());
 }

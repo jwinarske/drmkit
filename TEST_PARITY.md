@@ -55,7 +55,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_cursor_theme.cpp` | _drmkit-cursor_ (phase 4) | pending |  |
 | `tests/unit/test_device.cpp` | `drmkit-core` `src/tests.rs` | ported |  |
 | `tests/unit/test_display.cpp` | _drmkit-display_ (phase 4) | pending |  |
-| `tests/unit/test_dma_buf_source_cache.cpp` | _drmkit-scene-sources_ (phase 3) | pending |  |
+| `tests/unit/test_dma_buf_source_cache.cpp` | `drmkit-scene-sources` `cache.rs` | ported | Keyed reuse, re-import on geometry change, eviction, and no entry left behind by a failed import |
 | `tests/unit/test_driver_profile.cpp` | _drmkit-display_ (phase 4) | pending |  |
 | `tests/unit/test_dumb_buffer.cpp` | `drmkit-dumb` `src/tests.rs` | ported | 6 |
 | `tests/unit/test_dumb_scanout_sink.cpp` | _drmkit-present_ (phase 6+) | pending |  |

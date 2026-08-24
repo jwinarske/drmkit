@@ -100,7 +100,18 @@ jobs:
           sudo apt-get install -y ${{ matrix.packages }}
       # `xtask` is host-only repository tooling — it is excluded everywhere in
       # this lane. Cross-building it proves nothing and only needs a sysroot.
-      - run: cargo build --workspace --exclude xtask --target ${{ matrix.target }}
+      # drmkit-gbm is held out of the *build* because gbm-sys links against
+      # libgbm and there is no cross sysroot for it here: adding a foreign
+      # architecture to the runner's apt sources is fragile on amd64 and worse
+      # for riscv64, where the package may not exist at all. The real targets
+      # have libgbm; the runner does not.
+      #
+      # Only the link needs it, so `cargo check` below still compiles the crate
+      # for the target and no portability coverage is lost -- which is what
+      # these lanes are for. A type error, a bad cast, an assumption about
+      # pointer width would all still fail here.
+      - run: cargo build --workspace --exclude xtask --exclude drmkit-gbm --target ${{ matrix.target }}
+      - run: cargo check -p drmkit-gbm --target ${{ matrix.target }}
       # qemu-user runs T0 under the cross target; the runner comes from the
       # per-target .cargo fragment.
       - run: cargo test --workspace --exclude xtask --target ${{ matrix.target }}

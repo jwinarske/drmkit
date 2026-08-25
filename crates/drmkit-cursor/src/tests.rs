@@ -1846,3 +1846,127 @@ fn a_plane_with_no_rotation_support_asks_for_none() {
         );
     }
 }
+
+// --- which buffer is which -------------------------------------------------
+
+use crate::pingpong::PingPong;
+
+#[test]
+fn a_fresh_pair_draws_into_the_one_not_on_screen() {
+    let buffers = PingPong::new();
+    assert_eq!(buffers.active(), 0);
+    assert_eq!(buffers.draw_target(), 1, "never the one being scanned out");
+    assert_eq!(
+        buffers.commit_target(),
+        0,
+        "nothing drawn yet, so publish what is already there"
+    );
+}
+
+#[test]
+fn a_draw_then_a_commit_swaps_which_is_live() {
+    let mut buffers = PingPong::new();
+    buffers.mark_drawn();
+    assert_eq!(
+        buffers.commit_target(),
+        1,
+        "publish what was just drawn, not the stale one"
+    );
+
+    buffers.published();
+    assert_eq!(buffers.active(), 1, "the published buffer is now live");
+    assert_eq!(buffers.draw_target(), 0, "and the next draw goes elsewhere");
+    assert!(!buffers.has_undrawn());
+}
+
+#[test]
+fn drawing_never_targets_the_buffer_on_screen() {
+    // The invariant the whole type exists for. Whatever sequence of draws and
+    // commits, the draw target is never what scanout is reading.
+    let mut buffers = PingPong::new();
+    for step in 0..32 {
+        assert_ne!(
+            buffers.draw_target(),
+            buffers.active(),
+            "step {step}: drawing into the live buffer"
+        );
+        if step % 3 != 0 {
+            buffers.mark_drawn();
+        }
+        if step % 2 == 0 {
+            buffers.published();
+        }
+    }
+}
+
+#[test]
+fn a_move_only_commit_republishes_what_is_on_screen() {
+    // A commit that only changes position must not flip to a buffer holding
+    // an older frame.
+    let mut buffers = PingPong::new();
+    buffers.mark_drawn();
+    buffers.published();
+    assert_eq!(buffers.active(), 1);
+
+    // No draw since. Several position commits in a row.
+    for _ in 0..4 {
+        assert_eq!(buffers.commit_target(), 1, "the buffer already on screen");
+        buffers.published();
+        assert_eq!(buffers.active(), 1, "and nothing swaps");
+    }
+}
+
+#[test]
+fn several_draws_before_one_commit_publish_once() {
+    // An animation that ticks faster than it commits overwrites the same back
+    // buffer; only one flip is owed.
+    let mut buffers = PingPong::new();
+    for _ in 0..5 {
+        assert_eq!(buffers.draw_target(), 1);
+        buffers.mark_drawn();
+    }
+    assert_eq!(buffers.commit_target(), 1);
+    buffers.published();
+    assert_eq!(buffers.active(), 1);
+    assert!(!buffers.has_undrawn());
+}
+
+#[test]
+fn a_commit_with_nothing_drawn_changes_nothing() {
+    let mut buffers = PingPong::new();
+    let before = buffers;
+    buffers.published();
+    assert_eq!(buffers, before, "no draw, no flip");
+}
+
+#[test]
+fn a_single_buffer_has_nowhere_else_to_go() {
+    // The legacy path: drmModeSetCursor uploads on install, so a second buffer
+    // buys nothing and the tear window is narrow.
+    let mut buffers = PingPong::single();
+    assert_eq!(buffers.draw_target(), 0);
+    assert_eq!(buffers.commit_target(), 0);
+
+    buffers.mark_drawn();
+    assert!(
+        !buffers.has_undrawn(),
+        "a single buffer is never waiting to be published"
+    );
+    assert_eq!(buffers.commit_target(), 0);
+
+    buffers.published();
+    assert_eq!(buffers.active(), 0, "there is nothing to swap with");
+    assert_eq!(buffers.draw_target(), 0);
+}
+
+#[test]
+fn the_pair_returns_to_where_it_started() {
+    // Two full draw-and-publish cycles put buffer 0 back on screen, which is
+    // what makes a long-running animation stable rather than drifting.
+    let mut buffers = PingPong::new();
+    for _ in 0..2 {
+        buffers.mark_drawn();
+        buffers.published();
+    }
+    assert_eq!(buffers, PingPong::new());
+}

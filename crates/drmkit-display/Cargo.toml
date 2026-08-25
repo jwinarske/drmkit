@@ -28,6 +28,11 @@ drmkit-core = { workspace = true }
 # For `ModeInfo`, the extension trait that reads a mode. The mode list hands
 # back the kernel's modes; reading them is the modeset crate's job.
 drmkit-modeset = { workspace = true }
+# `ScanoutTarget` picks a CRTC's primary plane, which means enumerating
+# planes. Upstream's scanout_target includes plane_registry.hpp for the same
+# reason.
+drmkit-planes = { workspace = true }
+drmkit-fmt = { workspace = true }
 rustix = { workspace = true, features = ["std"] }
 # The hotplug watch. Optional because libudev-sys runs pkg-config in its build
 # script, so a target with no sysroot for it cannot even type-check this --

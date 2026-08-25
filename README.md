@@ -86,7 +86,10 @@ by quietly doing nothing.
 | `drmkit-cursor` | done — own `.xcursor` parser, hardware probe, ping-pong buffers |
 | `drmkit-session` | done — sequencing over a `Backend` trait, libseat behind a feature |
 | `drmkit-input` | done — xkb keyboard, auto-repeat, libinput seat with its log routed into drmkit's |
-| `drmkit-display`: mode lists, connector and CRTC capabilities, hotplug, colour pipeline | ahead |
+| `drmkit-display`: connector and CRTC capabilities | done — measured on vkms and amdgpu |
+| `drmkit-display`: mode lists, hotplug watch, colour pipeline, scanout discovery | done |
+| `drmkit-planes`: reading planes off a device | done — behind a feature, so the crate stays device-free without it |
+| Phase 4 exit gate: full minimal-cut unit suite | ahead |
 
 ### The differential harness
 

@@ -87,7 +87,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_plane_allocator.cpp` | `drmkit-planes` | ported |  |
 | `tests/unit/test_playlist.cpp` | — (covers `examples/`, outside the ported `src/` surface) | n/a |  |
 | `tests/unit/test_property_store.cpp` | `drmkit-core` `src/tests.rs` | ported |  |
-| `tests/unit/test_scanout_target.cpp` | _drmkit-present_ (phase 6+) | pending |  |
+| `tests/unit/test_scanout_target.cpp` | `drmkit-display` `scanout.rs` | ported | The `primary_plane_for_crtc` helper against a synthetic registry, plus a case upstream has none of: an overlay first in the list must not be taken for the primary. `discover` itself is device-bound and covered on vkms and amdgpu |
 | `tests/unit/test_scene.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/unit/test_scene_set.cpp` | _drmkit-scene-set_ (phase 6+) | pending |  |
 | `tests/unit/test_select_connector.cpp` | _drmkit-display_ (phase 4) | pending |  |

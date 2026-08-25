@@ -11,6 +11,7 @@ mod capabilities;
 #[cfg(feature = "hotplug")]
 mod hotplug;
 mod pipeline;
+mod scanout;
 
 pub mod color;
 pub mod curves;
@@ -40,5 +41,8 @@ pub use modes::{ConnectorModes, Probe, query_connector_modes};
 pub use pipeline::{CrtcColorPipeline, PipelineError, Stage};
 pub use profile::{
     DriverProfile, PanelSelfRefresh, PrimeCaps, connector_type_self_refreshes, decode_prime_caps,
+};
+pub use scanout::{
+    CrtcChoice, ScanoutError, ScanoutTarget, crtc_for_connector, primary_plane_for_crtc,
 };
 pub use tone_mapper::{Direction, LUT_SIZE, ToneMapCurve, ToneMapper};

@@ -81,7 +81,12 @@ by quietly doing nothing.
 | `allocator_torture` thresholds asserted on vkms | done — four of five cases discriminate there; one cannot ([P-14](docs/parity-findings.md)) |
 | `plane_stress` measurement tool | done — `benches/plane-stress`, CSV per frame |
 | `drmkit-display`: `DriverProfile` | done — capability probe, never the driver name |
-| HDR cache, mode lists, connector/CRTC capabilities, `-input`, `-session`, `-cursor`, `-capture` | ahead |
+| `drmkit-display`: HDR metadata and cache | done — byte-identical to the reference's serializer over twelve vectors |
+| `drmkit-capture`: plane readback and PNG | done — including RGB565, which the reference cannot read ([#243](https://github.com/jwinarske/drm-cxx/issues/243)) |
+| `drmkit-cursor` | done — own `.xcursor` parser, hardware probe, ping-pong buffers |
+| `drmkit-session` | done — sequencing over a `Backend` trait, libseat behind a feature |
+| `drmkit-input` | done — xkb keyboard, auto-repeat, libinput seat with its log routed into drmkit's |
+| `drmkit-display`: mode lists, connector and CRTC capabilities, hotplug, colour pipeline | ahead |
 
 ### The differential harness
 
@@ -100,7 +105,8 @@ diverge. See [`docs/parity-findings.md`](docs/parity-findings.md).
 **Upstream first.** drm-cxx is the origin of authority: anything this port
 surfaces is [filed there](docs/upstream-findings.md) rather than fixed only
 here, and the default for a bug is to reproduce the C++ behaviour so the two
-agree byte for byte. Eight issues filed so far.
+agree byte for byte. Seventeen issues filed so far, plus two against
+third-party libraries.
 
 **Upstream baseline:** `jwinarske/drm-cxx` @ `dc2915b` (v2.0.1, PR #231).
 

@@ -40,7 +40,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_color_pipeline_curves.cpp` | `drmkit-display` `curves.rs` | partial | PQ, HLG, sRGB and BT.1886 transfer functions ported and exercised through the tone mapper's oracle. The LUT-blob builders and the CRTC pipeline are not ported |
 | `tests/unit/test_commit_report.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/unit/test_composite_canvas.cpp` | `drmkit-scene` `canvas.rs`, `tests/canvas_oracle.rs`, `tests/canvas_surface_vkms.rs`, `tests/composition_vkms.rs` | ported | Blend diffed against the reference's own output; surface and scene integration pinned against a device. Multi-canvas and the primary-anchor reservation are not ported |
-| `tests/unit/test_connector_capabilities.cpp` | _drmkit-display_ (phase 4) | pending |  |
+| `tests/unit/test_connector_capabilities.cpp` | `drmkit-display` `capabilities.rs` | ported | All six, against a synthetic connector shaped like the amdgpu one this was measured on. Plus device cases upstream has none of: the probe is diffed against a raw read of the same property set, on vkms and on amdgpu |
 | `tests/unit/test_csd_animator.cpp` | _drmkit-csd_ (phase 6+) | pending |  |
 | `tests/unit/test_csd_overlay_reservation.cpp` | _drmkit-csd_ (phase 6+) | pending |  |
 | `tests/unit/test_csd_presenter_composite.cpp` | _drmkit-csd_ (phase 6+) | pending |  |

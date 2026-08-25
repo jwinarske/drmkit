@@ -6,6 +6,7 @@
 //! What a connected display can do, and what has to happen to pixels before
 //! they reach it.
 
+mod capabilities;
 pub mod color;
 pub mod curves;
 #[cfg(feature = "edid")]
@@ -20,6 +21,7 @@ mod hdr_tests;
 #[cfg(test)]
 mod tests;
 
+pub use capabilities::{BroadcastRgb, Colorspace, ConnectorCapabilities, CrtcCapabilities, MaxBpc};
 pub use hdr::{
     HdrBlob, HdrMetadataBlob, HdrSourceMetadata, TransferFunction, hdr_metadata_hash,
     serialize_hdr_metadata,

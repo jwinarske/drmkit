@@ -10,17 +10,39 @@
 //!
 //! Because a cursor file is untrusted input -- it comes from a user theme
 //! directory or wherever `XCURSOR_PATH` points -- and every number in it is
-//! attacker-controlled. `xcursor` 0.3.11 allocates from those numbers before
-//! it has the bytes to back them: `take_bytes` does `vec![0; len]` and *then*
-//! reads. A 60-byte file declaring a 32767x32767 image asks for 4.3 GB, and
-//! since Rust aborts on allocation failure rather than unwinding, the process
-//! dies -- there is nothing to catch and no guard placed after the parse can
-//! help.
+//! attacker-controlled. `xcursor` 0.3.11 sizes its pixel buffer from the
+//! declared dimensions before reading: `take_bytes` does `vec![0; len]` and
+//! *then* `read_exact`. Dimensions are bounded at `0x7fff` each, as libxcursor
+//! bounds them, so a file of a few dozen bytes can still reserve 4.3 GB.
 //!
-//! Everything here is read from a slice that is already in memory, and every
-//! length is checked against what remains before anything is allocated. The
-//! limits are the caller's, so a fuzz target can drive the same code with the
-//! same bounds the real loader uses.
+//! What that costs depends on whether the reservation fails, which is worth
+//! stating precisely because the answer is not "it always crashes":
+//!
+//! | condition | outcome |
+//! |---|---|
+//! | 64-bit, default overcommit | reservation succeeds lazily, parse then fails cleanly |
+//! | 64-bit, cgroup `MemoryMax` | survives -- the pages are never faulted in |
+//! | `RLIMIT_AS` (`ulimit -v`) | allocation fails, and the process **aborts** |
+//! | 32-bit target | 4.3 GB does not fit in a 4 GB address space, so as above |
+//!
+//! The first three rows were measured -- on a 60 GB x86-64 host and an 8 GB
+//! aarch64 board, the third under `ulimit -v 1048576`. The fourth is reasoning
+//! from the address space, not a measurement: there was no 32-bit sysroot to
+//! hand. drmkit targets 32-bit ARM, so it is not hypothetical.
+//!
+//! An abort is not recoverable: Rust does not unwind on allocation failure, so
+//! there is nothing for a caller to catch and no check placed after the parse
+//! can help. The C this port follows has the same over-allocation -- see
+//! `third_party/xcursor-mini`, which mallocs `width * height * 4` before
+//! reading a pixel -- but it checks the result for `NULL`, so it degrades to a
+//! load failure. Rust has no `NULL` to check.
+//!
+//! Even where nothing crashes, reserving 4.3 GB of address space to reject a
+//! 60-byte file is not a good way to fail. Everything here is read from a
+//! slice that is already in memory, and every length is checked against what
+//! remains before anything is allocated. The limits are the caller's, so a
+//! fuzz target can drive the same code with the same bounds the real loader
+//! uses.
 
 use crate::CursorError;
 

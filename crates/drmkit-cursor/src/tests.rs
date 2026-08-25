@@ -830,12 +830,12 @@ fn pixels_are_read_as_little_endian_argb() {
 
 #[test]
 fn a_declared_image_larger_than_the_file_is_refused_not_allocated() {
-    // The whole reason this parser exists. `xcursor` 0.3.11 allocates
-    // width * height * 4 before reading, so a tiny file declaring a huge
-    // image aborts the process -- verified: a 60-byte file asking for
-    // 32767x32767 dies with "memory allocation of 4294705156 bytes failed",
-    // which Rust cannot catch. Here the length is checked against the bytes
-    // actually present, so it is an error and the process lives.
+    // The whole reason this parser exists. `xcursor` 0.3.11 sizes its buffer
+    // from width * height * 4 before reading, so a 60-byte file can reserve
+    // 4.3 GB. Whether that is fatal depends on the platform -- see the
+    // `xcursor` module for the measured cases -- but it is never a good way
+    // to reject a 60-byte file. Here the length is checked against the bytes
+    // actually present.
     let mut spec = ImageSpec::new(24, 512, 512);
     spec.short_by = 512 * 512; // declare a full image, write no pixels
     let bytes = FileBuilder::new().image(spec).build();

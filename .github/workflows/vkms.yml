@@ -55,8 +55,14 @@ jobs:
       # The guest needs a kernel and a card, not a build system.
       - name: build test binaries
         run: |
+          # `.profile.test` is what separates a test binary from an example
+          # or a bin target, which `cargo test --no-run` also builds and which
+          # also carry an `executable`. Without it the lane runs examples with
+          # `--include-ignored --nocapture` as their argv and counts whatever
+          # they make of that as a test failure.
           cargo test --workspace --no-run --message-format=json \
-            | jq -r 'select(.reason == "compiler-artifact" and .executable != null) | .executable' \
+            | jq -r 'select(.reason == "compiler-artifact" and .executable != null
+                            and .profile.test == true) | .executable' \
             > test-binaries.txt
           echo "built $(wc -l < test-binaries.txt) test binaries"
           test -s test-binaries.txt

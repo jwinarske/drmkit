@@ -1765,3 +1765,84 @@ fn the_probe_stops_asking_once_something_is_accepted() {
     assert_eq!(calls, 1);
     assert_eq!(size, 256);
 }
+
+// --- placing the plane -----------------------------------------------------
+
+use crate::stage::{hardware_rotation, plane_origin};
+
+#[test]
+fn the_plane_is_offset_back_by_the_hotspot() {
+    // The hotspot is the pixel that lands under the pointer. Skip this and the
+    // sprite looks right while every click lands somewhere else.
+    assert_eq!(plane_origin((100, 100), (0, 0)), (100, 100));
+    assert_eq!(plane_origin((100, 100), (4, 7)), (96, 93));
+}
+
+#[test]
+fn a_cursor_near_the_top_left_hangs_off_the_edge() {
+    // A negative origin is correct, not something to clamp: the pointer is at
+    // (1, 1) and the tip of the arrow is 4 pixels into the buffer, so the
+    // buffer starts off-screen.
+    assert_eq!(plane_origin((1, 1), (4, 4)), (-3, -3));
+    assert_eq!(plane_origin((0, 0), (31, 31)), (-31, -31));
+}
+
+#[test]
+fn the_origin_does_not_wrap_at_the_extremes() {
+    // A pointer coordinate near i32::MIN with a large hotspot would wrap to a
+    // huge positive number, putting the cursor at the far edge instead of off
+    // the near one.
+    assert_eq!(plane_origin((i32::MIN, i32::MIN), (64, 64)).0, i32::MIN);
+    assert_eq!(plane_origin((i32::MAX, 0), (0, 0)).0, i32::MAX);
+}
+
+#[test]
+fn hardware_rotation_is_used_when_the_plane_has_it() {
+    let all = Rotation::None.drm_mask()
+        | Rotation::Quarter.drm_mask()
+        | Rotation::Half.drm_mask()
+        | Rotation::ThreeQuarter.drm_mask();
+    for rotation in [
+        Rotation::None,
+        Rotation::Quarter,
+        Rotation::Half,
+        Rotation::ThreeQuarter,
+    ] {
+        assert_eq!(
+            hardware_rotation(rotation, all),
+            rotation.drm_mask(),
+            "{rotation:?}"
+        );
+    }
+}
+
+#[test]
+fn an_unsupported_rotation_asks_the_hardware_for_none() {
+    // i915's cursor planes expose the property but list only 0 and 180. A
+    // quarter turn there is done in software, so telling the hardware to turn
+    // it as well would turn it twice.
+    let half_only = Rotation::None.drm_mask() | Rotation::Half.drm_mask();
+    assert_eq!(
+        hardware_rotation(Rotation::Half, half_only),
+        Rotation::Half.drm_mask(),
+        "180 is in the mask, so the hardware does it"
+    );
+    for software in [Rotation::Quarter, Rotation::ThreeQuarter] {
+        assert_eq!(
+            hardware_rotation(software, half_only),
+            Rotation::None.drm_mask(),
+            "{software:?} is not in the mask, so the pixels were already turned"
+        );
+    }
+}
+
+#[test]
+fn a_plane_with_no_rotation_support_asks_for_none() {
+    for rotation in [Rotation::None, Rotation::Quarter, Rotation::Half] {
+        assert_eq!(
+            hardware_rotation(rotation, 0),
+            Rotation::None.drm_mask(),
+            "{rotation:?}"
+        );
+    }
+}

@@ -19,6 +19,7 @@ mod cursor;
 mod plane;
 mod size;
 mod sprite;
+mod stage;
 mod theme;
 mod xcursor;
 
@@ -29,6 +30,7 @@ pub use cursor::{Cursor, Frame};
 pub use plane::{PlanePath, SelectedPlane, select_plane};
 pub use size::{preferred_size, probe_size};
 pub use sprite::{Placement, Rotation, compose};
+pub use stage::{PlaneState, hardware_rotation, plane_origin, stage};
 pub use theme::{Theme, ThemeResolution, default_search_paths};
 
 /// What can go wrong finding a cursor.
@@ -81,6 +83,12 @@ pub enum CursorError {
     /// No plane on this CRTC can carry a cursor, and legacy was not allowed.
     #[error("no plane on this CRTC can carry a cursor")]
     NoPlane,
+
+    /// The plane is missing a property every plane is required to have.
+    ///
+    /// A broken driver rather than anything a caller did.
+    #[error("the plane lacks a required property")]
+    MissingProperty,
 
     /// A caller-named plane does not exist, cannot feed this CRTC, or cannot
     /// take `ARGB8888`.

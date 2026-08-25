@@ -168,6 +168,8 @@ dependencies = [
 name = "drmkit-cursor"
 version = "0.0.0"
 dependencies = [
+ "drm 0.15.0",
+ "drmkit-core",
  "drmkit-fmt",
  "drmkit-planes",
  "thiserror",

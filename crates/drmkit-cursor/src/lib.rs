@@ -8,13 +8,21 @@
 //! that maps modern names onto whatever legacy name a theme happens to ship --
 //! to a file on disk. It reads no pixels, which keeps it cheap and testable
 //! without a display.
+//!
+//! [`Cursor`] is the other half: it reads one of those files into frames,
+//! hotspots and timing. A cursor file is untrusted input, so the parser bounds
+//! every length against the bytes actually present before allocating anything
+//! -- see the `xcursor` module for why that is not delegated to a crate.
 
 mod alias;
+mod cursor;
 mod theme;
+mod xcursor;
 
 #[cfg(test)]
 mod tests;
 
+pub use cursor::{Cursor, Frame};
 pub use theme::{Theme, ThemeResolution, default_search_paths};
 
 /// What can go wrong finding a cursor.
@@ -39,4 +47,28 @@ pub enum CursorError {
     /// No theme on the search path has this cursor.
     #[error("no theme provides that cursor")]
     NotFound,
+
+    /// The file is not a cursor, is truncated, or contradicts itself.
+    #[error("malformed cursor file")]
+    Malformed,
+
+    /// The file declares more frames, or larger frames, than are accepted.
+    ///
+    /// Separate from [`CursorError::Malformed`] because such a file may be
+    /// perfectly well-formed -- it is refused for being unreasonable, not for
+    /// being broken, and that is worth saying differently.
+    #[error("cursor file exceeds the loader's limits")]
+    TooLarge,
+
+    /// The file parsed but holds no images.
+    #[error("cursor file contains no images")]
+    NoImages,
+
+    /// Caller-supplied pixels do not describe an image.
+    #[error("not a usable cursor image")]
+    InvalidImage,
+
+    /// The file could not be read.
+    #[error("io: {0}")]
+    Io(String),
 }

@@ -522,3 +522,540 @@ fn a_resolution_reports_where_it_looked() {
     assert!(source.is_absolute() || source.exists());
     assert_eq!(chain.first().map(String::as_str), Some("Child"));
 }
+
+// --- cursor files ----------------------------------------------------------
+
+use crate::Cursor;
+use std::time::Duration;
+
+/// Build a cursor file in memory.
+///
+/// Everything a test needs to be wrong about is a parameter, because the whole
+/// point of the parser is what it does with numbers that disagree with the
+/// bytes present.
+#[derive(Debug, Clone)]
+struct FileBuilder {
+    images: Vec<ImageSpec>,
+    /// Override the declared table-of-contents count.
+    declared_entries: Option<u32>,
+    /// Truncate the finished file to this many bytes.
+    truncate_to: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct ImageSpec {
+    nominal_size: u32,
+    width: u32,
+    height: u32,
+    xhot: u32,
+    yhot: u32,
+    delay_ms: u32,
+    fill: u32,
+    /// Write fewer pixels than the header declares.
+    short_by: usize,
+}
+
+impl ImageSpec {
+    fn new(nominal_size: u32, width: u32, height: u32) -> Self {
+        Self {
+            nominal_size,
+            width,
+            height,
+            xhot: 0,
+            yhot: 0,
+            delay_ms: 0,
+            fill: 0xffff_0000,
+            short_by: 0,
+        }
+    }
+    fn delay(mut self, ms: u32) -> Self {
+        self.delay_ms = ms;
+        self
+    }
+    fn fill(mut self, pixel: u32) -> Self {
+        self.fill = pixel;
+        self
+    }
+    fn hot(mut self, x: u32, y: u32) -> Self {
+        self.xhot = x;
+        self.yhot = y;
+        self
+    }
+}
+
+impl FileBuilder {
+    fn new() -> Self {
+        Self {
+            images: Vec::new(),
+            declared_entries: None,
+            truncate_to: None,
+        }
+    }
+    fn image(mut self, spec: ImageSpec) -> Self {
+        self.images.push(spec);
+        self
+    }
+    fn build(&self) -> Vec<u8> {
+        const HEADER_LEN: u32 = 16;
+        let toc_len = self.images.len() * 12;
+        let body_start = HEADER_LEN as usize + toc_len;
+
+        let mut chunks: Vec<Vec<u8>> = Vec::new();
+        let mut offsets: Vec<u32> = Vec::new();
+        let mut at = body_start;
+        for spec in &self.images {
+            offsets.push(u32::try_from(at).expect("small file"));
+            let mut chunk = Vec::new();
+            for value in [
+                0x24,
+                0xfffd_0002,
+                spec.nominal_size,
+                1,
+                spec.width,
+                spec.height,
+                spec.xhot,
+                spec.yhot,
+                spec.delay_ms,
+            ] {
+                chunk.extend_from_slice(&u32::to_le_bytes(value));
+            }
+            let declared = spec.width as usize * spec.height as usize;
+            for _ in 0..declared.saturating_sub(spec.short_by) {
+                chunk.extend_from_slice(&spec.fill.to_le_bytes());
+            }
+            at += chunk.len();
+            chunks.push(chunk);
+        }
+
+        let mut out = Vec::new();
+        out.extend_from_slice(b"Xcur");
+        out.extend_from_slice(&HEADER_LEN.to_le_bytes());
+        out.extend_from_slice(&1u32.to_le_bytes());
+        let entries = self
+            .declared_entries
+            .unwrap_or_else(|| u32::try_from(self.images.len()).expect("small"));
+        out.extend_from_slice(&entries.to_le_bytes());
+        for (spec, offset) in self.images.iter().zip(&offsets) {
+            out.extend_from_slice(&0xfffd_0002u32.to_le_bytes());
+            out.extend_from_slice(&spec.nominal_size.to_le_bytes());
+            out.extend_from_slice(&offset.to_le_bytes());
+        }
+        for chunk in &chunks {
+            out.extend_from_slice(chunk);
+        }
+        if let Some(limit) = self.truncate_to {
+            out.truncate(limit);
+        }
+        out
+    }
+}
+
+#[test]
+fn a_static_cursor_carries_its_metadata() {
+    let bytes = FileBuilder::new()
+        .image(ImageSpec::new(24, 4, 3).hot(1, 2).fill(0xff00_ff00))
+        .build();
+    let cursor = Cursor::from_bytes(&bytes, 24).expect("load");
+
+    assert_eq!(cursor.frames().len(), 1);
+    let frame = cursor.first();
+    assert_eq!((frame.width, frame.height), (4, 3));
+    assert_eq!((frame.xhot, frame.yhot), (1, 2));
+    assert_eq!(frame.pixels.len(), 12);
+    assert!(frame.pixels.iter().all(|p| *p == 0xff00_ff00));
+    assert!(!cursor.is_animated());
+    assert_eq!(cursor.cycle(), Duration::ZERO);
+}
+
+#[test]
+fn a_static_cursor_shows_the_same_frame_forever() {
+    let bytes = FileBuilder::new().image(ImageSpec::new(24, 2, 2)).build();
+    let cursor = Cursor::from_bytes(&bytes, 24).expect("load");
+    for ms in [0u64, 1, 1_000, 86_400_000] {
+        assert_eq!(cursor.frame_at(Duration::from_millis(ms)), cursor.first());
+    }
+}
+
+#[test]
+fn an_animated_cursor_reports_its_cycle() {
+    let bytes = FileBuilder::new()
+        .image(ImageSpec::new(24, 2, 2).delay(100))
+        .image(ImageSpec::new(24, 2, 2).delay(150))
+        .image(ImageSpec::new(24, 2, 2).delay(50))
+        .build();
+    let cursor = Cursor::from_bytes(&bytes, 24).expect("load");
+
+    assert_eq!(cursor.frames().len(), 3);
+    assert!(cursor.is_animated());
+    assert_eq!(cursor.cycle(), Duration::from_millis(300));
+}
+
+#[test]
+fn frame_at_walks_the_delays() {
+    let bytes = FileBuilder::new()
+        .image(ImageSpec::new(24, 2, 2).delay(100).fill(1))
+        .image(ImageSpec::new(24, 2, 2).delay(150).fill(2))
+        .image(ImageSpec::new(24, 2, 2).delay(50).fill(3))
+        .build();
+    let cursor = Cursor::from_bytes(&bytes, 24).expect("load");
+
+    let shown = |ms: u64| cursor.frame_at(Duration::from_millis(ms)).pixels[0];
+    // Frame boundaries are half-open: a frame shows up to, not including, its
+    // own end. Getting that wrong shows the previous frame for one tick.
+    assert_eq!(shown(0), 1);
+    assert_eq!(shown(99), 1);
+    assert_eq!(shown(100), 2, "the first frame's 100ms is up");
+    assert_eq!(shown(249), 2);
+    assert_eq!(shown(250), 3);
+    assert_eq!(shown(299), 3);
+}
+
+#[test]
+fn frame_at_wraps_at_the_cycle() {
+    let bytes = FileBuilder::new()
+        .image(ImageSpec::new(24, 2, 2).delay(100).fill(1))
+        .image(ImageSpec::new(24, 2, 2).delay(200).fill(2))
+        .build();
+    let cursor = Cursor::from_bytes(&bytes, 24).expect("load");
+
+    let shown = |ms: u64| cursor.frame_at(Duration::from_millis(ms)).pixels[0];
+    assert_eq!(
+        shown(300),
+        shown(0),
+        "one full cycle later is the same frame"
+    );
+    assert_eq!(shown(350), shown(50));
+    assert_eq!(shown(3_000_000_050), shown(50), "and much later still");
+}
+
+#[test]
+fn frames_that_all_declare_no_delay_are_static() {
+    // Some themes ship multi-frame packs with delay=0 throughout. Playing them
+    // would loop instantly and flicker.
+    let bytes = FileBuilder::new()
+        .image(ImageSpec::new(24, 2, 2).fill(1))
+        .image(ImageSpec::new(24, 2, 2).fill(2))
+        .build();
+    let cursor = Cursor::from_bytes(&bytes, 24).expect("load");
+
+    assert_eq!(cursor.frames().len(), 2);
+    assert!(!cursor.is_animated());
+    assert_eq!(cursor.frame_at(Duration::from_millis(500)).pixels[0], 1);
+}
+
+#[test]
+fn the_nearest_size_is_chosen() {
+    // Cursor files are multi-resolution packs.
+    let bytes = FileBuilder::new()
+        .image(ImageSpec::new(16, 2, 2).fill(16))
+        .image(ImageSpec::new(32, 2, 2).fill(32))
+        .image(ImageSpec::new(64, 2, 2).fill(64))
+        .build();
+
+    for (requested, want) in [
+        (16, 16),
+        (20, 16),
+        (30, 32),
+        (32, 32),
+        (48, 32),
+        (64, 64),
+        (99, 64),
+    ] {
+        let cursor = Cursor::from_bytes(&bytes, requested).expect("load");
+        assert_eq!(
+            cursor.first().pixels[0],
+            want,
+            "asking for {requested} should pick {want}"
+        );
+    }
+}
+
+#[test]
+fn a_tie_on_size_goes_to_the_smaller() {
+    // 24 is equidistant from 16 and 32. The smaller one sits inside the
+    // plane; the larger has to be cropped or scaled.
+    let bytes = FileBuilder::new()
+        .image(ImageSpec::new(16, 2, 2).fill(16))
+        .image(ImageSpec::new(32, 2, 2).fill(32))
+        .build();
+    let cursor = Cursor::from_bytes(&bytes, 24).expect("load");
+    assert_eq!(cursor.first().pixels[0], 16);
+}
+
+#[test]
+fn every_frame_of_the_chosen_size_is_kept() {
+    // An animated pack holds several sizes, each with its own frames. Picking
+    // a size must take all of that size's frames and none of the others'.
+    let bytes = FileBuilder::new()
+        .image(ImageSpec::new(16, 2, 2).delay(10).fill(16))
+        .image(ImageSpec::new(32, 2, 2).delay(20).fill(32))
+        .image(ImageSpec::new(16, 2, 2).delay(30).fill(16))
+        .image(ImageSpec::new(32, 2, 2).delay(40).fill(32))
+        .build();
+
+    let small = Cursor::from_bytes(&bytes, 16).expect("load");
+    assert_eq!(small.frames().len(), 2);
+    assert!(small.frames().iter().all(|f| f.pixels[0] == 16));
+    assert_eq!(small.cycle(), Duration::from_millis(40));
+
+    let large = Cursor::from_bytes(&bytes, 32).expect("load");
+    assert_eq!(large.frames().len(), 2);
+    assert_eq!(large.cycle(), Duration::from_millis(60));
+}
+
+#[test]
+fn a_size_of_zero_means_the_default() {
+    let bytes = FileBuilder::new()
+        .image(ImageSpec::new(24, 2, 2).fill(24))
+        .image(ImageSpec::new(64, 2, 2).fill(64))
+        .build();
+    // 0 must not mean "the smallest" or "whatever is first" -- it means 64,
+    // the smallest size a real cursor plane commonly is.
+    let cursor = Cursor::from_bytes(&bytes, 0).expect("load");
+    assert_eq!(cursor.first().pixels[0], 64);
+}
+
+#[test]
+fn pixels_are_read_as_little_endian_argb() {
+    // The format stores each pixel as a little-endian 32-bit ARGB value, so a
+    // byte-order slip shows up as swapped channels rather than as a failure.
+    let bytes = FileBuilder::new()
+        .image(ImageSpec::new(24, 1, 1).fill(0x8844_2211))
+        .build();
+    let cursor = Cursor::from_bytes(&bytes, 24).expect("load");
+    assert_eq!(cursor.first().pixels[0], 0x8844_2211);
+}
+
+// --- what a crafted file must not do ---------------------------------------
+
+#[test]
+fn a_declared_image_larger_than_the_file_is_refused_not_allocated() {
+    // The whole reason this parser exists. `xcursor` 0.3.11 allocates
+    // width * height * 4 before reading, so a tiny file declaring a huge
+    // image aborts the process -- verified: a 60-byte file asking for
+    // 32767x32767 dies with "memory allocation of 4294705156 bytes failed",
+    // which Rust cannot catch. Here the length is checked against the bytes
+    // actually present, so it is an error and the process lives.
+    let mut spec = ImageSpec::new(24, 512, 512);
+    spec.short_by = 512 * 512; // declare a full image, write no pixels
+    let bytes = FileBuilder::new().image(spec).build();
+    assert!(bytes.len() < 100, "the file is tiny: {} bytes", bytes.len());
+
+    assert_eq!(
+        Cursor::from_bytes(&bytes, 24).unwrap_err(),
+        CursorError::Malformed
+    );
+}
+
+#[test]
+fn an_oversize_image_is_refused_before_its_pixel_count_is_computed() {
+    let bytes = FileBuilder::new()
+        .image({
+            let mut spec = ImageSpec::new(24, 513, 1);
+            spec.short_by = 513;
+            spec
+        })
+        .build();
+    assert_eq!(
+        Cursor::from_bytes(&bytes, 24).unwrap_err(),
+        CursorError::TooLarge
+    );
+}
+
+#[test]
+fn too_many_frames_is_refused() {
+    let mut builder = FileBuilder::new();
+    for _ in 0..257 {
+        builder = builder.image(ImageSpec::new(24, 1, 1));
+    }
+    assert_eq!(
+        Cursor::from_bytes(&builder.build(), 24).unwrap_err(),
+        CursorError::TooLarge
+    );
+}
+
+#[test]
+fn a_toc_count_larger_than_the_file_is_refused() {
+    // The other unbounded number in the header.
+    let mut builder = FileBuilder::new().image(ImageSpec::new(24, 1, 1));
+    builder.declared_entries = Some(u32::MAX);
+    assert_eq!(
+        Cursor::from_bytes(&builder.build(), 24).unwrap_err(),
+        CursorError::Malformed
+    );
+}
+
+#[test]
+fn a_truncated_file_is_refused_at_every_length() {
+    // Every prefix of a valid file must be an error and not a panic. This is
+    // the cheap version of the fuzz target, and it runs on every build.
+    let whole = FileBuilder::new()
+        .image(ImageSpec::new(24, 4, 4).delay(50))
+        .image(ImageSpec::new(24, 4, 4).delay(50))
+        .build();
+    for length in 0..whole.len() {
+        let result = Cursor::from_bytes(&whole[..length], 24);
+        assert!(
+            result.is_err(),
+            "a {length}-byte prefix of a {}-byte file must not load",
+            whole.len()
+        );
+    }
+    assert!(
+        Cursor::from_bytes(&whole, 24).is_ok(),
+        "the whole file loads"
+    );
+}
+
+#[test]
+fn garbage_is_refused() {
+    for bytes in [
+        b"".to_vec(),
+        b"Xcur".to_vec(),
+        b"not a cursor file at all".to_vec(),
+        vec![0xff; 64],
+    ] {
+        assert!(
+            Cursor::from_bytes(&bytes, 24).is_err(),
+            "{bytes:?} must not load"
+        );
+    }
+}
+
+#[test]
+fn a_hotspot_outside_the_image_is_refused() {
+    let bytes = FileBuilder::new()
+        .image(ImageSpec::new(24, 4, 4).hot(5, 0))
+        .build();
+    assert_eq!(
+        Cursor::from_bytes(&bytes, 24).unwrap_err(),
+        CursorError::Malformed
+    );
+}
+
+#[test]
+fn a_zero_dimension_is_refused() {
+    for (w, h) in [(0, 4), (4, 0)] {
+        let bytes = FileBuilder::new().image(ImageSpec::new(24, w, h)).build();
+        assert_eq!(
+            Cursor::from_bytes(&bytes, 24).unwrap_err(),
+            CursorError::Malformed,
+            "{w}x{h}"
+        );
+    }
+}
+
+#[test]
+fn a_file_with_no_images_is_refused() {
+    let bytes = FileBuilder::new().build();
+    assert_eq!(
+        Cursor::from_bytes(&bytes, 24).unwrap_err(),
+        CursorError::NoImages
+    );
+}
+
+// --- caller-supplied pixels ------------------------------------------------
+
+#[test]
+fn from_argb_builds_a_static_cursor() {
+    let pixels = vec![0xff00_00ff; 16];
+    let cursor = Cursor::from_argb(&pixels, 4, 4, 1, 2).expect("build");
+    assert_eq!(cursor.frames().len(), 1);
+    assert_eq!((cursor.first().width, cursor.first().height), (4, 4));
+    assert_eq!((cursor.first().xhot, cursor.first().yhot), (1, 2));
+    assert_eq!(cursor.first().pixels, pixels);
+    assert!(!cursor.is_animated());
+}
+
+#[test]
+fn from_argb_refuses_dimensions_that_do_not_describe_an_image() {
+    let pixels = vec![0u32; 16];
+    for (w, h) in [(0, 4), (4, 0), (513, 1), (1, 513)] {
+        assert_eq!(
+            Cursor::from_argb(&pixels, w, h, 0, 0).unwrap_err(),
+            CursorError::InvalidImage,
+            "{w}x{h}"
+        );
+    }
+    // Right dimensions, wrong number of pixels.
+    assert_eq!(
+        Cursor::from_argb(&pixels, 4, 5, 0, 0).unwrap_err(),
+        CursorError::InvalidImage
+    );
+}
+
+#[test]
+fn loading_through_a_theme_finds_the_file() {
+    // The path a caller actually takes: resolve a name, load what it points
+    // at. Ties the two halves of the crate together.
+    let fixture = Fixture::new("load-named");
+    let dir = fixture.theme("Adwaita", &[]);
+    let bytes = FileBuilder::new()
+        .image(ImageSpec::new(24, 2, 2).fill(0xff12_3456))
+        .build();
+    std::fs::write(dir.join("cursors").join("left_ptr"), &bytes).expect("write cursor");
+
+    let theme = fixture.discover().expect("discover");
+    let cursor = Cursor::load_named(&theme, "left_ptr", "Adwaita", 24).expect("load");
+    assert_eq!(cursor.first().pixels[0], 0xff12_3456);
+}
+
+#[test]
+fn loading_a_missing_file_reports_io() {
+    let fixture = Fixture::new("load-missing");
+    let dir = fixture.theme("Adwaita", &[]);
+    let theme = fixture.discover().expect("discover");
+    // Resolve against a file that exists, then delete it.
+    std::fs::write(dir.join("cursors").join("left_ptr"), b"").expect("write");
+    let resolved = theme.resolve("left_ptr", "Adwaita").expect("resolve");
+    std::fs::remove_file(&resolved.source).expect("remove");
+
+    assert!(matches!(
+        Cursor::load(&resolved, 24),
+        Err(CursorError::Io(_))
+    ));
+}
+
+#[test]
+fn every_fuzz_seed_loads() {
+    // A seed that does not parse teaches the fuzzer nothing -- it starts from
+    // a dead input and has to rediscover the format before it can explore it.
+    // That was worth a whole fuzzing session's coverage on the EDID target
+    // before it was noticed, so it gets a test here.
+    // This is a statement about the repository's contents, so it only means
+    // anything where the repository is. The HIL lane copies test binaries to a
+    // board and nothing else, and asserting there that a source path exists
+    // would fail for a reason that has nothing to do with the code.
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fuzz/seeds/cursor_file");
+    if !std::path::Path::new(dir).is_dir() {
+        println!("note: skipped -- not running from the source tree, so there is no seed corpus");
+        return;
+    }
+    let mut checked = 0;
+    let mut animated = 0;
+    let mut sizes = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(dir).expect("the seed corpus must exist") {
+        let path = entry.expect("entry").path();
+        let bytes = std::fs::read(&path).expect("read seed");
+        let cursor = Cursor::from_bytes(&bytes, 0).unwrap_or_else(|error| {
+            panic!("seed {} does not load: {error}", path.display());
+        });
+        if cursor.is_animated() {
+            animated += 1;
+        }
+        sizes.insert(cursor.first().width);
+        checked += 1;
+    }
+    assert!(
+        checked >= 4,
+        "expected at least four seeds, found {checked}"
+    );
+    assert!(
+        animated >= 1,
+        "no seed animates, so the frame-walking path is unseeded"
+    );
+    assert!(
+        sizes.len() >= 2,
+        "every seed is the same size, so size selection is unseeded: {sizes:?}"
+    );
+}

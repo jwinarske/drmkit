@@ -194,12 +194,26 @@ jobs:
         working-directory: fuzz
       # EDID arrives over a wire nobody controls and is malformed in the field
       # constantly, so it earns its own target rather than sharing one.
-      # The seed directory is passed alongside the corpus cargo-fuzz manages.
-      # Without it the fuzzer never gets past EDID's 8-byte magic -- it has no
-      # coverage signal from inside libdisplay-info, which is an uninstrumented
-      # C library -- and spends the whole minute on the rejection path. Measured
-      # before seeding: 15.5M executions, corpus stuck at one 1-byte input.
-      - run: cargo +nightly fuzz run edid_blob seeds/edid_blob -- -max_total_time=60
+      # Two corpus directories, in this order, on purpose: libFuzzer writes
+      # new inputs into the *first* one it is given. Passing the seed
+      # directory alone -- as this did -- means the fuzzer's own output lands
+      # in the checked-in seeds, which is invisible in ephemeral CI and
+      # deposits a few hundred files in the working tree of anyone who runs it
+      # locally. The managed corpus takes the writes; the seeds are read.
+      #
+      # Seeded because without a valid EDID the fuzzer never gets past the
+      # 8-byte magic -- there is no coverage signal from inside
+      # libdisplay-info, an uninstrumented C library -- and spends the whole
+      # minute on the rejection path. Measured before seeding: 15.5M
+      # executions, corpus stuck at one 1-byte input.
+      - run: cargo +nightly fuzz run edid_blob corpus/edid_blob seeds/edid_blob -- -max_total_time=60
+        working-directory: fuzz
+      # A cursor file is untrusted input from a user theme directory, and every
+      # number in it sizes an allocation. Seeded for the same reason as EDID:
+      # without a valid file to start from the fuzzer spends the minute failing
+      # the 4-byte magic. The seeds cover a static cursor, a multi-resolution
+      # pack, an animated one, and a frame at the dimension limit.
+      - run: cargo +nightly fuzz run cursor_file corpus/cursor_file seeds/cursor_file -- -max_total_time=60
         working-directory: fuzz
 
   miri:

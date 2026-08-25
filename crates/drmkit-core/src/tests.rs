@@ -490,6 +490,11 @@ fn test_masks_page_flip_event_vkms() {
 fn signed_ranges_are_not_reported_as_ranges_vkms() {
     use drm::control::Device as _;
 
+    // Every test here that opens the card takes this first. An unguarded one
+    // holds an open device while a guarded one runs, and the guarded one is
+    // then not DRM master -- which surfaces as that *other* test failing,
+    // intermittently, depending on how the threads interleave.
+    let _guard = card_guard();
     let device = Device::open(test_card()).expect("open card");
     device.enable_universal_planes().expect("universal planes");
     device.enable_atomic().expect("atomic");

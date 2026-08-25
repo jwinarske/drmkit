@@ -6,6 +6,7 @@
 //! Port of `src/core/property_store.{hpp,cpp}`.
 
 use std::collections::HashMap;
+use std::os::fd::AsFd as _;
 
 use drm::control::Device as ControlDevice;
 
@@ -211,6 +212,49 @@ impl PropertyStore {
             .find(|(entry, _)| entry.name().to_string_lossy() == variant)
             .map(|(_, value)| *value)
             .ok_or_else(missing)
+    }
+
+    /// The union of the bits a bitmask property advertises.
+    ///
+    /// `rotation` is the one that matters: it is a bitmask whose enum entries
+    /// name the `DRM_MODE_ROTATE_*` and `DRM_MODE_REFLECT_*` bits the plane
+    /// actually implements, and a plane can expose the property while
+    /// implementing only 0/180 or a reflect. A caller that treats the
+    /// property's presence as "can rotate" and asks for 90 degrees gets a
+    /// driver that silently drops the request, so the layer comes out the
+    /// wrong way round with every ioctl succeeding.
+    ///
+    /// The `drm` crate reports a bitmask property as
+    /// `ValueType::Bitmask` with no payload -- it parses the enum table only
+    /// for `ValueType::Enum` -- so this reads the property directly.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreError::NoSuchProperty`] if the object has no such property or it
+    /// is not a bitmask.
+    pub fn bitmask_bits(&self, device: &Device, object_id: u32, property: &str) -> Result<u64> {
+        let id = self.property_id(object_id, property)?;
+        let missing = || CoreError::NoSuchProperty {
+            object_id,
+            name: property.to_owned(),
+        };
+        // Both buffers, even though only the enums are wanted: the kernel
+        // copies the values array into whatever pointer it is given, and a
+        // null one with a non-zero count fails the whole ioctl with EFAULT.
+        let mut values = Vec::new();
+        let mut enums = Vec::new();
+        let info =
+            drm_ffi::mode::get_property(device.as_fd(), id, Some(&mut values), Some(&mut enums))
+                .map_err(|_| missing())?;
+        if info.flags & drm_ffi::DRM_MODE_PROP_BITMASK == 0 {
+            return Err(missing());
+        }
+        // For a bitmask property each entry's value is the *bit index*, not
+        // the bit -- so 90 degrees is entry value 1, meaning bit 1.
+        Ok(enums
+            .iter()
+            .filter(|entry| entry.value < u64::BITS.into())
+            .fold(0_u64, |bits, entry| bits | (1_u64 << entry.value)))
     }
 
     /// Whether a named property is `DRM_MODE_PROP_IMMUTABLE`.

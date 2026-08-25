@@ -140,7 +140,19 @@ pub struct PlaneCapabilities {
     pub rotation_bits: u64,
     /// Whether the plane exposes a rotation property at all.
     pub supports_rotation: bool,
-    /// Whether the plane can scale.
+    /// Whether the plane may be asked to scale.
+    ///
+    /// Not a measured capability, and the name is the most optimistic reading
+    /// of what KMS offers. [`PlaneRegistry::probe`] sets it from the presence
+    /// of `SRC_W`, which every atomic plane has -- so on a real device it is
+    /// true everywhere, vkms and its absent scaler included. There is no
+    /// property that answers the question; the `TEST_ONLY` commit is what
+    /// finds out, and the allocator's search is built around that.
+    ///
+    /// It stays because a fixture, a replay, or a caller that knows its
+    /// hardware can set it false and have the matcher skip those planes
+    /// before spending a test commit on them. See
+    /// [drm-cxx#252](https://github.com/jwinarske/drm-cxx/issues/252).
     pub supports_scaling: bool,
     /// Whether the driver exposed `IN_FORMATS`.
     pub has_format_modifiers: bool,

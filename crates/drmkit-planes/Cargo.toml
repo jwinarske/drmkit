@@ -15,8 +15,28 @@ keywords = ["drm", "kms", "plane", "allocator", "compositor"]
 drmkit-fmt = { workspace = true }
 thiserror = { workspace = true }
 
+# Reading planes off a real device. Optional because the rest of this crate
+# deliberately has no device dependency at all -- the allocator and the
+# matcher run entirely on `PlaneCapabilities` a caller supplies, which is what
+# lets the ported allocator suite reach its coverage on fixtures.
+drm = { workspace = true, optional = true }
+drmkit-core = { workspace = true, optional = true }
+rustix = { workspace = true, features = ["std"], optional = true }
+
+[features]
+default = ["device"]
+device = ["dep:drm", "dep:drmkit-core", "dep:rustix"]
+
+# The device cases need the probe they are testing.
+[[test]]
+name = "probe_device"
+required-features = ["device"]
+
 [dev-dependencies]
 proptest = "1"
+# The probe's device cases read a property through the raw ioctl, so the
+# count they check against is not the one the helper under test produced.
+drm-ffi = { workspace = true }
 
 [lints]
 workspace = true

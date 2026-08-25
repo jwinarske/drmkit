@@ -16,6 +16,9 @@
 //! classification does not compile — the misclassification the invariant warns
 //! about cannot reach a running system.
 
+#[cfg(feature = "device")]
+mod probe;
+
 mod allocator;
 mod layer;
 mod matching;

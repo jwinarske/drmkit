@@ -196,6 +196,7 @@ dependencies = [
  "libdisplay-info",
  "rustix 1.1.4",
  "thiserror",
+ "udev",
 ]
 
 [[package]]
@@ -289,8 +290,12 @@ dependencies = [
 name = "drmkit-planes"
 version = "0.0.0"
 dependencies = [
+ "drm 0.15.0",
+ "drm-ffi",
+ "drmkit-core",
  "drmkit-fmt",
  "proptest",
+ "rustix 1.1.4",
  "thiserror",
 ]
 

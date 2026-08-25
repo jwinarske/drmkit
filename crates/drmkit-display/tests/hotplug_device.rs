@@ -36,7 +36,6 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use rustix::event::{PollFd, PollFlags, poll};
-use udev::MonitorBuilder;
 
 use drmkit_display::{HotplugEvent, HotplugMonitor, Source};
 
@@ -86,32 +85,23 @@ fn can_synthesize(uevent: &str) -> bool {
     false
 }
 
-/// A raw monitor on the same source, for ground truth.
-fn raw_monitor() -> udev::MonitorSocket {
-    MonitorBuilder::new_kernel()
-        .and_then(|builder| builder.match_subsystem("drm"))
-        .and_then(MonitorBuilder::listen)
-        .expect("kernel monitor")
-}
-
-/// Whether `socket` produced any event within `timeout`, and what its
-/// `SEQNUM`s were.
-fn raw_events(socket: &udev::MonitorSocket, timeout: Duration) -> Vec<String> {
-    let mut seen = Vec::new();
+/// Whether the monitor's socket became readable within `timeout`.
+///
+/// This is the ground truth the delivery cases need: it says the kernel
+/// queued an event for us, separately from whether the monitor decided to
+/// report one. Without it, "delivered nothing" could equally mean the socket
+/// was never listening.
+fn became_readable(monitor: &HotplugMonitor, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        let fd = socket.as_fd();
+        let fd = monitor.as_fd();
         let mut fds = [PollFd::new(&fd, PollFlags::IN)];
         let step = Duration::from_millis(100).try_into().expect("timeout");
-        if poll(&mut fds, Some(&step)).expect("poll") == 0 {
-            continue;
+        if poll(&mut fds, Some(&step)).expect("poll") > 0 {
+            return true;
         }
-        for event in socket.iter() {
-            seen.push(format!("{:?}", event.event_type()));
-        }
-        break;
     }
-    seen
+    false
 }
 
 /// Everything the monitor under test yields within `timeout`.
@@ -146,16 +136,13 @@ fn an_ordinary_drm_change_is_read_and_discarded() {
     // The kernel's own broadcast rather than udevd's republication: a device
     // lane has no udevd, and a monitor waiting for one waits forever.
     let mut monitor = HotplugMonitor::open(Source::Kernel).expect("monitor");
-    let ground_truth = raw_monitor();
 
     fs::write(&uevent, "change").expect("synthesize");
 
-    let raw = raw_events(&ground_truth, Duration::from_secs(5));
     assert!(
-        !raw.is_empty(),
-        "the socket delivered nothing at all, so this proves nothing"
+        became_readable(&monitor, Duration::from_secs(5)),
+        "the socket was never readable, so this proves nothing"
     );
-
     let delivered = hotplug_events(&mut monitor, Duration::from_millis(500));
     assert!(
         delivered.is_empty(),
@@ -178,7 +165,6 @@ fn a_property_that_merely_looks_like_hotplug_is_not_one() {
     }
 
     let mut monitor = HotplugMonitor::open(Source::Kernel).expect("monitor");
-    let ground_truth = raw_monitor();
 
     fs::write(
         &uevent,
@@ -186,12 +172,10 @@ fn a_property_that_merely_looks_like_hotplug_is_not_one() {
     )
     .expect("synthesize");
 
-    let raw = raw_events(&ground_truth, Duration::from_secs(5));
     assert!(
-        !raw.is_empty(),
-        "the socket delivered nothing at all, so this proves nothing"
+        became_readable(&monitor, Duration::from_secs(5)),
+        "the socket was never readable, so this proves nothing"
     );
-
     let delivered = hotplug_events(&mut monitor, Duration::from_millis(500));
     assert!(
         delivered.is_empty(),

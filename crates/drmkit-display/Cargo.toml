@@ -50,6 +50,3 @@ required-features = ["hotplug"]
 # The device tests poll the hotplug socket and ask whether they can write a
 # uevent, neither of which the library itself needs.
 rustix = { workspace = true, features = ["std", "event", "process"] }
-# The hotplug cases need a second, raw monitor for ground truth: "delivered
-# nothing" has to be distinguishable from a socket that was never live.
-udev = { workspace = true }

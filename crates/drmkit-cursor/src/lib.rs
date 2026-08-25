@@ -18,6 +18,7 @@ mod alias;
 mod cursor;
 mod pingpong;
 mod plane;
+mod renderer;
 mod size;
 mod sprite;
 mod stage;
@@ -30,6 +31,7 @@ mod tests;
 pub use cursor::{Cursor, Frame};
 pub use pingpong::PingPong;
 pub use plane::{PlanePath, SelectedPlane, select_plane};
+pub use renderer::{Renderer, RendererConfig};
 pub use size::{preferred_size, probe_size};
 pub use sprite::{Placement, Rotation, compose};
 pub use stage::{PlaneState, hardware_rotation, plane_origin, stage};
@@ -85,6 +87,14 @@ pub enum CursorError {
     /// No plane on this CRTC can carry a cursor, and legacy was not allowed.
     #[error("no plane on this CRTC can carry a cursor")]
     NoPlane,
+
+    /// The only available path is one this does not implement yet.
+    ///
+    /// Today that means legacy `drmModeSetCursor`, on a controller with no
+    /// plane that can carry a cursor. A caller told this can composite a
+    /// cursor instead, which beats a renderer that fails on its first show.
+    #[error("no supported cursor path is available")]
+    Unsupported,
 
     /// The plane is missing a property every plane is required to have.
     ///

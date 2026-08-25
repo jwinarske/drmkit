@@ -110,7 +110,7 @@ impl Cursor {
             })
             .collect();
 
-        Self::from_frames(frames)
+        Self::assemble(frames)
     }
 
     /// Build a static cursor from caller-supplied pixels.
@@ -137,7 +137,7 @@ impl Cursor {
         if pixels.len() != width as usize * height as usize {
             return Err(CursorError::InvalidImage);
         }
-        Self::from_frames(vec![Frame {
+        Self::assemble(vec![Frame {
             pixels: pixels.to_vec(),
             width,
             height,
@@ -147,8 +147,39 @@ impl Cursor {
         }])
     }
 
+    /// Build a cursor from frames the caller already has.
+    ///
+    /// The many-frame form of [`Cursor::from_argb`], for a caller generating
+    /// cursors rather than loading them -- a compositor drawing its own
+    /// spinner, or a test. Frames play in the order given.
+    ///
+    /// # Errors
+    ///
+    /// - [`CursorError::NoImages`] for an empty set.
+    /// - [`CursorError::InvalidImage`] if any frame's pixel count disagrees
+    ///   with its dimensions, or a dimension is zero or past the limit.
+    pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CursorError> {
+        let limits = Limits::default();
+        for frame in &frames {
+            if frame.width == 0
+                || frame.height == 0
+                || frame.width > limits.max_dim
+                || frame.height > limits.max_dim
+            {
+                return Err(CursorError::InvalidImage);
+            }
+            if frame.pixels.len() != frame.width as usize * frame.height as usize {
+                return Err(CursorError::InvalidImage);
+            }
+        }
+        if frames.len() > limits.max_frames {
+            return Err(CursorError::TooLarge);
+        }
+        Self::assemble(frames)
+    }
+
     /// Assemble from frames, computing the cycle.
-    fn from_frames(frames: Vec<Frame>) -> Result<Self, CursorError> {
+    fn assemble(frames: Vec<Frame>) -> Result<Self, CursorError> {
         if frames.is_empty() {
             return Err(CursorError::NoImages);
         }
@@ -191,8 +222,19 @@ impl Cursor {
     /// declare no delay, always answers with the first frame.
     #[must_use]
     pub fn frame_at(&self, elapsed: Duration) -> &Frame {
+        let index = self.frame_index_at(elapsed);
+        self.frames.get(index).unwrap_or_else(|| self.first())
+    }
+
+    /// Which frame is showing at `elapsed`.
+    ///
+    /// The index rather than the frame, so a caller redrawing into a buffer
+    /// can tell that nothing has changed and skip the work. A cursor ticking
+    /// at 60Hz against a 100ms animation redraws on three frames in eighteen.
+    #[must_use]
+    pub fn frame_index_at(&self, elapsed: Duration) -> usize {
         if !self.is_animated() {
-            return self.first();
+            return 0;
         }
         // Both are non-zero here, so the remainder is well defined.
         let into_cycle = Duration::from_nanos(
@@ -200,14 +242,14 @@ impl Cursor {
         );
 
         let mut accumulated = Duration::ZERO;
-        for frame in &self.frames {
+        for (index, frame) in self.frames.iter().enumerate() {
             accumulated += frame.delay;
             if into_cycle < accumulated {
-                return frame;
+                return index;
             }
         }
-        // Unreachable while the delays sum to the cycle, but returning the
-        // last frame is the right answer if they ever stop agreeing.
-        self.frames.last().unwrap_or_else(|| self.first())
+        // Unreachable while the delays sum to the cycle, but the last frame is
+        // the right answer if they ever stop agreeing.
+        self.frames.len().saturating_sub(1)
     }
 }

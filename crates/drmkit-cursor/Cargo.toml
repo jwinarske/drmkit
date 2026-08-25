@@ -16,12 +16,14 @@ categories.workspace = true
 
 [dependencies]
 drmkit-core = { workspace = true }
+drmkit-dumb = { workspace = true }
 drmkit-fmt = { workspace = true }
 drmkit-planes = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
 
-[dev-dependencies]
 drm = { workspace = true }
+
+[dev-dependencies]
 
 [lints]
 workspace = true

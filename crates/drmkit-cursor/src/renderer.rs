@@ -1,0 +1,441 @@
+// SPDX-FileCopyrightText: (c) 2026 Joel Winarske
+// SPDX-License-Identifier: MIT
+
+//! Putting a cursor on a plane and keeping it there.
+//!
+//! This is where the pieces meet: [`select_plane`] picks the plane,
+//! [`probe_size`] settles the buffer size, [`compose`] draws a frame into the
+//! buffer that is not on screen, [`PingPong`] says which that is, and [`stage`]
+//! writes the result onto the plane.
+//!
+//! The staging is deliberately separate from committing. A compositor wants
+//! the cursor in the same atomic request as the rest of its frame -- a cursor
+//! that lands a commit later than the window it belongs to is visibly wrong
+//! when either is moving. [`Renderer::commit`] exists for callers with nothing
+//! to coalesce with.
+
+use std::time::Duration;
+
+use drmkit_core::{AtomicCommitFlags, AtomicRequest, Device, ObjectType, PropertyStore};
+use drmkit_dumb::{Buffer, Config, MapAccess};
+use drmkit_planes::PlaneRegistry;
+
+use crate::CursorError;
+use crate::cursor::Cursor;
+use crate::pingpong::PingPong;
+use crate::plane::{PlanePath, SelectedPlane, select_plane};
+use crate::size::{preferred_size, probe_size};
+use crate::sprite::{self, Placement, Rotation};
+use crate::stage::{PlaneState, stage};
+
+/// How to set a renderer up.
+#[derive(Debug, Clone, Copy)]
+pub struct RendererConfig {
+    /// The CRTC the cursor belongs to, and its index in the resource list.
+    ///
+    /// Both, because the id is what gets written to `CRTC_ID` and the index is
+    /// what `possible_crtcs` is a bitmask over. Deriving one from the other
+    /// needs the resource list, which the caller already has.
+    pub crtc_id: u32,
+    /// As [`RendererConfig::crtc_id`].
+    pub crtc_index: u32,
+    /// Cursor size in pixels, or zero to take the driver's preference.
+    pub preferred_size: u32,
+    /// Use this plane rather than choosing one. Zero to choose.
+    pub forced_plane_id: u32,
+    /// Whether falling back to `drmModeSetCursor` is acceptable.
+    pub allow_legacy: bool,
+    /// Which way up the cursor is drawn.
+    pub rotation: Rotation,
+}
+
+impl Default for RendererConfig {
+    fn default() -> Self {
+        Self {
+            crtc_id: 0,
+            crtc_index: 0,
+            preferred_size: 0,
+            forced_plane_id: 0,
+            // A cursor that cannot be committed with the frame is still better
+            // than none, so the permissive default matches the reference.
+            allow_legacy: true,
+            rotation: Rotation::None,
+        }
+    }
+}
+
+/// A cursor on a plane.
+///
+/// Borrows the device: the buffers and the framebuffers registered for them
+/// belong to it, and outliving it would leave this holding ids the kernel has
+/// recycled.
+#[derive(Debug)]
+pub struct Renderer<'a> {
+    device: &'a Device,
+    crtc_id: u32,
+    plane: SelectedPlane,
+    rotation_mask: u64,
+    props: PropertyStore,
+    buffers: [Buffer; 2],
+    which: PingPong,
+    /// The loaded cursor, and where its current frame landed in the buffer.
+    cursor: Option<Cursor>,
+    placement: Option<Placement>,
+    /// Which animation frame is in the buffer, so a tick that does not change
+    /// it does no work.
+    drawn_frame: Option<usize>,
+    /// Where the pointer is.
+    position: (i32, i32),
+    visible: bool,
+    /// Which way up the cursor is drawn.
+    rotation: Rotation,
+}
+
+impl<'a> Renderer<'a> {
+    /// Set up a cursor on `config.crtc_id`.
+    ///
+    /// Chooses a plane, settles a buffer size by asking the kernel what it
+    /// will take, and allocates. No cursor is loaded yet.
+    ///
+    /// # Errors
+    ///
+    /// - [`CursorError::NoPlane`] or [`CursorError::PlaneUnusable`] from
+    ///   [`select_plane`].
+    /// - [`CursorError::Unsupported`] if the only option is the legacy path,
+    ///   which is not implemented here yet.
+    /// - [`CursorError::Io`] if a buffer cannot be allocated or the plane's
+    ///   properties cannot be read.
+    pub fn create(
+        device: &'a Device,
+        registry: &PlaneRegistry,
+        config: &RendererConfig,
+    ) -> Result<Self, CursorError> {
+        let forced = (config.forced_plane_id != 0).then_some(config.forced_plane_id);
+        let bound_elsewhere =
+            |plane_id: u32| plane_bound_elsewhere(device, plane_id, config.crtc_id);
+        let plane = select_plane(
+            registry,
+            config.crtc_index,
+            forced,
+            config.allow_legacy,
+            &bound_elsewhere,
+        )?;
+
+        if plane.path == PlanePath::Legacy {
+            // Rather than a renderer that fails on its first show. The caller
+            // asked whether legacy was acceptable and can composite a cursor
+            // instead, which is what they would have to do anyway.
+            return Err(CursorError::Unsupported);
+        }
+
+        let mut props = PropertyStore::new();
+        props
+            .cache_properties(device, plane.plane_id, ObjectType::Plane)
+            .map_err(|error| CursorError::Io(error.to_string()))?;
+
+        let rotation_mask = registry
+            .by_id(plane.plane_id)
+            .map_or(0, |caps| caps.rotation_bits);
+
+        // The driver's own preference, bounded by what the plane says it can
+        // carry.
+        let cap = (plane.cursor_max_w != 0).then_some(plane.cursor_max_w);
+        let preferred = preferred_size(config.preferred_size, plane.path, cap);
+
+        let mut buffers: Option<[Buffer; 2]> = None;
+        let size = probe_size(preferred, |candidate| {
+            match allocate_pair(device, candidate) {
+                Ok(pair) => {
+                    // The kernel is asked about the real thing: a request that
+                    // arms this plane with this framebuffer at this size.
+                    let accepted = pair[0].fb_id().is_some_and(|fb_id| {
+                        test_plane(device, &props, &plane, config.crtc_id, fb_id, candidate)
+                    });
+                    if accepted {
+                        buffers = Some(pair);
+                    }
+                    accepted
+                }
+                Err(_) => false,
+            }
+        });
+
+        let buffers = match buffers {
+            Some(pair) => pair,
+            // Nothing was accepted, which is usually not about size at all --
+            // with no mode set every test fails for unrelated reasons. Take
+            // the fallback size and let the first real commit say what is
+            // wrong.
+            None => allocate_pair(device, size)?,
+        };
+
+        Ok(Self {
+            device,
+            crtc_id: config.crtc_id,
+            plane,
+            rotation_mask,
+            props,
+            buffers,
+            which: PingPong::new(),
+            cursor: None,
+            placement: None,
+            drawn_frame: None,
+            position: (0, 0),
+            visible: true,
+            rotation: config.rotation,
+        })
+    }
+
+    /// The plane this is drawing on.
+    #[must_use]
+    pub const fn plane(&self) -> SelectedPlane {
+        self.plane
+    }
+
+    /// The size of the cursor buffer, in pixels.
+    #[must_use]
+    pub const fn size(&self) -> (u32, u32) {
+        (self.buffers[0].width(), self.buffers[0].height())
+    }
+
+    /// Whether the plane can turn the sprite itself.
+    ///
+    /// When it can, the pixels are drawn upright and the hardware does the
+    /// turn. When it cannot -- i915's cursor planes expose the property and
+    /// list only 0 and 180 -- the pixels are turned as they are drawn, and
+    /// the hardware is asked for none. Doing both turns it twice.
+    const fn rotates_in_hardware(&self) -> bool {
+        self.rotation_mask & self.rotation.drm_mask() != 0
+    }
+
+    /// How the sprite is turned as it is drawn.
+    const fn draw_rotation(&self) -> Rotation {
+        if self.rotates_in_hardware() {
+            Rotation::None
+        } else {
+            self.rotation
+        }
+    }
+
+    /// Change which way up the cursor is, redrawing it.
+    ///
+    /// # Errors
+    ///
+    /// [`CursorError::Io`] if the buffer cannot be mapped.
+    pub fn set_rotation(&mut self, rotation: Rotation) -> Result<(), CursorError> {
+        self.rotation = rotation;
+        match self.drawn_frame {
+            Some(index) => self.draw(index),
+            None => Ok(()),
+        }
+    }
+
+    /// Load a cursor and draw its first frame.
+    ///
+    /// # Errors
+    ///
+    /// [`CursorError::Io`] if the buffer cannot be mapped.
+    pub fn set_cursor(&mut self, cursor: Cursor) -> Result<(), CursorError> {
+        self.cursor = Some(cursor);
+        self.drawn_frame = None;
+        self.draw(0)
+    }
+
+    /// Move the pointer.
+    pub const fn move_to(&mut self, x: i32, y: i32) {
+        self.position = (x, y);
+    }
+
+    /// Show or hide the cursor without unloading it.
+    pub const fn set_visible(&mut self, visible: bool) {
+        self.visible = visible;
+    }
+
+    /// Advance an animation, drawing a new frame if one is due.
+    ///
+    /// Returns whether the buffer changed, so a caller can skip a commit that
+    /// would publish the same pixels. A static cursor never changes.
+    ///
+    /// # Errors
+    ///
+    /// [`CursorError::Io`] if the buffer cannot be mapped.
+    pub fn tick(&mut self, elapsed: Duration) -> Result<bool, CursorError> {
+        let Some(cursor) = self.cursor.as_ref() else {
+            return Ok(false);
+        };
+        if !cursor.is_animated() {
+            return Ok(false);
+        }
+        let wanted = cursor.frame_index_at(elapsed);
+        if self.drawn_frame == Some(wanted) {
+            return Ok(false);
+        }
+        self.draw(wanted)?;
+        Ok(true)
+    }
+
+    /// Write the cursor's current state into `request`.
+    ///
+    /// For coalescing with the rest of a frame. The caller commits, and calls
+    /// [`Renderer::published`] afterwards.
+    ///
+    /// # Errors
+    ///
+    /// [`CursorError::MissingProperty`] if the plane lacks a required
+    /// property.
+    pub fn stage_into(&self, request: &mut AtomicRequest) -> Result<usize, CursorError> {
+        let buffer = &self.buffers[self.which.commit_target()];
+        let fb_id = if self.visible {
+            buffer.fb_id().unwrap_or(0)
+        } else {
+            // Disarming the plane is how a cursor hides: there is no property
+            // for "invisible", and a zero-alpha buffer still costs bandwidth.
+            0
+        };
+        let state = PlaneState {
+            plane_id: self.plane.plane_id,
+            crtc_id: if self.visible { self.crtc_id } else { 0 },
+            fb_id,
+            width: buffer.width(),
+            height: buffer.height(),
+            pointer_x: self.position.0,
+            pointer_y: self.position.1,
+            hotspot: self
+                .placement
+                .map(|placed| (placed.hotspot_x, placed.hotspot_y)),
+            // What the hardware is asked for. When it cannot do the turn,
+            // `draw` already did it and this must ask for none.
+            rotation: if self.rotates_in_hardware() {
+                self.rotation
+            } else {
+                Rotation::None
+            },
+            rotation_mask: self.rotation_mask,
+        };
+        stage(request, &self.props, &state)
+    }
+
+    /// Note that a commit carrying [`Renderer::stage_into`]'s writes landed.
+    ///
+    /// See [`PingPong::published`] for what happens when it did not.
+    pub const fn published(&mut self) {
+        self.which.published();
+    }
+
+    /// Stage and commit on their own.
+    ///
+    /// For callers with nothing to coalesce with. A compositor should prefer
+    /// [`Renderer::stage_into`].
+    ///
+    /// # Errors
+    ///
+    /// [`CursorError::MissingProperty`] from staging, or [`CursorError::Io`]
+    /// if the kernel refuses the commit.
+    pub fn commit(&mut self) -> Result<(), CursorError> {
+        let mut request = AtomicRequest::new();
+        self.stage_into(&mut request)?;
+        request
+            .commit(self.device, AtomicCommitFlags::empty())
+            .map_err(|error| CursorError::Io(error.to_string()))?;
+        self.published();
+        Ok(())
+    }
+
+    /// Draw frame `index` into the buffer that is not on screen.
+    fn draw(&mut self, index: usize) -> Result<(), CursorError> {
+        let Some(cursor) = self.cursor.as_ref() else {
+            return Ok(());
+        };
+        let frame = cursor
+            .frames()
+            .get(index)
+            .unwrap_or_else(|| cursor.first())
+            .clone();
+
+        // Read what depends on `self` before the buffer is borrowed mutably.
+        let rotation = self.draw_rotation();
+        let target = self.which.draw_target();
+        let buffer = &mut self.buffers[target];
+        let (width, height) = (buffer.width(), buffer.height());
+        let stride_px = (buffer.stride() / 4) as usize;
+
+        let mut scratch = vec![0u32; height as usize * stride_px];
+        let placement = sprite::compose(&frame, rotation, &mut scratch, width, height, stride_px);
+
+        {
+            let mut mapping = buffer.map(MapAccess::Write);
+            for y in 0..height {
+                let row = mapping
+                    .row_mut(y)
+                    .ok_or_else(|| CursorError::Io("cursor buffer row out of range".to_owned()))?;
+                let from = y as usize * stride_px;
+                for (x, pixel) in scratch[from..from + width as usize].iter().enumerate() {
+                    let at = x * 4;
+                    row[at..at + 4].copy_from_slice(&pixel.to_ne_bytes());
+                }
+            }
+        }
+
+        self.placement = Some(placement);
+        self.drawn_frame = Some(index);
+        self.which.mark_drawn();
+        Ok(())
+    }
+}
+
+/// Allocate a pair of cursor buffers with framebuffers registered.
+fn allocate_pair(device: &Device, size: u32) -> Result<[Buffer; 2], CursorError> {
+    let config = Config {
+        width: size,
+        height: size,
+        fourcc: drmkit_fmt::fourcc::ARGB8888,
+        bpp: 32,
+        add_fb: true,
+    };
+    let first = Buffer::create(device, &config).map_err(|e| CursorError::Io(e.to_string()))?;
+    let second = Buffer::create(device, &config).map_err(|e| CursorError::Io(e.to_string()))?;
+    Ok([first, second])
+}
+
+/// Ask the kernel whether this plane will take a buffer of this size.
+fn test_plane(
+    device: &Device,
+    props: &PropertyStore,
+    plane: &SelectedPlane,
+    crtc_id: u32,
+    fb_id: u32,
+    size: u32,
+) -> bool {
+    let mut request = AtomicRequest::new();
+    let state = PlaneState {
+        plane_id: plane.plane_id,
+        crtc_id,
+        fb_id,
+        width: size,
+        height: size,
+        pointer_x: 0,
+        pointer_y: 0,
+        // Nothing has been drawn, so there is no hotspot to state yet.
+        hotspot: None,
+        rotation: Rotation::None,
+        rotation_mask: 0,
+    };
+    if stage(&mut request, props, &state).is_err() {
+        return false;
+    }
+    request.test(device, AtomicCommitFlags::empty()).is_ok()
+}
+
+/// Whether a plane is currently feeding some CRTC other than `crtc_id`.
+fn plane_bound_elsewhere(device: &Device, plane_id: u32, crtc_id: u32) -> bool {
+    use drm::control::Device as _;
+
+    let Some(handle) = core::num::NonZeroU32::new(plane_id) else {
+        return false;
+    };
+    device
+        .get_plane(drm::control::plane::Handle::from(handle))
+        .ok()
+        .and_then(|info| info.crtc())
+        .is_some_and(|bound| u32::from(bound) != crtc_id)
+}

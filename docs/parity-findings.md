@@ -34,6 +34,8 @@ Three scenarios in the corpus, all **byte-identical** on both sides:
 
 | P-19 | — | A connector reporting no display attached cannot be produced on vkms: every connector it exposes, its writeback one included, reports `Connected`. So the "a disconnected connector is still listed, with no modes" case cannot fail there — verified by injecting a listing that skips disconnected connectors, which the vkms lane passes and the amdgpu run fails. | Open — needs a card with a connector that reports nothing attached. amdgpu's writeback connector does, once `DRM_CLIENT_CAP_WRITEBACK_CONNECTORS` is set, and the case is grounded in `/sys/class/drm` rather than in the query's own answer so it cannot pass by agreeing with itself. |
 
+| P-20 | — | The vkms lane has been loading the module with its defaults, and on the kernels these runners ship that means overlay and cursor planes are off. Twelve device rigs reported `1 candidate plane(s)`: plane migration, z-order across planes and the composition fallback were all running against a CRTC with nothing to migrate to, and passing. | **Fixed.** The lane asks for `enable_cursor=1 enable_overlay=1 enable_writeback=1`, falling back to a plain load so a kernel that drops a parameter still boots. `DRMKIT_MIN_PLANES` is what stops it going quiet again: the lane sets it to 2, and a device with fewer fails rather than skips. Locally vkms already defaults every parameter on (kernel 7.1.9), which is why this was invisible from here. |
+
 ## Closed
 
 | # | Divergence | Resolution |

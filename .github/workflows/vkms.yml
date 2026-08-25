@@ -84,7 +84,22 @@ jobs:
             # tolerated local condition into a lane failure, so a card-dependent
             # test cannot pass here by quietly doing nothing.
             echo 'export DRMKIT_REQUIRE_MASTER=1'
-            echo 'modprobe vkms || { echo "FATAL: cannot load vkms"; exit 1; }'
+            # vkms defaults its overlay and cursor planes *off* on the kernels
+            # these runners ship, which is how twelve device rigs here spent
+            # months reporting "1 candidate plane(s)": plane migration,
+            # z-order across planes and the composition fallback were all
+            # running against a CRTC with nothing to migrate to. Asking for
+            # them explicitly is the difference between a lane that exercises
+            # the allocator and one that watches it decline to.
+            #
+            # Falls back to a plain load rather than failing outright, so a
+            # kernel that has dropped a parameter still boots the lane -- and
+            # DRMKIT_MIN_PLANES below is what makes the coverage loss loud
+            # instead of silent.
+            echo 'modprobe vkms enable_cursor=1 enable_overlay=1 enable_writeback=1 || modprobe vkms || { echo "FATAL: cannot load vkms"; exit 1; }'
+            # Two is the smallest count that makes "put this layer somewhere
+            # else" a question with an answer.
+            echo 'export DRMKIT_MIN_PLANES=2'
             echo 'udevadm settle || true'
             echo 'test -e /dev/dri/card0 || { echo "FATAL: vkms loaded but no card node"; exit 1; }'
             echo 'rc=0'

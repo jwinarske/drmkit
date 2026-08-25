@@ -49,6 +49,18 @@ fn every_plane_the_kernel_lists_is_read() {
     assert_eq!(registry.all().len(), expected);
     assert!(expected > 0, "a device with no planes cannot display");
 
+    // A lane that means to exercise the allocator says how many planes it
+    // needs to do that. Without this the vkms lane silently dropped to one
+    // plane per CRTC when the module's overlay default changed, and a dozen
+    // rigs went on passing while testing nothing about placement.
+    if let Ok(minimum) = std::env::var("DRMKIT_MIN_PLANES") {
+        let minimum: usize = minimum.parse().expect("DRMKIT_MIN_PLANES is a number");
+        assert!(
+            expected >= minimum,
+            "this device has {expected} plane(s) and DRMKIT_MIN_PLANES asks for {minimum}"
+        );
+    }
+
     // Universal planes is enabled above, so a primary must be among them --
     // its absence is the symptom of a caller that forgot the capability, and
     // reads as a device that cannot put anything on screen.

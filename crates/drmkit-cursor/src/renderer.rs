@@ -467,6 +467,28 @@ impl<'a> Renderer<'a> {
         Ok(())
     }
 
+    /// Give up the device for a session pause.
+    ///
+    /// See [`Paused`] for what is released and what cannot be.
+    #[must_use]
+    pub fn pause(mut self) -> Paused {
+        let size = self.buffers[0].width();
+        for buffer in &mut self.buffers {
+            buffer.forget();
+        }
+        Paused {
+            crtc_id: self.crtc_id,
+            plane: self.plane,
+            rotation_mask: self.rotation_mask,
+            rotation: self.rotation,
+            cursor: self.cursor,
+            drawn_frame: self.drawn_frame,
+            position: self.position,
+            visible: self.visible,
+            size,
+        }
+    }
+
     /// Draw frame `index` into the buffer that is not on screen.
     fn draw(&mut self, index: usize) -> Result<(), CursorError> {
         let Some(cursor) = self.cursor.as_ref() else {
@@ -597,4 +619,90 @@ fn plane_bound_elsewhere(device: &Device, plane_id: u32, crtc_id: u32) -> bool {
         .ok()
         .and_then(|info| info.crtc())
         .is_some_and(|bound| u32::from(bound) != crtc_id)
+}
+
+/// A cursor renderer whose device has gone away.
+///
+/// A session pause revokes the descriptor: the kernel state behind it is gone,
+/// so the buffers cannot be destroyed and the framebuffers cannot be removed
+/// -- those ioctls would go to a dead descriptor, or worse to whatever the
+/// number has since been reused for.
+///
+/// The mappings are a different matter and are released here. Closing a
+/// descriptor does not unmap anything -- a VMA holds its own reference to the
+/// file -- so a compositor that skipped this would leak one mapping per VT
+/// switch, quietly, for as long as it ran.
+///
+/// This exists as a type rather than a flag so that a paused renderer cannot
+/// be committed. There is nothing to commit to.
+#[derive(Debug)]
+pub struct Paused {
+    crtc_id: u32,
+    plane: SelectedPlane,
+    rotation_mask: u64,
+    rotation: Rotation,
+    cursor: Option<Cursor>,
+    drawn_frame: Option<usize>,
+    position: (i32, i32),
+    visible: bool,
+    size: u32,
+}
+
+impl Paused {
+    /// Rebuild on a new descriptor.
+    ///
+    /// The same plane, the same size, and the cursor redrawn at whatever frame
+    /// it had reached -- so the first commit after a resume carries the right
+    /// pixels rather than an empty buffer or a stale one.
+    ///
+    /// The size is not re-probed. The hardware has not changed, and a resume
+    /// is when a compositor is trying to get something on screen quickly
+    /// rather than spend test commits rediscovering what it already knew.
+    ///
+    /// # Errors
+    ///
+    /// [`CursorError::Io`] if the buffers cannot be reallocated or the plane's
+    /// properties cannot be read on the new descriptor.
+    pub fn resume(self, device: &Device) -> Result<Renderer<'_>, CursorError> {
+        let mut props = PropertyStore::new();
+        if self.plane.path != PlanePath::Legacy {
+            props
+                .cache_properties(device, self.plane.plane_id, ObjectType::Plane)
+                .map_err(|error| CursorError::Io(error.to_string()))?;
+        }
+
+        let mut renderer = Renderer {
+            device,
+            crtc_id: self.crtc_id,
+            plane: self.plane,
+            rotation_mask: self.rotation_mask,
+            props,
+            buffers: allocate_pair(device, self.size)?,
+            which: if self.plane.path == PlanePath::Legacy {
+                PingPong::single()
+            } else {
+                PingPong::new()
+            },
+            cursor: self.cursor,
+            placement: None,
+            drawn_frame: None,
+            position: self.position,
+            visible: self.visible,
+            rotation: self.rotation,
+            // The new descriptor knows nothing of the old plane state, so the
+            // next commit re-arms everything.
+            installed: false,
+        };
+
+        if renderer.cursor.is_some() {
+            renderer.draw(self.drawn_frame.unwrap_or(0))?;
+        }
+        Ok(renderer)
+    }
+
+    /// Whether a cursor is still loaded, and will be redrawn on resume.
+    #[must_use]
+    pub const fn has_cursor(&self) -> bool {
+        self.cursor.is_some()
+    }
 }

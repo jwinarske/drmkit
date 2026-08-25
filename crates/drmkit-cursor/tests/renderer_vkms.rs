@@ -470,3 +470,131 @@ fn a_legacy_cursor_installs_once_and_then_moves_vkms() {
     renderer.set_visible(false);
     renderer.commit().expect("hide");
 }
+
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn a_paused_renderer_comes_back_with_its_cursor_vkms() {
+    // A VT switch revokes the descriptor. What survives is the state that
+    // describes the cursor, not the kernel objects behind it, and the first
+    // commit after coming back has to carry the right pixels rather than an
+    // empty buffer.
+    let _guard = card_guard();
+    let Some((device, registry, crtc_id, crtc_index)) = fixture() else {
+        return;
+    };
+    let Ok(mut renderer) = Renderer::create(&device, &registry, &config(crtc_id, crtc_index))
+    else {
+        println!("note: skipped -- no usable cursor path here");
+        return;
+    };
+
+    renderer.set_cursor(square()).expect("set cursor");
+    renderer.move_to(120, 240);
+    let plane_before = renderer.plane().plane_id;
+    let size_before = renderer.size();
+
+    let paused = renderer.pause();
+    assert!(paused.has_cursor(), "the cursor outlives the descriptor");
+
+    // Stand in for the new descriptor libseat would hand back.
+    let resumed_device = {
+        let path =
+            std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
+        let device = Device::open(&path).expect("reopen");
+        device.enable_universal_planes().expect("universal planes");
+        device.enable_atomic().expect("atomic");
+        device
+    };
+    let mut renderer = paused.resume(&resumed_device).expect("resume");
+
+    assert_eq!(renderer.plane().plane_id, plane_before, "same plane");
+    assert_eq!(renderer.size(), size_before, "same size, not re-probed");
+
+    // The position survived, and the cursor was redrawn: staging produces the
+    // same placement it did before the pause.
+    let mut request = AtomicRequest::new();
+    let written = renderer.stage_into(&mut request).expect("stage");
+    assert!(written >= 10);
+
+    let plane_id = renderer.plane().plane_id;
+    let mut store = drmkit_core::PropertyStore::new();
+    store
+        .cache_properties(&resumed_device, plane_id, drmkit_core::ObjectType::Plane)
+        .expect("props");
+    let fb = store.property_id(plane_id, "FB_ID").expect("FB_ID");
+    let value = request
+        .writes()
+        .iter()
+        .find(|w| w.object_id == plane_id && w.property_id == fb)
+        .map(|w| w.value)
+        .expect("FB_ID written");
+    assert_ne!(
+        value, 0,
+        "the resumed renderer names a framebuffer on the new descriptor"
+    );
+
+    let _ = renderer.tick(std::time::Duration::ZERO);
+}
+
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn pausing_without_a_cursor_is_fine_vkms() {
+    // A compositor can be paused before it ever set one.
+    let _guard = card_guard();
+    let Some((device, registry, crtc_id, crtc_index)) = fixture() else {
+        return;
+    };
+    let Ok(renderer) = Renderer::create(&device, &registry, &config(crtc_id, crtc_index)) else {
+        println!("note: skipped -- no usable cursor path here");
+        return;
+    };
+
+    let paused = renderer.pause();
+    assert!(!paused.has_cursor());
+    let resumed = paused.resume(&device).expect("resume");
+    assert_ne!(resumed.plane().plane_id, 0);
+}
+
+/// How many mappings this process holds of the DRM node.
+///
+/// Closing a descriptor unmaps nothing — a VMA keeps its own reference to the
+/// file — so this is what grows if a pause forgets to release its mappings.
+fn drm_mappings() -> usize {
+    let maps = std::fs::read_to_string("/proc/self/maps").unwrap_or_default();
+    maps.lines()
+        .filter(|line| line.contains("/dev/dri/"))
+        .count()
+}
+
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn repeated_pauses_do_not_leak_mappings_vkms() {
+    // The reason `pause` releases its mappings rather than only dropping the
+    // handles. A compositor VT-switches for as long as it runs, and a mapping
+    // leaked per switch is invisible until the address space runs out.
+    let _guard = card_guard();
+    let Some((device, registry, crtc_id, crtc_index)) = fixture() else {
+        return;
+    };
+    let Ok(mut renderer) = Renderer::create(&device, &registry, &config(crtc_id, crtc_index))
+    else {
+        println!("note: skipped -- no usable cursor path here");
+        return;
+    };
+    renderer.set_cursor(square()).expect("set cursor");
+
+    // One cycle first, so any one-off allocation is already accounted for.
+    renderer = renderer.pause().resume(&device).expect("resume");
+    let baseline = drm_mappings();
+
+    for _ in 0..16 {
+        renderer = renderer.pause().resume(&device).expect("resume");
+    }
+    let after = drm_mappings();
+
+    println!("note: {baseline} DRM mappings before, {after} after 16 cycles");
+    assert!(
+        after <= baseline,
+        "16 pause/resume cycles grew DRM mappings from {baseline} to {after}"
+    );
+}

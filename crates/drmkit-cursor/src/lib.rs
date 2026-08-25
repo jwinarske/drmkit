@@ -31,7 +31,7 @@ mod tests;
 pub use cursor::{Cursor, Frame};
 pub use pingpong::PingPong;
 pub use plane::{PlanePath, SelectedPlane, select_plane};
-pub use renderer::{Renderer, RendererConfig};
+pub use renderer::{Paused, Renderer, RendererConfig};
 pub use size::{preferred_size, probe_size};
 pub use sprite::{Placement, Rotation, compose};
 pub use stage::{PlaneState, hardware_rotation, plane_origin, stage};

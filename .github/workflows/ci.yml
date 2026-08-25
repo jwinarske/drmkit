@@ -189,6 +189,12 @@ jobs:
           sudo ldconfig
           echo "PKG_CONFIG_PATH=/usr/local/lib/x86_64-linux-gnu/pkgconfig:/usr/local/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=/usr/local/lib/x86_64-linux-gnu:/usr/local/lib" >> "$GITHUB_ENV"
+      # cargo-fuzz creates the managed corpus directory itself only when it
+      # is not told which directories to use. The targets below name theirs
+      # explicitly -- so that libFuzzer writes there rather than into the
+      # checked-in seeds -- which means creating them here.
+      - run: mkdir -p corpus/edid_blob corpus/cursor_file
+        working-directory: fuzz
       # Short runs on every PR; the corpus is what makes them cumulative.
       - run: cargo +nightly fuzz run in_formats_blob -- -max_total_time=60
         working-directory: fuzz

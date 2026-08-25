@@ -15,6 +15,7 @@ members = [
     "crates/drmkit-capture",
     "crates/drmkit-cursor",
     "crates/drmkit-gbm",
+    "crates/drmkit-input",
     "crates/drmkit-log",
     "crates/drmkit-modeset",
     "crates/drmkit-planes",
@@ -47,6 +48,7 @@ drmkit-capture = { version = "0.0.0", path = "crates/drmkit-capture" }
 drmkit-cursor = { version = "0.0.0", path = "crates/drmkit-cursor" }
 drmkit-display = { version = "0.0.0", path = "crates/drmkit-display" }
 drmkit-fmt = { version = "0.0.0", path = "crates/drmkit-fmt" }
+drmkit-input = { version = "0.0.0", path = "crates/drmkit-input" }
 drmkit-log = { version = "0.0.0", path = "crates/drmkit-log" }
 drmkit-modeset = { version = "0.0.0", path = "crates/drmkit-modeset" }
 drmkit-planes = { version = "0.0.0", path = "crates/drmkit-planes" }
@@ -59,6 +61,9 @@ drmkit-time = { version = "0.0.0", path = "crates/drmkit-time" }
 drm = { version = "0.15" }
 png = { version = "0.18" }
 libseat = { version = "0.2" }
+# default-features = false drops the wayland keymap-fd helper (and memmap2 with
+# it); drmkit compiles keymaps from names, a file, or a buffer it already has.
+xkbcommon = { version = "0.9", default-features = false }
 gbm = { version = "0.18", default-features = false, features = ["drm-support"] }
 # v0_3 gates the accessors this port needs -- colour primaries, HDR static
 # metadata, signal colorimetry -- against the system library's version. It

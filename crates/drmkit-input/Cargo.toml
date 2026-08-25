@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: (c) 2026 Joel Winarske
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "drmkit-input"
+description = "Keyboard, pointer and touch input: libinput devices and xkb key resolution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+drmkit-log = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
+
+# Keymap compilation and key resolution. Optional for the same reason the
+# seat backend is: it links a C library that a cross target's sysroot may not
+# carry, and the parts of this crate that are pure state machines should stay
+# buildable and testable without it.
+xkbcommon = { workspace = true, optional = true }
+
+[features]
+default = ["xkb"]
+xkb = ["dep:xkbcommon"]
+
+[lints]
+workspace = true

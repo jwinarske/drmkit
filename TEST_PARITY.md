@@ -100,7 +100,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_v4l2_plane_layout.cpp` | _drmkit-scene-v4l2_ (phase 6+) | pending |  |
 | `tests/integration/test_capture_vkms.cpp` | _drmkit-capture_ (phase 4) | pending |  |
 | `tests/integration/test_crtc_color_pipeline_vkms.cpp` | _drmkit-display_ (phase 4) | pending |  |
-| `tests/integration/test_cursor_renderer_legacy.cpp` | _drmkit-cursor_ (phase 4) | pending |  |
+| `tests/integration/test_cursor_renderer_legacy.cpp` | `drmkit-cursor` `tests/renderer_vkms.rs` | ported | The legacy path is forced by offering a registry with no cursor or overlay plane, so it is exercised on drivers that would otherwise never choose it. Covers the disable-probe, install-then-move, hiding, and the two refusals: rotation, which the call cannot express, and a caller who forbade the path |
 | `tests/integration/test_cursor_source.cpp` | _drmkit-cursor_ (phase 4) | pending |  |
 | `tests/integration/test_dma_buf_source_cache_vkms.cpp` | _drmkit-scene-sources_ (phase 3) | pending |  |
 | `tests/integration/test_dumb_buffer_p010_vkms.cpp` | _drmkit-dumb_ (phase 1) | pending |  |

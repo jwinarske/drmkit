@@ -353,3 +353,120 @@ fn rotation_is_asked_of_the_hardware_only_when_it_can_do_it_vkms() {
         "asking the hardware to turn pixels that are already turned turns them twice"
     );
 }
+
+/// A registry offering only a primary plane, so selection falls to legacy.
+fn primary_only(registry: &PlaneRegistry, crtc_index: u32) -> PlaneRegistry {
+    let planes: Vec<PlaneCapabilities> = registry
+        .all()
+        .iter()
+        .filter(|plane| plane.plane_type == PlaneType::Primary)
+        .cloned()
+        .collect();
+    assert!(
+        planes
+            .iter()
+            .any(|p| p.possible_crtcs & (1 << crtc_index) != 0),
+        "the fixture needs a primary plane on this CRTC"
+    );
+    PlaneRegistry::from_capabilities(planes)
+}
+
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn the_legacy_path_probes_before_promising_anything_vkms() {
+    // drmModeSetCursor has no TEST_ONLY, so create() probes with a cursor
+    // *disable*: harmless where there is cursor hardware, refused where there
+    // is none. i.MX LCDIF and tilcdc have no cursor at all, and those are
+    // exactly the controllers that fall through to this path — finding out at
+    // create() lets a caller composite a cursor instead of getting a renderer
+    // that dies on its first show.
+    let _guard = card_guard();
+    let Some((device, registry, crtc_id, crtc_index)) = fixture() else {
+        return;
+    };
+    let legacy_only = primary_only(&registry, crtc_index);
+
+    match Renderer::create(&device, &legacy_only, &config(crtc_id, crtc_index)) {
+        Ok(renderer) => {
+            assert_eq!(renderer.plane().path, PlanePath::Legacy);
+            assert_eq!(renderer.plane().plane_id, 0, "legacy addresses the CRTC");
+            let (w, h) = renderer.size();
+            assert_eq!((w, h), (64, 64), "legacy is 64 on every driver");
+            println!("note: this driver has a legacy cursor");
+        }
+        Err(error) => {
+            // Also a correct outcome, and the one the probe exists for.
+            println!("note: this driver has no legacy cursor ({error})");
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn legacy_refuses_rotation_rather_than_pretending_vkms() {
+    // drmModeSetCursor has nowhere to put a rotation. Turning the pixels in
+    // software would still leave the hotspot wrong for a caller who believes
+    // the hardware did it, so the ask is refused.
+    let _guard = card_guard();
+    let Some((device, registry, crtc_id, crtc_index)) = fixture() else {
+        return;
+    };
+    let legacy_only = primary_only(&registry, crtc_index);
+    let mut rotated = config(crtc_id, crtc_index);
+    rotated.rotation = Rotation::Quarter;
+
+    assert!(
+        Renderer::create(&device, &legacy_only, &rotated).is_err(),
+        "a rotated cursor on the legacy path must be refused"
+    );
+}
+
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn legacy_refuses_when_the_caller_forbids_it_vkms() {
+    // A compositor that must commit the cursor with the rest of its frame
+    // cannot use a path that has no atomic commit, and would rather be told.
+    let _guard = card_guard();
+    let Some((device, registry, crtc_id, crtc_index)) = fixture() else {
+        return;
+    };
+    let legacy_only = primary_only(&registry, crtc_index);
+    let mut strict = config(crtc_id, crtc_index);
+    strict.allow_legacy = false;
+
+    assert!(matches!(
+        Renderer::create(&device, &legacy_only, &strict),
+        Err(drmkit_cursor::CursorError::NoPlane)
+    ));
+}
+
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn a_legacy_cursor_installs_once_and_then_moves_vkms() {
+    // The install hands the CRTC a GEM handle; every move after that is a
+    // cheap drmModeMoveCursor rather than a re-upload.
+    let _guard = card_guard();
+    let Some((device, registry, crtc_id, crtc_index)) = fixture() else {
+        return;
+    };
+    let legacy_only = primary_only(&registry, crtc_index);
+    let Ok(mut renderer) = Renderer::create(&device, &legacy_only, &config(crtc_id, crtc_index))
+    else {
+        println!("note: skipped -- this driver has no legacy cursor");
+        return;
+    };
+
+    renderer.set_cursor(square()).expect("set cursor");
+    renderer.move_to(10, 10);
+    renderer.commit().expect("install");
+
+    for (x, y) in [(20, 20), (300, 400), (0, 0)] {
+        renderer.move_to(x, y);
+        renderer.commit().expect("move");
+    }
+
+    // Hiding lets go of the CRTC's cursor, so the test leaves nothing on
+    // screen for whoever looks at the panel next.
+    renderer.set_visible(false);
+    renderer.commit().expect("hide");
+}

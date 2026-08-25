@@ -89,6 +89,10 @@ pub struct Renderer<'a> {
     visible: bool,
     /// Which way up the cursor is drawn.
     rotation: Rotation,
+    /// Legacy only: whether the cursor has been handed to the CRTC yet.
+    ///
+    /// The first commit installs it; later ones are cheap moves.
+    installed: bool,
 }
 
 impl<'a> Renderer<'a> {
@@ -122,10 +126,7 @@ impl<'a> Renderer<'a> {
         )?;
 
         if plane.path == PlanePath::Legacy {
-            // Rather than a renderer that fails on its first show. The caller
-            // asked whether legacy was acceptable and can composite a cursor
-            // instead, which is what they would have to do anyway.
-            return Err(CursorError::Unsupported);
+            return Self::create_legacy(device, config, plane);
         }
 
         let mut props = PropertyStore::new();
@@ -183,6 +184,74 @@ impl<'a> Renderer<'a> {
             position: (0, 0),
             visible: true,
             rotation: config.rotation,
+            installed: false,
+        })
+    }
+
+    /// Set up on the legacy `drmModeSetCursor` path.
+    ///
+    /// The call has no `TEST_ONLY`, so the probe is a cursor *disable*: a
+    /// no-op on any controller that has cursor hardware, and a refusal on one
+    /// that does not. i.MX's LCDIF and tilcdc have no cursor at all, and are
+    /// exactly the parts where plane selection fell through to here -- finding
+    /// out now lets the caller composite a cursor instead of getting a
+    /// renderer that dies on its first show.
+    ///
+    /// A permission failure is reported separately, because "not DRM master"
+    /// and "no cursor hardware" want different responses and look identical
+    /// from the errno alone.
+    #[allow(
+        deprecated,
+        reason = "drmModeSetCursor is deprecated in favour of a cursor plane, \
+                  which is what every other path here uses. This is the \
+                  fallback for controllers that have no such plane."
+    )]
+    fn create_legacy(
+        device: &'a Device,
+        config: &RendererConfig,
+        plane: SelectedPlane,
+    ) -> Result<Self, CursorError> {
+        use drm::control::Device as _;
+
+        if config.rotation != Rotation::None {
+            // drmModeSetCursor has nowhere to put a rotation, and pre-rotating
+            // in software would still leave the hotspot wrong for a caller who
+            // thinks the hardware did it.
+            return Err(CursorError::Unsupported);
+        }
+
+        let crtc = crtc_handle(config.crtc_id).ok_or(CursorError::Unsupported)?;
+        if let Err(error) = device.set_cursor::<LegacyCursor>(crtc, None) {
+            // EACCES and EPERM mean "not DRM master", which is a different
+            // thing to tell a caller than "this controller has no cursor".
+            return Err(match error.kind() {
+                std::io::ErrorKind::PermissionDenied => {
+                    CursorError::Io("not DRM master".to_owned())
+                }
+                _ => CursorError::Unsupported,
+            });
+        }
+
+        // One buffer: the call uploads on install and would need reinstalling
+        // for a content change anyway.
+        let size = preferred_size(config.preferred_size, PlanePath::Legacy, None);
+        let buffers = allocate_pair(device, size)?;
+
+        Ok(Self {
+            device,
+            crtc_id: config.crtc_id,
+            plane,
+            rotation_mask: 0,
+            props: PropertyStore::new(),
+            buffers,
+            which: PingPong::single(),
+            cursor: None,
+            placement: None,
+            drawn_frame: None,
+            position: (0, 0),
+            visible: true,
+            rotation: Rotation::None,
+            installed: false,
         })
     }
 
@@ -332,12 +401,69 @@ impl<'a> Renderer<'a> {
     /// [`CursorError::MissingProperty`] from staging, or [`CursorError::Io`]
     /// if the kernel refuses the commit.
     pub fn commit(&mut self) -> Result<(), CursorError> {
+        if self.plane.path == PlanePath::Legacy {
+            return self.commit_legacy();
+        }
         let mut request = AtomicRequest::new();
         self.stage_into(&mut request)?;
+        // Enabling a plane is a modeset; moving one already enabled is not.
+        // Blocking either way: a non-blocking cursor commit contends with
+        // vblank pacing and returns EBUSY as soon as the mouse outpaces the
+        // refresh rate.
+        let flags = if self.installed {
+            AtomicCommitFlags::empty()
+        } else {
+            AtomicCommitFlags::ALLOW_MODESET
+        };
         request
-            .commit(self.device, AtomicCommitFlags::empty())
+            .commit(self.device, flags)
             .map_err(|error| CursorError::Io(error.to_string()))?;
+        self.installed = true;
         self.published();
+        Ok(())
+    }
+
+    /// Install or move the cursor through `drmModeSetCursor`.
+    #[allow(
+        deprecated,
+        reason = "see create_legacy: this path exists for hardware with no \
+                  cursor plane to use instead"
+    )]
+    fn commit_legacy(&mut self) -> Result<(), CursorError> {
+        use drm::control::Device as _;
+
+        let crtc = crtc_handle(self.crtc_id).ok_or(CursorError::Unsupported)?;
+        let hotspot = self
+            .placement
+            .map_or((0, 0), |placed| (placed.hotspot_x, placed.hotspot_y));
+
+        if !self.visible {
+            self.device
+                .set_cursor::<LegacyCursor>(crtc, None)
+                .map_err(|error| CursorError::Io(error.to_string()))?;
+            self.installed = false;
+            return Ok(());
+        }
+
+        if !self.installed {
+            let buffer = LegacyCursor {
+                handle: self.buffers[0]
+                    .gem_handle()
+                    .ok_or_else(|| CursorError::Io("cursor buffer has no handle".to_owned()))?,
+                width: self.buffers[0].width(),
+                height: self.buffers[0].height(),
+                pitch: self.buffers[0].stride(),
+            };
+            self.device
+                .set_cursor(crtc, Some(&buffer))
+                .map_err(|error| CursorError::Io(error.to_string()))?;
+            self.installed = true;
+        }
+
+        let (x, y) = crate::stage::plane_origin(self.position, hotspot);
+        self.device
+            .move_cursor(crtc, (x, y))
+            .map_err(|error| CursorError::Io(error.to_string()))?;
         Ok(())
     }
 
@@ -381,6 +507,39 @@ impl<'a> Renderer<'a> {
         self.which.mark_drawn();
         Ok(())
     }
+}
+
+/// A dumb buffer, described the way `drmModeSetCursor` wants it.
+struct LegacyCursor {
+    handle: u32,
+    width: u32,
+    height: u32,
+    pitch: u32,
+}
+
+impl drm::buffer::Buffer for LegacyCursor {
+    fn size(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+    fn format(&self) -> drm::buffer::DrmFourcc {
+        drm::buffer::DrmFourcc::Argb8888
+    }
+    fn pitch(&self) -> u32 {
+        self.pitch
+    }
+    fn handle(&self) -> drm::buffer::Handle {
+        // The kernel is about to be handed this, so a zero would be a bug
+        // upstream of here rather than something to paper over.
+        drm::buffer::Handle::from(
+            core::num::NonZeroU32::new(self.handle)
+                .unwrap_or(core::num::NonZeroU32::new(1).expect("one is not zero")),
+        )
+    }
+}
+
+/// A CRTC id as a handle.
+fn crtc_handle(crtc_id: u32) -> Option<drm::control::crtc::Handle> {
+    core::num::NonZeroU32::new(crtc_id).map(drm::control::crtc::Handle::from)
 }
 
 /// Allocate a pair of cursor buffers with framebuffers registered.

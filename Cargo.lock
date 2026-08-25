@@ -165,6 +165,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "drmkit-cursor"
+version = "0.0.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "drmkit-display"
 version = "0.0.0"
 dependencies = [

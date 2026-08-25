@@ -52,7 +52,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_csd_surface.cpp` | _drmkit-csd_ (phase 6+) | pending |  |
 | `tests/unit/test_csd_theme.cpp` | _drmkit-csd_ (phase 6+) | pending |  |
 | `tests/unit/test_cursor_cursor.cpp` | _drmkit-cursor_ (phase 4) | pending |  |
-| `tests/unit/test_cursor_theme.cpp` | _drmkit-cursor_ (phase 4) | pending |  |
+| `tests/unit/test_cursor_theme.cpp` | `drmkit-cursor` `theme.rs`, `alias.rs` | ported | All fifteen cases, plus an inherits cycle, a diamond, a missing parent, a key that merely starts with `Inherits`, search-path precedence, and that the alias table's order — not the caller's — decides which file a theme resolves to |
 | `tests/unit/test_device.cpp` | `drmkit-core` `src/tests.rs` | ported |  |
 | `tests/unit/test_display.cpp` | `drmkit-display` `edid.rs`, `profile.rs` | partial | EDID parsing and `DriverProfile` ported. EDID is diffed against the reference, with the fixture's checksum corrected (drm-cxx#241) and `hdr`/`wide_gamut` gating deliberately divergent. Mode lists, the HDR cache and connector/CRTC capabilities are not ported |
 | `tests/unit/test_dma_buf_source_cache.cpp` | `drmkit-scene-sources` `cache.rs` | ported | Keyed reuse, re-import on geometry change, eviction, and no entry left behind by a failed import |

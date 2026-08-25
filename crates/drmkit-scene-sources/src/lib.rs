@@ -9,6 +9,7 @@
 //! them without knowing which it has.
 
 mod cache;
+mod cursor;
 mod dumb;
 mod external;
 mod pool;
@@ -16,6 +17,7 @@ mod presenter;
 mod ring;
 
 pub use cache::DmaBufSourceCache;
+pub use cursor::CursorSource;
 pub use dumb::DumbBufferSource;
 pub use external::{ExternalDmaBufSource, ExternalError, ExternalPlane};
 pub use pool::ExternalDmaBufPool;

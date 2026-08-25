@@ -70,7 +70,7 @@ by quietly doing nothing.
 | `drmkit-scene-sources` tier 1: dumb, external, ring, pool, cache | done — `GbmBufferSource` waits on `drmkit-gbm` |
 | T7 differential harness runs its first scenario | done — six scenarios, five diff-clean |
 
-**Phase 4 — started.**
+**Phase 4 — met.**
 
 | Item | State |
 |---|---|
@@ -89,7 +89,7 @@ by quietly doing nothing.
 | `drmkit-display`: connector and CRTC capabilities | done — measured on vkms and amdgpu |
 | `drmkit-display`: mode lists, hotplug watch, colour pipeline, scanout discovery | done |
 | `drmkit-planes`: reading planes off a device | done — behind a feature, so the crate stays device-free without it |
-| Phase 4 exit gate: full minimal-cut unit suite | ahead |
+| `drmkit-scene-sources`: cursor as an ordinary layer | done — for hardware with no cursor plane |
 
 ### The differential harness
 
@@ -108,7 +108,7 @@ diverge. See [`docs/parity-findings.md`](docs/parity-findings.md).
 **Upstream first.** drm-cxx is the origin of authority: anything this port
 surfaces is [filed there](docs/upstream-findings.md) rather than fixed only
 here, and the default for a bug is to reproduce the C++ behaviour so the two
-agree byte for byte. Seventeen issues filed so far, plus two against
+agree byte for byte. Twenty-four issues filed so far, plus two against
 third-party libraries.
 
 **Upstream baseline:** `jwinarske/drm-cxx` @ `dc2915b` (v2.0.1, PR #231).

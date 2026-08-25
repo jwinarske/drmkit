@@ -14,6 +14,8 @@ keywords = ["drm", "kms", "compositor", "dma-buf", "scanout"]
 [dependencies]
 drm = { workspace = true }
 drmkit-core = { workspace = true }
+drmkit-cursor = { workspace = true }
+drmkit-fmt = { workspace = true }
 drmkit-dumb = { workspace = true }
 drmkit-scene = { workspace = true }
 drmkit-sync = { workspace = true }
@@ -21,8 +23,6 @@ rustix = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-drmkit-fmt = { workspace = true }
-drmkit-dumb = { workspace = true }
 
 [lints]
 workspace = true

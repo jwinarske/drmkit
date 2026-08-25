@@ -98,10 +98,10 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_v4l2_camera_source.cpp` | _drmkit-scene-v4l2_ (phase 6+) | pending |  |
 | `tests/unit/test_v4l2_decoder_source.cpp` | _drmkit-scene-v4l2_ (phase 6+) | pending |  |
 | `tests/unit/test_v4l2_plane_layout.cpp` | _drmkit-scene-v4l2_ (phase 6+) | pending |  |
-| `tests/integration/test_capture_vkms.cpp` | _drmkit-capture_ (phase 4) | pending |  |
+| `tests/integration/test_capture_vkms.cpp` | `drmkit-capture` `tests/snapshot_vkms.rs` | ported | `RoundTripPrimaryPlane` -- the same four-quadrant pattern through a real modeset and back -- plus three the reference does not have: the snapshot's size, a PNG that decodes back, and what happens without the atomic cap |
 | `tests/integration/test_crtc_color_pipeline_vkms.cpp` | `drmkit-display` `pipeline.rs` + `tests/pipeline_device.rs` | partial | Probe, absent-stage refusal, blob staging and replacement, and what an apply writes -- run on vkms, whose CRTC is gamma-only, and on amdgpu, whose CRTC has all three. `IdentityGammaApplyAndCommit`'s commit half is not ported: it needs DRM master, which these cases deliberately do not take |
 | `tests/integration/test_cursor_renderer_legacy.cpp` | `drmkit-cursor` `tests/renderer_vkms.rs` | ported | The legacy path is forced by offering a registry with no cursor or overlay plane, so it is exercised on drivers that would otherwise never choose it. Covers the disable-probe, install-then-move, hiding, and the two refusals: rotation, which the call cannot express, and a caller who forbade the path |
-| `tests/integration/test_cursor_source.cpp` | _drmkit-cursor_ (phase 4) | pending |  |
+| `tests/integration/test_cursor_source.cpp` | `drmkit-scene-sources` `cursor.rs` | ported | The sprite round trip, hotspot and dimensions, plus four the reference has no equivalent of: the buffer sized to the largest frame, a smaller frame not leaving the previous one's edges around it, damage reported only when the frame changes, and a static cursor never repainting. Fixtures are 16x16 rather than 4x4 because vkms refuses anything below 10x10 and the reference's silently skips there -- [drm-cxx#254](https://github.com/jwinarske/drm-cxx/issues/254) |
 | `tests/integration/test_dma_buf_source_cache_vkms.cpp` | _drmkit-scene-sources_ (phase 3) | pending |  |
 | `tests/integration/test_dumb_buffer_p010_vkms.cpp` | _drmkit-dumb_ (phase 1) | pending |  |
 | `tests/integration/test_dumb_ring_source.cpp` | _drmkit-present_ (phase 6+) | pending |  |

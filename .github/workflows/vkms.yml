@@ -60,7 +60,11 @@ jobs:
           # also carry an `executable`. Without it the lane runs examples with
           # `--include-ignored --nocapture` as their argv and counts whatever
           # they make of that as a test failure.
-          cargo test --workspace --no-run --message-format=json \
+          # `drmkit-display/hotplug` is not a default feature -- it links
+          # libudev, which the cross lanes have no sysroot for -- but its
+          # cases need a real uevent and root, which is exactly what this
+          # lane is. Without it they are built out and never run anywhere.
+          cargo test --workspace --features drmkit-display/hotplug --no-run --message-format=json \
             | jq -r 'select(.reason == "compiler-artifact" and .executable != null
                             and .profile.test == true) | .executable' \
             > test-binaries.txt

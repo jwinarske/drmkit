@@ -7,6 +7,9 @@
 //! they reach it.
 
 mod capabilities;
+
+#[cfg(feature = "hotplug")]
+mod hotplug;
 mod pipeline;
 
 pub mod color;
@@ -31,6 +34,8 @@ pub use hdr::{
     serialize_hdr_metadata,
 };
 pub use hdr_cache::HdrMetadataCache;
+#[cfg(feature = "hotplug")]
+pub use hotplug::{HotplugEvent, HotplugMonitor, Source};
 pub use modes::{ConnectorModes, Probe, query_connector_modes};
 pub use pipeline::{CrtcColorPipeline, PipelineError, Stage};
 pub use profile::{

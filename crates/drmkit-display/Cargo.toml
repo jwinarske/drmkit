@@ -18,6 +18,7 @@ workspace = true
 # tone mapper and colour curves that everything downstream wants.
 default = []
 edid = ["dep:libdisplay-info"]
+hotplug = ["dep:udev"]
 
 [dependencies]
 libdisplay-info = { workspace = true, optional = true }
@@ -28,9 +29,22 @@ drmkit-core = { workspace = true }
 # back the kernel's modes; reading them is the modeset crate's job.
 drmkit-modeset = { workspace = true }
 rustix = { workspace = true, features = ["std"] }
+# The hotplug watch. Optional because libudev-sys runs pkg-config in its build
+# script, so a target with no sysroot for it cannot even type-check this --
+# and the rest of the crate, the tone mapper and colour curves included, is
+# what the cross lanes are there to cover.
+udev = { workspace = true, optional = true }
 
+
+# The hotplug cases need the watch they are testing.
+[[test]]
+name = "hotplug_device"
+required-features = ["hotplug"]
 
 [dev-dependencies]
 # The device tests poll the hotplug socket and ask whether they can write a
 # uevent, neither of which the library itself needs.
 rustix = { workspace = true, features = ["std", "event", "process"] }
+# The hotplug cases need a second, raw monitor for ground truth: "delivered
+# nothing" has to be distinguishable from a socket that was never live.
+udev = { workspace = true }

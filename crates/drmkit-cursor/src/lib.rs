@@ -16,6 +16,7 @@
 
 mod alias;
 mod cursor;
+mod sprite;
 mod theme;
 mod xcursor;
 
@@ -23,6 +24,7 @@ mod xcursor;
 mod tests;
 
 pub use cursor::{Cursor, Frame};
+pub use sprite::{Placement, Rotation, compose};
 pub use theme::{Theme, ThemeResolution, default_search_paths};
 
 /// What can go wrong finding a cursor.

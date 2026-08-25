@@ -1059,3 +1059,357 @@ fn every_fuzz_seed_loads() {
         "every seed is the same size, so size selection is unseeded: {sizes:?}"
     );
 }
+
+// --- composing a sprite into a plane buffer --------------------------------
+
+use crate::Frame;
+use crate::sprite::{Placement, Rotation, compose};
+
+/// A frame whose pixels encode their own coordinates, so a rotation that
+/// transposes or mirrors is visible rather than plausible.
+fn coded_frame(width: u32, height: u32, xhot: u32, yhot: u32) -> Frame {
+    let pixels = (0..width * height)
+        .map(|i| {
+            let (x, y) = (i % width, i / width);
+            0xff00_0000 | (x << 8) | y
+        })
+        .collect();
+    Frame {
+        pixels,
+        width,
+        height,
+        xhot,
+        yhot,
+        delay: Duration::ZERO,
+    }
+}
+
+/// A solid frame of one colour.
+fn solid_frame(width: u32, height: u32, pixel: u32) -> Frame {
+    Frame {
+        pixels: vec![pixel; (width * height) as usize],
+        width,
+        height,
+        xhot: 0,
+        yhot: 0,
+        delay: Duration::ZERO,
+    }
+}
+
+/// Compose into a fresh buffer, returning it alongside the placement.
+fn composed(frame: &Frame, rotation: Rotation, w: u32, h: u32) -> (Vec<u32>, Placement) {
+    let mut buffer = vec![0xdead_beef; (w * h) as usize];
+    let placement = compose(frame, rotation, &mut buffer, w, h, w as usize);
+    (buffer, placement)
+}
+
+fn at(buffer: &[u32], stride: u32, x: u32, y: u32) -> u32 {
+    buffer[(y * stride + x) as usize]
+}
+
+#[test]
+fn an_unrotated_sprite_is_copied_and_centred() {
+    let frame = coded_frame(2, 2, 0, 0);
+    let (buffer, placement) = composed(&frame, Rotation::None, 4, 4);
+
+    assert_eq!((placement.width, placement.height), (2, 2));
+    assert_eq!(
+        (placement.x, placement.y),
+        (1, 1),
+        "centred in a 4x4 buffer"
+    );
+    assert_eq!(at(&buffer, 4, 1, 1), 0xff00_0000, "source (0,0)");
+    assert_eq!(at(&buffer, 4, 2, 1), 0xff00_0100, "source (1,0)");
+    assert_eq!(at(&buffer, 4, 1, 2), 0xff00_0001, "source (0,1)");
+    assert_eq!(at(&buffer, 4, 2, 2), 0xff00_0101, "source (1,1)");
+}
+
+#[test]
+fn the_buffer_is_wiped_before_the_sprite_lands() {
+    // A smaller frame must not leave the previous one showing around its
+    // edges, and a rotation can move the sprite off its own former footprint
+    // entirely. Either ghosts on screen.
+    let frame = solid_frame(2, 2, 0xffff_ffff);
+    let (buffer, _) = composed(&frame, Rotation::None, 4, 4);
+
+    let corners = [(0, 0), (3, 0), (0, 3), (3, 3)];
+    for (x, y) in corners {
+        assert_eq!(
+            at(&buffer, 4, x, y),
+            0,
+            "({x}, {y}) still holds what was there before"
+        );
+    }
+}
+
+#[test]
+fn each_rotation_moves_pixels_where_it_should() {
+    // A 3x2 frame, so a quarter turn is visible in the dimensions as well as
+    // in the pixels -- a square frame would hide a transposition.
+    let frame = coded_frame(3, 2, 0, 0);
+    let code = |x: u32, y: u32| 0xff00_0000 | (x << 8) | y;
+
+    // Buffer exactly the rotated size, so nothing is centred or scaled and
+    // the mapping is the only thing under test.
+    let (upright, p0) = composed(&frame, Rotation::None, 3, 2);
+    assert_eq!((p0.width, p0.height), (3, 2));
+    assert_eq!(at(&upright, 3, 0, 0), code(0, 0));
+    assert_eq!(at(&upright, 3, 2, 1), code(2, 1));
+
+    let (quarter, p90) = composed(&frame, Rotation::Quarter, 2, 3);
+    assert_eq!((p90.width, p90.height), (2, 3), "a quarter turn swaps axes");
+    // Clockwise: the source's bottom-left corner becomes the top-left.
+    assert_eq!(at(&quarter, 2, 0, 0), code(0, 1));
+    assert_eq!(at(&quarter, 2, 1, 0), code(0, 0));
+    assert_eq!(at(&quarter, 2, 0, 2), code(2, 1));
+
+    let (half, p180) = composed(&frame, Rotation::Half, 3, 2);
+    assert_eq!((p180.width, p180.height), (3, 2));
+    assert_eq!(
+        at(&half, 3, 0, 0),
+        code(2, 1),
+        "half turn is a double mirror"
+    );
+    assert_eq!(at(&half, 3, 2, 1), code(0, 0));
+
+    let (three, p270) = composed(&frame, Rotation::ThreeQuarter, 2, 3);
+    assert_eq!((p270.width, p270.height), (2, 3));
+    assert_eq!(at(&three, 2, 0, 0), code(2, 0));
+    assert_eq!(at(&three, 2, 1, 2), code(0, 1));
+}
+
+#[test]
+fn four_quarter_turns_are_the_identity() {
+    // The cheapest check that the four formulas are consistent with each
+    // other rather than four independently plausible guesses.
+    let frame = coded_frame(4, 4, 0, 0);
+    let mut current = frame.clone();
+    for _ in 0..4 {
+        let (buffer, placement) = composed(&current, Rotation::Quarter, 4, 4);
+        current = Frame {
+            pixels: buffer,
+            width: placement.width,
+            height: placement.height,
+            xhot: placement.hotspot_x,
+            yhot: placement.hotspot_y,
+            delay: Duration::ZERO,
+        };
+    }
+    assert_eq!(
+        current.pixels, frame.pixels,
+        "four quarter turns is upright"
+    );
+}
+
+#[test]
+fn the_hotspot_turns_with_the_pixels() {
+    // The hotspot is where the pointer actually points. If it does not follow
+    // the rotation, every click on a rotated display lands somewhere else --
+    // and the sprite looks perfectly correct while it happens.
+    let frame = coded_frame(4, 2, 3, 0); // tip at the top-right corner
+
+    let (_, none) = composed(&frame, Rotation::None, 4, 2);
+    assert_eq!((none.hotspot_x, none.hotspot_y), (3, 0));
+
+    // Turned a quarter clockwise, a top-right tip is at the bottom-right...
+    let (_, quarter) = composed(&frame, Rotation::Quarter, 2, 4);
+    assert_eq!((quarter.hotspot_x, quarter.hotspot_y), (1, 3));
+
+    // ...half turn puts it at the bottom-left...
+    let (_, half) = composed(&frame, Rotation::Half, 4, 2);
+    assert_eq!((half.hotspot_x, half.hotspot_y), (0, 1));
+
+    // ...and three quarters at the top-left.
+    let (_, three) = composed(&frame, Rotation::ThreeQuarter, 2, 4);
+    assert_eq!((three.hotspot_x, three.hotspot_y), (0, 0));
+}
+
+#[test]
+fn the_hotspot_is_offset_by_the_centring() {
+    let frame = coded_frame(2, 2, 1, 1);
+    let (_, placement) = composed(&frame, Rotation::None, 8, 8);
+    assert_eq!((placement.x, placement.y), (3, 3));
+    assert_eq!(
+        (placement.hotspot_x, placement.hotspot_y),
+        (4, 4),
+        "the hotspot is in buffer space, not frame space"
+    );
+}
+
+#[test]
+fn an_oversize_sprite_is_shrunk_to_fit() {
+    // The common case, not a rare one: a theme ships the nearest size it has,
+    // which is often above what was asked for. Adwaita ships 24/30/36/48/72/96,
+    // so a 64-pixel plane gets a 72-pixel sprite.
+    let frame = solid_frame(72, 72, 0xff40_8060);
+    let (buffer, placement) = composed(&frame, Rotation::None, 64, 64);
+
+    assert_eq!(
+        (placement.width, placement.height),
+        (64, 64),
+        "72 -> 64 must land on 64, not 63: truncating leaves a black border"
+    );
+    assert_eq!((placement.x, placement.y), (0, 0));
+    // A solid source downscales to the same solid colour.
+    assert!(
+        buffer.iter().all(|p| *p == 0xff40_8060),
+        "a flat colour must survive the box filter unchanged"
+    );
+}
+
+#[test]
+fn shrinking_keeps_the_aspect_ratio() {
+    // Only one axis overflows, but both shrink by the same ratio -- otherwise
+    // the sprite stretches.
+    let frame = solid_frame(128, 32, 0xffff_ffff);
+    let (_, placement) = composed(&frame, Rotation::None, 64, 64);
+    assert_eq!((placement.width, placement.height), (64, 16));
+    assert_eq!((placement.x, placement.y), (0, 24), "and stays centred");
+}
+
+#[test]
+fn a_shrunk_hotspot_stays_inside_the_sprite() {
+    // Scaling the hotspot truncates where the pixels round, which keeps it
+    // inside rather than one pixel past the edge.
+    let frame = coded_frame(72, 72, 71, 71);
+    let (_, placement) = composed(&frame, Rotation::None, 64, 64);
+    assert!(
+        placement.hotspot_x < placement.x + placement.width
+            && placement.hotspot_y < placement.y + placement.height,
+        "hotspot ({}, {}) is outside a {}x{} sprite at ({}, {})",
+        placement.hotspot_x,
+        placement.hotspot_y,
+        placement.width,
+        placement.height,
+        placement.x,
+        placement.y
+    );
+}
+
+#[test]
+fn rotation_and_shrink_compose() {
+    // A quarter turn swaps the axes, and the swapped dimensions are what the
+    // shrink is computed against. Getting the order wrong gives a sprite that
+    // fits one axis and overflows the other.
+    let frame = solid_frame(128, 32, 0xffff_ffff);
+    let (_, placement) = composed(&frame, Rotation::Quarter, 64, 64);
+    assert_eq!(
+        (placement.width, placement.height),
+        (16, 64),
+        "rotated to 32x128, then shrunk to fit 64x64"
+    );
+}
+
+#[test]
+fn the_box_filter_conserves_energy() {
+    // Plan §9 T1: the downscale is area-weighted, so the average of the output
+    // has to match the average of the input to within rounding. A sampler that
+    // dropped or double-counted source pixels would still look plausible on a
+    // flat colour and fail here.
+    let mut frame = solid_frame(96, 96, 0);
+    for (index, pixel) in frame.pixels.iter_mut().enumerate() {
+        // A gradient, so every source pixel differs from its neighbours.
+        let value = u32::try_from(index % 256).expect("small");
+        *pixel = 0xff00_0000 | (value << 16) | (value << 8) | value;
+    }
+
+    let source_mean: f64 = frame
+        .pixels
+        .iter()
+        .map(|p| f64::from(p & 0xff))
+        .sum::<f64>()
+        / f64::from(frame.width * frame.height);
+
+    for size in [64u32, 48, 32, 24, 17] {
+        let (buffer, placement) = composed(&frame, Rotation::None, size, size);
+        let sprite: Vec<u32> = (0..placement.height)
+            .flat_map(|y| (0..placement.width).map(move |x| (x, y)))
+            .map(|(x, y)| at(&buffer, size, placement.x + x, placement.y + y))
+            .collect();
+        let out_mean: f64 = sprite.iter().map(|p| f64::from(p & 0xff)).sum::<f64>()
+            / f64::from(u32::try_from(sprite.len()).expect("small sprite"));
+        assert!(
+            (out_mean - source_mean).abs() < 2.0,
+            "{size}: mean moved from {source_mean:.2} to {out_mean:.2}"
+        );
+    }
+}
+
+#[test]
+fn the_box_filter_never_leaves_the_sprite() {
+    // Every write has to land inside the placed rectangle. A sampler running
+    // one pixel past its bounds would scribble on the wiped border, which is
+    // invisible against a black cursor and obvious against a light one.
+    let frame = solid_frame(100, 60, 0xffff_ffff);
+    let (buffer, placement) = composed(&frame, Rotation::None, 64, 64);
+
+    for y in 0..64 {
+        for x in 0..64 {
+            let inside = x >= placement.x
+                && x < placement.x + placement.width
+                && y >= placement.y
+                && y < placement.y + placement.height;
+            if !inside {
+                assert_eq!(at(&buffer, 64, x, y), 0, "({x}, {y}) is outside the sprite");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_sprite_the_size_of_the_buffer_is_not_scaled() {
+    // Equal is not larger. Taking the shrink path here would run a whole box
+    // filter to reproduce the input.
+    let frame = coded_frame(64, 64, 0, 0);
+    let (buffer, placement) = composed(&frame, Rotation::None, 64, 64);
+    assert_eq!((placement.width, placement.height), (64, 64));
+    assert_eq!((placement.x, placement.y), (0, 0));
+    assert_eq!(buffer, frame.pixels, "copied, not resampled");
+}
+
+#[test]
+fn a_one_pixel_sprite_survives_an_extreme_shrink() {
+    // The shrink floor: a sprite must never come out zero-sized, because a
+    // zero-width blit is a cursor that vanishes rather than one that is small.
+    let frame = solid_frame(512, 512, 0xffff_ffff);
+    let (_, placement) = composed(&frame, Rotation::None, 1, 1);
+    assert_eq!((placement.width, placement.height), (1, 1));
+}
+
+#[test]
+fn a_stride_wider_than_the_buffer_is_respected() {
+    // Cursor buffers come from dumb allocations, whose stride is aligned and
+    // routinely wider than width * 4. Writing at width instead of stride
+    // shears the sprite.
+    let frame = solid_frame(2, 2, 0xffff_ffff);
+    let (w, h, stride) = (4u32, 4u32, 8usize);
+    let mut buffer = vec![0u32; h as usize * stride];
+    let placement = compose(&frame, Rotation::None, &mut buffer, w, h, stride);
+
+    assert_eq!((placement.x, placement.y), (1, 1));
+    assert_eq!(buffer[stride + 1], 0xffff_ffff);
+    assert_eq!(buffer[2 * stride + 2], 0xffff_ffff);
+    // The padding past the visible width is never written.
+    for y in 0..h as usize {
+        for x in w as usize..stride {
+            assert_eq!(
+                buffer[y * stride + x],
+                0,
+                "padding at ({x}, {y}) was touched"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_drm_rotation_bits_are_the_uapi_ones() {
+    // These are compared against a plane's supported mask, so a wrong bit
+    // silently sends every rotation down the software path -- or worse, writes
+    // a rotation the plane does not support.
+    assert_eq!(Rotation::None.drm_mask(), 1);
+    assert_eq!(Rotation::Quarter.drm_mask(), 2);
+    assert_eq!(Rotation::Half.drm_mask(), 4);
+    assert_eq!(Rotation::ThreeQuarter.drm_mask(), 8);
+    assert!(Rotation::Quarter.swaps_axes() && Rotation::ThreeQuarter.swaps_axes());
+    assert!(!Rotation::None.swaps_axes() && !Rotation::Half.swaps_axes());
+}

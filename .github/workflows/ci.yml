@@ -212,8 +212,16 @@ jobs:
       # libdisplay-info, an uninstrumented C library -- and spends the whole
       # minute on the rejection path. Measured before seeding: 15.5M
       # executions, corpus stuck at one 1-byte input.
+      # LSAN_OPTIONS carries one suppression, for a 4-byte leak inside
+      # libdisplay-info's di_info_parse_edid that a malformed EDID reaches.
+      # It is scoped to this step and to that library; see
+      # fuzz/lsan-suppressions.txt for the stack and the reproducer. Turning
+      # leak detection off wholesale would defeat running under a sanitizer
+      # at all.
       - run: cargo +nightly fuzz run edid_blob corpus/edid_blob seeds/edid_blob -- -max_total_time=60
         working-directory: fuzz
+        env:
+          LSAN_OPTIONS: suppressions=${{ github.workspace }}/fuzz/lsan-suppressions.txt
       # A cursor file is untrusted input from a user theme directory, and every
       # number in it sizes an allocation. Seeded for the same reason as EDID:
       # without a valid file to start from the fuzzer spends the minute failing

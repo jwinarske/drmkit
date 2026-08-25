@@ -1,0 +1,24 @@
+# LeakSanitizer suppressions for the fuzz lane.
+#
+# Narrow on purpose. `-detect_leaks=0` would turn the whole check off, and the
+# point of running the fuzzer under a sanitizer is that it catches things.
+# Each entry names one library and comes with a reproducer.
+
+# libdisplay-info 0.3.0 leaks 4 bytes from a calloc inside di_info_parse_edid
+# on some malformed EDIDs. Reproduce with:
+#
+#   cargo +nightly fuzz run edid_blob reproducers/edid-libdisplay-info-leak.bin
+#
+#   #0 calloc
+#   #1 libdisplay-info.so.3+0x3008
+#   #2 di_info_parse_edid
+#   #3 libdisplay_info::info::Info::parse_edid
+#
+# Not drmkit's allocation and not the binding's: `parse_edid` holds the `Info`
+# and drops it, which calls `di_info_destroy`. This block is simply not
+# reachable from what destroy frees. Valid EDIDs -- both fuzz seeds -- do not
+# leak, so it takes a malformed one, which is exactly what arrives over a
+# display cable.
+#
+# Remove this when libdisplay-info fixes it.
+leak:libdisplay-info

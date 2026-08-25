@@ -40,7 +40,7 @@ and filed with the people who can fix them.
 | where | what | status |
 |---|---|---|
 | libdisplay-info 0.3.0 | `di_info_parse_edid` leaks 4 bytes from a `calloc` in `parse_data_block` when a CTA-861 extension carries an InfoFrame Data Block (extended tag 32) with one descriptor. Not reachable from `di_info_destroy`, so a correct caller still leaks. Found by the `edid_blob` fuzz target | **Filed** as [work item 61](https://gitlab.freedesktop.org/emersion/libdisplay-info/-/work_items/61). The fuzz lane carries one suppression naming that library until it lands; write-up, minimal input and a standalone C reproducer in `fuzz/reproducers/` |
-| `xcursor` 0.3.11 | `take_bytes` does `vec![0; len]` and then reads, so a file's declared dimensions size the allocation before the bytes exist. A 60-byte file reserves 4.3 GB. Aborts under `RLIMIT_AS` and should on 32-bit; survives on 64-bit with overcommit | **Not filed** — awaiting a decision on whether to raise it. drmkit does not use the crate: `drmkit-cursor` parses `.xcursor` itself, bounding every length against the bytes present. See that module's docs for the measured cases |
+| `xcursor` 0.3.11 | `take_bytes` does `vec![0; len]` and then reads, so a file's declared dimensions size the allocation before the bytes exist. A 60-byte file reserves 4.3 GB. Aborts under `RLIMIT_AS` and should on 32-bit; survives on 64-bit with overcommit | **Filed** as [xcursor-rs#30](https://github.com/esposm03/xcursor-rs/issues/30). drmkit does not use the crate: `drmkit-cursor` parses `.xcursor` itself, bounding every length against the bytes present. See that module's docs for the measured cases |
 
 ## Conventions
 

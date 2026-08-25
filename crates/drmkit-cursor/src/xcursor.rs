@@ -8,6 +8,8 @@
 //!
 //! # Why this is not the `xcursor` crate
 //!
+//! Filed as <https://github.com/esposm03/xcursor-rs/issues/30>.
+//!
 //! Because a cursor file is untrusted input -- it comes from a user theme
 //! directory or wherever `XCURSOR_PATH` points -- and every number in it is
 //! attacker-controlled. `xcursor` 0.3.11 sizes its pixel buffer from the

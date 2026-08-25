@@ -9,7 +9,7 @@
 use std::sync::Mutex;
 
 use drm::control::Device as _;
-use drm::control::connector::State;
+use drm::control::connector::{Interface, State};
 use drmkit_core::Device;
 use drmkit_display::{ScanoutError, ScanoutTarget};
 use drmkit_modeset::ModeInfo as _;
@@ -176,5 +176,74 @@ fn the_chosen_crtc_is_one_the_connectors_encoders_allow() {
         allowed.contains(&target.crtc.id),
         "crtc {} is not among {allowed:?}",
         target.crtc.id
+    );
+}
+
+#[test]
+#[ignore = "needs a DRM device"]
+fn a_rank_that_matches_nothing_still_finds_the_display() {
+    // The rank is a preference, not a filter. A caller asking for an internal
+    // panel on a machine that has none should still get a picture -- the
+    // alternative is a board that reports itself headless with a monitor
+    // plugged into it.
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+
+    let Ok(Ok(preferred)) = ScanoutTarget::discover(&device) else {
+        println!("note: skipped -- no display attached");
+        return;
+    };
+
+    // Composite and TV are in none of the rank lists and on none of these
+    // cards, so this exercises the fallback rather than a match.
+    let ranks = [Interface::Composite, Interface::TV];
+    let fallback = ScanoutTarget::discover_ranked(&device, &ranks)
+        .expect("discover")
+        .expect("a display is attached");
+
+    assert_eq!(fallback.connector_id, preferred.connector_id);
+    assert_eq!(fallback.crtc.id, preferred.crtc.id);
+}
+
+#[test]
+#[ignore = "needs a DRM device"]
+fn the_rank_decides_which_display_when_there_is_a_choice() {
+    // Only meaningful with two displays of different kinds attached, which is
+    // this machine and not the lane -- so it says which it was rather than
+    // asserting into a single-output vacuum.
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let resources = device.resource_handles().expect("resources");
+
+    let kinds: Vec<Interface> = resources
+        .connectors()
+        .iter()
+        .filter_map(|handle| device.get_connector(*handle, false).ok())
+        .filter(|info| info.state() == State::Connected && !info.modes().is_empty())
+        .map(|info| info.interface())
+        .collect();
+    if kinds.len() < 2 {
+        println!("note: one display attached ({kinds:?}), nothing to choose between");
+        return;
+    }
+
+    // Reverse the main rank: whatever it preferred, the other one should win.
+    let mut reversed: Vec<Interface> = drmkit_display::rank::MAIN.to_vec();
+    reversed.reverse();
+
+    let forward = ScanoutTarget::discover(&device)
+        .expect("discover")
+        .expect("a display is attached");
+    let backward = ScanoutTarget::discover_ranked(&device, &reversed)
+        .expect("discover")
+        .expect("a display is attached");
+
+    println!(
+        "{kinds:?}: main picked connector {}, reversed picked {}",
+        forward.connector_id, backward.connector_id
+    );
+    assert_ne!(
+        forward.connector_id, backward.connector_id,
+        "reversing the rank changed nothing, so the rank is not being read"
     );
 }

@@ -56,7 +56,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_device.cpp` | `drmkit-core` `src/tests.rs` | ported |  |
 | `tests/unit/test_display.cpp` | `drmkit-display` `edid.rs`, `profile.rs` | partial | EDID parsing and `DriverProfile` ported. EDID is diffed against the reference, with the fixture's checksum corrected (drm-cxx#241) and `hdr`/`wide_gamut` gating deliberately divergent. Mode lists, the HDR cache and connector/CRTC capabilities are not ported |
 | `tests/unit/test_dma_buf_source_cache.cpp` | `drmkit-scene-sources` `cache.rs` | ported | Keyed reuse, re-import on geometry change, eviction, and no entry left behind by a failed import |
-| `tests/unit/test_driver_profile.cpp` | _drmkit-display_ (phase 4) | pending |  |
+| `tests/unit/test_driver_profile.cpp` | `drmkit-display` `profile.rs` + `tests.rs` | ported | `decode_prime_caps` and `connector_type_self_refreshes`, plus a bit the reference does not set. `test_defaults` has no counterpart: `DriverProfile` has no `Default`, so a profile that was never probed cannot exist -- the conservative values it checks are `probe`'s fallbacks, covered by `an_unreported_capability_falls_back` |
 | `tests/unit/test_dumb_buffer.cpp` | `drmkit-dumb` `src/tests.rs` | ported | 6 |
 | `tests/unit/test_dumb_scanout_sink.cpp` | _drmkit-present_ (phase 6+) | pending |  |
 | `tests/unit/test_egl_stream_builder.cpp` | _drmkit-scene-streams_ (phase 6+) | pending |  |
@@ -90,7 +90,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_scanout_target.cpp` | `drmkit-display` `scanout.rs` | ported | The `primary_plane_for_crtc` helper against a synthetic registry, plus a case upstream has none of: an overlay first in the list must not be taken for the primary. `discover` itself is device-bound and covered on vkms and amdgpu |
 | `tests/unit/test_scene.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/unit/test_scene_set.cpp` | _drmkit-scene-set_ (phase 6+) | pending |  |
-| `tests/unit/test_select_connector.cpp` | _drmkit-display_ (phase 4) | pending |  |
+| `tests/unit/test_select_connector.cpp` | `drmkit-display` `scanout.rs` | ported | All ten, plus two the reference cannot pass: a virtual display is rankable, and a real panel still outranks it. None of upstream's three rank arrays names `VIRTUAL`, so its examples find no display on vkms or in a VM -- [drm-cxx#253](https://github.com/jwinarske/drm-cxx/issues/253). Upstream keeps this in `examples/`; here it is public API, since "first connected" is what `ScanoutTarget::discover` would otherwise do |
 | `tests/unit/test_stream_capability.cpp` | _drmkit-scene-streams_ (phase 6+) | pending |  |
 | `tests/unit/test_sync_fence.cpp` | `drmkit-sync` `src/tests.rs` | ported |  |
 | `tests/unit/test_test_patterns.cpp` | — (covers `examples/`, outside the ported `src/` surface) | n/a |  |

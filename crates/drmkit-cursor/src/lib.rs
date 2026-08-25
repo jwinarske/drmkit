@@ -16,6 +16,7 @@
 
 mod alias;
 mod cursor;
+mod plane;
 mod sprite;
 mod theme;
 mod xcursor;
@@ -24,6 +25,7 @@ mod xcursor;
 mod tests;
 
 pub use cursor::{Cursor, Frame};
+pub use plane::{PlanePath, SelectedPlane, select_plane};
 pub use sprite::{Placement, Rotation, compose};
 pub use theme::{Theme, ThemeResolution, default_search_paths};
 
@@ -73,4 +75,17 @@ pub enum CursorError {
     /// The file could not be read.
     #[error("io: {0}")]
     Io(String),
+
+    /// No plane on this CRTC can carry a cursor, and legacy was not allowed.
+    #[error("no plane on this CRTC can carry a cursor")]
+    NoPlane,
+
+    /// A caller-named plane does not exist, cannot feed this CRTC, or cannot
+    /// take `ARGB8888`.
+    ///
+    /// Distinct from [`CursorError::NoPlane`]: the caller overrode the policy
+    /// and the override does not work. Falling back silently would leave them
+    /// on a plane they did not ask for.
+    #[error("the requested plane cannot carry a cursor on this CRTC")]
+    PlaneUnusable,
 }

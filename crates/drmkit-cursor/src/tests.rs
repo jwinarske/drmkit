@@ -1645,3 +1645,123 @@ fn the_selection_is_a_value_worth_comparing() {
         }
     );
 }
+
+// --- buffer size -----------------------------------------------------------
+
+use crate::size::{preferred_size, probe_size};
+
+#[test]
+fn a_named_size_is_taken_as_asked() {
+    for path in [
+        PlanePath::AtomicCursor,
+        PlanePath::AtomicOverlay,
+        PlanePath::Legacy,
+    ] {
+        assert_eq!(preferred_size(128, path, Some(256)), 128, "{path:?}");
+    }
+}
+
+#[test]
+fn an_unset_size_takes_the_drivers_cap_on_the_atomic_paths() {
+    // A plane that wants 256 should get 256, not a 64 that leaves the sprite
+    // small in the middle of it.
+    assert_eq!(preferred_size(0, PlanePath::AtomicCursor, Some(256)), 256);
+    assert_eq!(preferred_size(0, PlanePath::AtomicOverlay, Some(128)), 128);
+}
+
+#[test]
+fn legacy_ignores_the_cap() {
+    // drmModeSetCursor has no capability query, and every driver hard-codes
+    // 64, so a cap read from somewhere else does not apply to it.
+    assert_eq!(preferred_size(0, PlanePath::Legacy, Some(256)), 64);
+}
+
+#[test]
+fn a_missing_or_zero_cap_falls_back_to_64() {
+    assert_eq!(preferred_size(0, PlanePath::AtomicCursor, None), 64);
+    assert_eq!(preferred_size(0, PlanePath::AtomicCursor, Some(0)), 64);
+}
+
+#[test]
+fn the_probe_takes_the_largest_size_the_kernel_accepts() {
+    let mut asked = Vec::new();
+    let size = probe_size(256, |candidate| {
+        asked.push(candidate);
+        candidate <= 128
+    });
+    assert_eq!(size, 128);
+    assert_eq!(
+        asked,
+        vec![256, 128],
+        "largest first, stopping at the first yes"
+    );
+}
+
+#[test]
+fn the_probe_never_goes_above_what_was_asked_for() {
+    // A caller who wanted a small cursor does not get a large one because the
+    // driver could manage it.
+    let mut asked = Vec::new();
+    probe_size(64, |candidate| {
+        asked.push(candidate);
+        true
+    });
+    assert_eq!(asked, vec![64], "256 and 128 are above the preference");
+}
+
+#[test]
+fn a_size_between_ladder_steps_probes_the_step_below() {
+    // The ladder is the sizes hardware actually implements. Asking for 100
+    // gets 64 tried, not 100: there is no driver that does 100.
+    let mut asked = Vec::new();
+    let size = probe_size(100, |candidate| {
+        asked.push(candidate);
+        true
+    });
+    assert_eq!(asked, vec![64]);
+    assert_eq!(size, 64);
+}
+
+#[test]
+fn a_size_below_the_floor_still_gets_a_buffer() {
+    // Nothing on the ladder is at or below 32, so nothing is probed, and the
+    // answer is the 64 floor. A 32-pixel cursor is drawn centred inside it
+    // rather than not at all.
+    let mut asked = Vec::new();
+    let size = probe_size(32, |candidate| {
+        asked.push(candidate);
+        true
+    });
+    assert!(asked.is_empty(), "nothing on the ladder fits under 32");
+    assert_eq!(size, 64);
+}
+
+#[test]
+fn a_kernel_that_refuses_everything_still_yields_a_size() {
+    // Usually this is not about size at all: with no mode set, every
+    // TEST_ONLY fails for unrelated reasons. There still has to be a buffer,
+    // and the first real commit will surface the objection.
+    let mut asked = Vec::new();
+    let size = probe_size(256, |candidate| {
+        asked.push(candidate);
+        false
+    });
+    assert_eq!(asked, vec![256, 128, 64], "every candidate was tried");
+    assert_eq!(size, 256, "falls back to what was asked for");
+
+    // And the floor applies to the fallback too.
+    assert_eq!(probe_size(16, |_| false), 64);
+}
+
+#[test]
+fn the_probe_stops_asking_once_something_is_accepted() {
+    // Each probe allocates a buffer and issues a test commit, so asking after
+    // an answer is real work for nothing.
+    let mut calls = 0;
+    let size = probe_size(256, |_| {
+        calls += 1;
+        true
+    });
+    assert_eq!(calls, 1);
+    assert_eq!(size, 256);
+}

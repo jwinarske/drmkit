@@ -17,6 +17,7 @@
 mod alias;
 mod cursor;
 mod plane;
+mod size;
 mod sprite;
 mod theme;
 mod xcursor;
@@ -26,6 +27,7 @@ mod tests;
 
 pub use cursor::{Cursor, Frame};
 pub use plane::{PlanePath, SelectedPlane, select_plane};
+pub use size::{preferred_size, probe_size};
 pub use sprite::{Placement, Rotation, compose};
 pub use theme::{Theme, ThemeResolution, default_search_paths};
 

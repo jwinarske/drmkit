@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: (c) 2026 Joel Winarske
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "drmkit-session"
+description = "Session and seat management: revocable devices across VT switches"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+drmkit-log = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
+
+# The seat backend. Optional because a session is a policy the rest of this
+# crate can express without one -- and because there is no way to test the
+# binding on a machine with no seat, so it must be possible to build and test
+# everything else without pulling it in.
+libseat = { workspace = true, optional = true }
+
+[features]
+default = ["libseat"]
+
+[lints]
+workspace = true

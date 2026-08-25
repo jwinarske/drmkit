@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: (c) 2026 Joel Winarske
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "drmkit-capture"
+description = "Read back what a CRTC is scanning out, and write it to a file"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+drmkit-core = { workspace = true }
+drmkit-fmt = { workspace = true }
+drmkit-log = { workspace = true }
+drm = { workspace = true }
+rustix = { workspace = true, features = ["mm", "std"] }
+thiserror = { workspace = true, features = ["std"] }
+
+# For the encoder. The crate carries a decoder too, which nothing here uses.
+png = { workspace = true }
+
+[dev-dependencies]
+# The decoder, to read back what the encoder wrote.
+png = { workspace = true }
+drmkit-log = { workspace = true }
+drmkit-dumb = { workspace = true }
+drmkit-fmt = { workspace = true }
+
+[lints]
+workspace = true

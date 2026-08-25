@@ -12,6 +12,7 @@ members = [
     "crates/drmkit-dumb",
     "crates/drmkit-fmt",
     "crates/drmkit-display",
+    "crates/drmkit-capture",
     "crates/drmkit-gbm",
     "crates/drmkit-log",
     "crates/drmkit-modeset",
@@ -40,6 +41,7 @@ categories = ["graphics", "os::linux-apis", "no-std"]
 [workspace.dependencies]
 drmkit-core = { version = "0.0.0", path = "crates/drmkit-core" }
 drmkit-dumb = { version = "0.0.0", path = "crates/drmkit-dumb" }
+drmkit-capture = { version = "0.0.0", path = "crates/drmkit-capture" }
 drmkit-display = { version = "0.0.0", path = "crates/drmkit-display" }
 drmkit-fmt = { version = "0.0.0", path = "crates/drmkit-fmt" }
 drmkit-log = { version = "0.0.0", path = "crates/drmkit-log" }
@@ -51,6 +53,7 @@ drmkit-sync = { version = "0.0.0", path = "crates/drmkit-sync" }
 drmkit-time = { version = "0.0.0", path = "crates/drmkit-time" }
 
 drm = { version = "0.15" }
+png = { version = "0.18" }
 gbm = { version = "0.18", default-features = false, features = ["drm-support"] }
 # v0_3 gates the accessors this port needs -- colour primaries, HDR static
 # metadata, signal colorimetry -- against the system library's version. It

@@ -36,7 +36,7 @@ jobs:
           # without asking: it arrives as a transitive of the qemu/mesa stack,
           # and depending on that is depending on someone else's dependency
           # list not changing.
-          sudo apt-get install -y virtme-ng qemu-system-x86 linux-modules-extra-$(uname -r) libgbm-dev
+          sudo apt-get install -y virtme-ng qemu-system-x86 linux-modules-extra-$(uname -r) libgbm-dev libseat-dev
 
       - name: confirm vkms is available
         run: modinfo vkms

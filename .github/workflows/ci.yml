@@ -31,7 +31,7 @@ jobs:
       - name: install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgbm-dev meson ninja-build
+          sudo apt-get install -y libgbm-dev libseat-dev meson ninja-build
           # Ubuntu ships libdisplay-info 0.1.1, three minor versions behind the
           # 0.3 API the EDID parser uses -- the accessors for colour primaries,
           # HDR static metadata and signal colorimetry do not exist before it.
@@ -83,7 +83,7 @@ jobs:
       - name: install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgbm-dev meson ninja-build
+          sudo apt-get install -y libgbm-dev libseat-dev meson ninja-build
           # Ubuntu ships libdisplay-info 0.1.1, three minor versions behind the
           # 0.3 API the EDID parser uses -- the accessors for colour primaries,
           # HDR static metadata and signal colorimetry do not exist before it.
@@ -146,21 +146,31 @@ jobs:
           sudo apt-get install -y ${{ matrix.packages }}
       # `xtask` is host-only repository tooling — it is excluded everywhere in
       # this lane. Cross-building it proves nothing and only needs a sysroot.
-      # drmkit-gbm is held out of the *build* because gbm-sys links against
-      # libgbm and there is no cross sysroot for it here: adding a foreign
+      # drmkit-gbm and drmkit-session are held out of the *build* because
+      # gbm-sys and libseat-sys link against C libraries and there is no cross
+      # sysroot for either here: adding a foreign
       # architecture to the runner's apt sources is fragile on amd64 and worse
       # for riscv64, where the package may not exist at all. The real targets
       # have libgbm; the runner does not.
       #
-      # Only the link needs it, so `cargo check` below still compiles the crate
-      # for the target and no portability coverage is lost -- which is what
-      # these lanes are for. A type error, a bad cast, an assumption about
+      # Only the link needs it, so `cargo check` below still compiles both
+      # crates for the target and no portability coverage is lost -- which is
+      # what these lanes are for. A type error, a bad cast, an assumption about
       # pointer width would all still fail here.
-      - run: cargo build --workspace --exclude xtask --exclude drmkit-gbm --target ${{ matrix.target }}
+      #
+      # drmkit-session is built and tested *without* its seat backend here.
+      # libseat-sys's build script needs pkg-config to find libseat for the
+      # target, which fails even for `cargo check` -- so unlike gbm there is no
+      # way to type-check the binding cross. The sequencing is the part with
+      # the logic in it, and it is covered on every target; the binding is
+      # covered on the host lanes, where the library is installed.
+      - run: cargo build --workspace --exclude xtask --exclude drmkit-gbm --exclude drmkit-session --target ${{ matrix.target }}
       - run: cargo check -p drmkit-gbm --target ${{ matrix.target }}
+      - run: cargo build -p drmkit-session --no-default-features --target ${{ matrix.target }}
       # qemu-user runs T0 under the cross target; the runner comes from the
       # per-target .cargo fragment.
-      - run: cargo test --workspace --exclude xtask --exclude drmkit-gbm --target ${{ matrix.target }}
+      - run: cargo test --workspace --exclude xtask --exclude drmkit-gbm --exclude drmkit-session --target ${{ matrix.target }}
+      - run: cargo test -p drmkit-session --no-default-features --target ${{ matrix.target }}
 
   fuzz:
     name: fuzz smoke (T2)
@@ -181,7 +191,7 @@ jobs:
       - name: install libdisplay-info
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build
+          sudo apt-get install -y libseat-dev meson ninja-build
           git clone --depth 1 --branch 0.3.0 \
             https://gitlab.freedesktop.org/emersion/libdisplay-info.git /tmp/ldi
           meson setup /tmp/ldi/build /tmp/ldi --prefix=/usr/local --buildtype=release

@@ -560,23 +560,11 @@ impl LayerScene {
             .map(|(id, layer)| LayerRef { id: *id, layer })
             .collect();
 
-        let reserved = canvas_reservation(self.canvas.is_some(), refs.len(), registry, crtc_index);
-        self.allocator.set_reserved_planes(&reserved);
-
-        let allocation = match self
-            .allocator
-            .allocate(&refs, registry, crtc_index, committer)
-        {
+        let allocation = match self.allocate_with_canvas(&refs, registry, crtc_index, committer) {
             Ok(allocation) => allocation,
-            Err(TestFailure::NotMaster) => {
+            Err(error) => {
                 self.release_all(acquisitions);
-                return Err(SceneError::NotMaster);
-            }
-            Err(TestFailure::Rejected) => {
-                // The allocator handles ordinary rejections internally, so this
-                // is unreachable in practice; treating it as "nothing placed"
-                // keeps the frame honest rather than panicking.
-                drmkit_planes::Allocation::default()
+                return Err(error);
             }
         };
 
@@ -668,6 +656,88 @@ impl LayerScene {
     /// atomic request as everything else, so once it is armed a kernel
     /// rejection takes the whole frame down, including every layer that *was*
     /// placed. Dropping one layer beats dropping all of them.
+    /// Allocate planes, holding one back for the composition canvas when the
+    /// frame turns out to need one.
+    ///
+    /// The canvas takes a plane, and until this ran nothing had validated a
+    /// frame that included it: the allocator tests the layer assignment, and
+    /// `compose_unassigned` adds the canvas afterwards. On hardware that can
+    /// light fewer planes than it advertises the difference is fatal --
+    /// rockchip's VOP2 on an RK3566 offers three planes and accepts two, so a
+    /// validated two-plane assignment plus a canvas is a frame the kernel
+    /// refuses, and a refused frame puts nothing on screen at all.
+    ///
+    /// [`canvas_reservation`] alone cannot see this. It reserves when the
+    /// layer count exceeds the *candidate* count, a proxy for "the canvas will
+    /// be needed" that says no here: two layers, two candidates, and a
+    /// hardware limit of two including the canvas. So when composition turns
+    /// out to be needed and nothing was reserved up front, hold a plane back
+    /// and allocate again. The second pass runs only on frames that composite.
+    ///
+    /// This narrows the problem rather than closing it. Where the hardware
+    /// limit is at or below the candidate count, `assigned` is already the
+    /// most the kernel would take, so `assigned` plus a canvas overshoots
+    /// whatever is held back. Closing it means putting the canvas plane into
+    /// the assignments the allocator tests -- see P-18 and drm-cxx#244.
+    fn allocate_with_canvas<C: TestCommitter>(
+        &mut self,
+        refs: &[LayerRef<'_>],
+        registry: &PlaneRegistry,
+        crtc_index: u32,
+        committer: &mut C,
+    ) -> Result<drmkit_planes::Allocation, SceneError> {
+        let reserved = canvas_reservation(self.canvas.is_some(), refs.len(), registry, crtc_index);
+        let already_claimed = !reserved.is_empty();
+        self.allocator.set_reserved_planes(&reserved);
+
+        let mut allocation = match self
+            .allocator
+            .allocate(refs, registry, crtc_index, committer)
+        {
+            Ok(allocation) => allocation,
+            Err(TestFailure::NotMaster) => return Err(SceneError::NotMaster),
+            // The allocator handles ordinary rejections internally, so this is
+            // unreachable in practice; treating it as "nothing placed" keeps
+            // the frame honest rather than panicking.
+            Err(TestFailure::Rejected) => drmkit_planes::Allocation::default(),
+        };
+
+        if self.canvas.is_none() || already_claimed || allocation.composited.is_empty() {
+            return Ok(allocation);
+        }
+        let Some(spare) = registry
+            .force_disable_candidates(crtc_index)
+            .map(|plane| plane.id)
+            .find(|id| allocation.assignment.get(*id).is_none())
+        else {
+            return Ok(allocation);
+        };
+
+        let first_pass_tests = allocation.diagnostics.test_commits_issued;
+        // Without this the warm start would re-validate the previous
+        // assignment, which still holds the plane just reserved.
+        self.allocator.invalidate_allocation();
+        self.allocator.set_reserved_planes(&[spare]);
+        match self
+            .allocator
+            .allocate(refs, registry, crtc_index, committer)
+        {
+            Ok(mut second) => {
+                // `allocate` zeroes its own per-frame counter, so without this
+                // the report would show the second pass's cost and hide the
+                // first.
+                second.diagnostics.test_commits_issued += first_pass_tests;
+                allocation = second;
+            }
+            Err(TestFailure::NotMaster) => return Err(SceneError::NotMaster),
+            // Keep the first pass rather than dropping the frame: a refused
+            // second attempt is worse than an unvalidated canvas, which at
+            // least usually works.
+            Err(TestFailure::Rejected) => {}
+        }
+        Ok(allocation)
+    }
+
     fn compose_unassigned(
         &mut self,
         allocation: &drmkit_planes::Allocation,

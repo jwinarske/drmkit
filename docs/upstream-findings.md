@@ -31,6 +31,17 @@ to reproduce.
 | [243](https://github.com/jwinarske/drm-cxx/issues/243) | `capture` | `snapshot()` accepts only `ARGB8888` and `XRGB8888`, so on hardware whose console plane is `RGB565` -- a Raspberry Pi 5's is -- every plane is skipped and the capture fails on a display that plainly has content | Bug | Reproduced: `skipping plane 83 -- unsupported fourcc 0x36314752` on the only plane bound to the active CRTC. Not the documented tiled/YUV limitation, whose stated reason (needs GPU readback) does not apply to a packed linear format. The port accepts it, widening 5/6-bit channels by bit replication rather than shifting |
 | [244](https://github.com/jwinarske/drm-cxx/issues/244) | `planes` | The composition canvas is armed on a plane no `TEST_ONLY` validated: the allocator tests the layer assignment, `compose_unassigned` adds the canvas afterwards. On hardware that lights fewer planes than it advertises the assembled frame is refused, and a refused frame shows nothing at all | Bug | Reproduced on a Radxa ZERO 3 (rockchip VOP2, RK3566): 3 planes eligible, 2 simultaneously usable. `pick_canvas_reservation_if_needed`'s overflow trigger is a count proxy and says no. Reserving cannot fix the general case -- `assigned` is already the hardware maximum. The port is partly fixed; see P-18 |
 
+## Third-party dependencies
+
+drm-cxx is the origin of authority for the *port*, but the port also leans on
+libraries neither project owns. Defects found there are recorded the same way,
+and filed with the people who can fix them.
+
+| where | what | status |
+|---|---|---|
+| libdisplay-info 0.3.0 | `di_info_parse_edid` leaks 4 bytes from a `calloc` in `parse_data_block` when a CTA-861 extension carries an InfoFrame Data Block (extended tag 32) with one descriptor. Not reachable from `di_info_destroy`, so a correct caller still leaks. Found by the `edid_blob` fuzz target | **Filed** as [work item 61](https://gitlab.freedesktop.org/emersion/libdisplay-info/-/work_items/61). The fuzz lane carries one suppression naming that library until it lands; write-up, minimal input and a standalone C reproducer in `fuzz/reproducers/` |
+| `xcursor` 0.3.11 | `take_bytes` does `vec![0; len]` and then reads, so a file's declared dimensions size the allocation before the bytes exist. A 60-byte file reserves 4.3 GB. Aborts under `RLIMIT_AS` and should on 32-bit; survives on 64-bit with overcommit | **Not filed** — awaiting a decision on whether to raise it. drmkit does not use the crate: `drmkit-cursor` parses `.xcursor` itself, bounding every length against the bytes present. See that module's docs for the measured cases |
+
 ## Conventions
 
 - **Verify before filing.** Compile a demonstration, quote the exact

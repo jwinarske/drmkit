@@ -25,5 +25,8 @@
 # write-up, a minimal 256-byte input and a standalone C reproducer are in
 # reproducers/libdisplay-info-edid-leak.md.
 #
-# Remove this when libdisplay-info fixes it.
+# Filed upstream:
+#   https://gitlab.freedesktop.org/emersion/libdisplay-info/-/work_items/61
+#
+# Remove this when that lands.
 leak:libdisplay-info

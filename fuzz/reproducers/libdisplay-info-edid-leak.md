@@ -1,7 +1,8 @@
 # 4-byte leak in parse_data_block on a CTA InfoFrame block
 
-Draft for <https://gitlab.freedesktop.org/emersion/libdisplay-info/-/issues>.
-Files referenced are next to this one.
+Filed as <https://gitlab.freedesktop.org/emersion/libdisplay-info/-/work_items/61>.
+Kept here with the reproducers so the suppression in `../lsan-suppressions.txt`
+has something to point at. Files referenced are next to this one.
 
 ---
 

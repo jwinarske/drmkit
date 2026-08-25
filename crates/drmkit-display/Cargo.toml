@@ -23,4 +23,7 @@ libdisplay-info = { workspace = true, optional = true }
 thiserror = { workspace = true }
 drm = { workspace = true }
 drmkit-core = { workspace = true }
+# For `ModeInfo`, the extension trait that reads a mode. The mode list hands
+# back the kernel's modes; reading them is the modeset crate's job.
+drmkit-modeset = { workspace = true }
 rustix = { workspace = true, features = ["std"] }

@@ -291,6 +291,38 @@ mod edid {
         );
     }
 
+    /// The refresh range the panel states, read off the `0xFD` descriptor.
+    ///
+    /// Bytes 5 and 6 of it are the vertical minimum and maximum, `0x38` and
+    /// `0x4C` here. Worth its own case because the same descriptor also
+    /// carries horizontal rates and a pixel clock, and reading one field
+    /// where another was meant still yields a plausible number.
+    #[test]
+    fn the_fixture_states_a_refresh_range() {
+        let info = parse_edid(&DELL).expect("parse");
+        let range = info.vrefresh_range.expect("the 0xFD descriptor is there");
+
+        assert_eq!((range.min_hz, range.max_hz), (56, 76));
+        assert!(range.is_variable(), "a range, not a single rate");
+    }
+
+    /// A blob with no range descriptor says nothing rather than zero.
+    ///
+    /// Zero to zero would read as a panel that accepts no refresh rate at
+    /// all, which is not a thing -- it is a panel that did not say.
+    #[test]
+    fn a_blob_without_the_descriptor_states_no_range() {
+        let mut blob = DELL;
+        // Turn the 0xFD descriptor into a 0xFE (unspecified text), keeping the
+        // blob a valid EDID by fixing the checksum after.
+        blob[0x6F] = 0xFE;
+        let sum: u32 = blob[..127].iter().map(|b| u32::from(*b)).sum();
+        blob[127] = u8::try_from((256 - (sum % 256)) % 256).expect("a checksum byte");
+
+        let info = parse_edid(&blob).expect("still a valid EDID");
+        assert_eq!(info.vrefresh_range, None);
+    }
+
     /// Identity, physical size and primaries, against the reference's reading.
     ///
     /// Every value here came from running drm-cxx's own `parse_edid` over this

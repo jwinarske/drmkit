@@ -192,6 +192,7 @@ version = "0.0.0"
 dependencies = [
  "drm 0.15.0",
  "drmkit-core",
+ "drmkit-modeset",
  "libdisplay-info",
  "rustix 1.1.4",
  "thiserror",

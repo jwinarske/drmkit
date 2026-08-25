@@ -13,6 +13,7 @@ pub mod curves;
 pub mod edid;
 pub mod hdr;
 pub mod hdr_cache;
+mod modes;
 mod profile;
 mod tone_mapper;
 
@@ -27,6 +28,7 @@ pub use hdr::{
     serialize_hdr_metadata,
 };
 pub use hdr_cache::HdrMetadataCache;
+pub use modes::{ConnectorModes, Probe, query_connector_modes};
 pub use profile::{
     DriverProfile, PanelSelfRefresh, PrimeCaps, connector_type_self_refreshes, decode_prime_caps,
 };

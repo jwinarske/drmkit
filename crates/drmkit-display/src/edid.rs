@@ -19,6 +19,7 @@
 //!
 //! [`libdisplay-info`]: https://gitlab.freedesktop.org/emersion/libdisplay-info
 
+use libdisplay_info::edid::DisplayDescriptorRef;
 use libdisplay_info::info::Info;
 
 pub use crate::color::{Chromaticity, ColorimetryInfo};
@@ -71,6 +72,31 @@ pub struct SupportedColorimetry {
     pub ictcp: bool,
 }
 
+/// The vertical refresh range the panel states it accepts.
+///
+/// From the EDID Display Range Limits descriptor, tag `0xFD`. On a
+/// variable-refresh panel this is its VRR window; on a fixed-rate one the two
+/// are equal. Absent when the EDID carries no range descriptor, which is not
+/// the same as a panel with no range -- it is a panel that did not say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VrefreshRange {
+    /// Lowest refresh in Hz.
+    pub min_hz: i32,
+    /// Highest refresh in Hz.
+    pub max_hz: i32,
+}
+
+impl VrefreshRange {
+    /// Whether the panel accepts more than one rate.
+    ///
+    /// The question a compositor is really asking before it offers
+    /// variable-refresh presentation.
+    #[must_use]
+    pub const fn is_variable(&self) -> bool {
+        self.max_hz > self.min_hz
+    }
+}
+
 /// What a connector's attached display reports.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ConnectorInfo {
@@ -92,6 +118,8 @@ pub struct ConnectorInfo {
     pub hdr: Option<HdrStaticMetadata>,
     /// Extra colorimetry encodings, where any are advertised.
     pub wide_gamut: Option<SupportedColorimetry>,
+    /// The refresh range the panel states, where it states one.
+    pub vrefresh_range: Option<VrefreshRange>,
 }
 
 /// Why an EDID blob could not be read.
@@ -190,6 +218,22 @@ pub fn parse_edid(blob: &[u8]) -> Result<ConnectorInfo, EdidError> {
         ictcp: raw_gamut.ictcp,
     });
 
+    // One descriptor slot in four carries this, and only if the panel used it.
+    // A range of zero to zero is a descriptor that exists and says nothing,
+    // which is the same information as no descriptor at all.
+    let vrefresh_range = info
+        .edid()
+        .and_then(|edid| {
+            edid.display_descriptors()
+                .iter()
+                .find_map(DisplayDescriptorRef::range_limits)
+        })
+        .map(|limits| VrefreshRange {
+            min_hz: limits.min_vert_rate_hz,
+            max_hz: limits.max_vert_rate_hz,
+        })
+        .filter(|range| range.max_hz > 0 && range.min_hz <= range.max_hz);
+
     Ok(ConnectorInfo {
         name,
         make,
@@ -200,5 +244,6 @@ pub fn parse_edid(blob: &[u8]) -> Result<ConnectorInfo, EdidError> {
         colorimetry,
         hdr,
         wide_gamut,
+        vrefresh_range,
     })
 }

@@ -199,7 +199,7 @@ use drmkit_core::{CoreError, ObjectType, PropertyStore};
 /// `CoreError::from_io` is private to drmkit-core, and widening it just for
 /// this would export an implementation detail; the errno is what carries the
 /// information either way.
-fn errno(error: &std::io::Error) -> CoreError {
+pub(crate) fn errno(error: &std::io::Error) -> CoreError {
     CoreError::Io(rustix::io::Errno::from_io_error(error).unwrap_or(rustix::io::Errno::IO))
 }
 

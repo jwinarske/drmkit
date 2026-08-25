@@ -79,7 +79,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_log.cpp` | `drmkit-log` `src/tests.rs` | ported |  |
 | `tests/unit/test_matching.cpp` | `drmkit-planes` | ported |  |
 | `tests/unit/test_mode.cpp` | `drmkit-modeset` `src/tests.rs` | ported |  |
-| `tests/unit/test_mode_list.cpp` | _drmkit-modeset_ (phase 1) | pending |  |
+| `tests/unit/test_mode_list.cpp` | `drmkit-display` `modes.rs` | ported | Both cases, widened from the five connector types upstream checks to all twenty-one, against the names `drmModeGetConnectorTypeName` actually returns -- which is how the `S-Video` drift showed up ([drm-cxx#250](https://github.com/jwinarske/drm-cxx/issues/250)). Plus device cases upstream has none of: the listing diffed against `/sys/class/drm`, on vkms and on amdgpu |
 | `tests/unit/test_negotiate.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/unit/test_output.cpp` | `drmkit-planes` | ported |  |
 | `tests/unit/test_output_signaling.cpp` | _drmkit-scene_ (phase 3) | pending |  |

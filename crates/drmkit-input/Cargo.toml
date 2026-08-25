@@ -16,6 +16,7 @@ categories.workspace = true
 
 [dependencies]
 drmkit-log = { workspace = true }
+rustix = { workspace = true, features = ["std", "time", "event"] }
 thiserror = { workspace = true, features = ["std"] }
 
 # Keymap compilation and key resolution. Optional for the same reason the

@@ -18,12 +18,23 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod event;
+mod repeat;
+mod repeater;
+
+#[cfg(test)]
+mod repeat_tests;
+
+#[cfg(test)]
+mod repeater_tests;
 
 #[cfg(feature = "xkb")]
 mod keyboard;
 
 #[cfg(all(test, feature = "xkb"))]
 mod keyboard_tests;
+
+pub use repeat::{Repeat, RepeatConfig, Timer};
+pub use repeater::KeyRepeater;
 
 pub use event::{
     InputEvent, KeyEvent, PointerAxis, PointerButton, PointerEvent, PointerMotion, Switch,
@@ -44,6 +55,14 @@ pub enum InputError {
     /// not through a return value, so there is nothing more to pass on here.
     #[error("the keymap did not compile")]
     Keymap,
+
+    /// The configuration cannot work.
+    #[error("{0}")]
+    Config(&'static str),
+
+    /// A timer could not be created or read.
+    #[error("repeat timer")]
+    Timer(#[source] std::io::Error),
 
     /// A keymap file could not be read.
     #[error("reading {path}")]

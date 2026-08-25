@@ -229,6 +229,7 @@ name = "drmkit-input"
 version = "0.0.0"
 dependencies = [
  "drmkit-log",
+ "rustix 1.1.4",
  "thiserror",
  "xkbcommon",
 ]

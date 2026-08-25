@@ -263,3 +263,30 @@ fn a_latching_layout_types_what_the_user_latched() {
     release(&mut keyboard, KEY_APOSTROPHE);
     assert_eq!(press(&mut keyboard, KEY_A).utf8, "ā");
 }
+
+#[test]
+fn reaching_for_shift_changes_what_the_next_repeat_types() {
+    // The two halves together, and the reason repeats resolve rather than
+    // replay: the key does not change, the modifiers under it do.
+    use crate::repeat::{Repeat, RepeatConfig};
+
+    let mut keyboard = Keyboard::from_string(PLAIN_KEYMAP).expect("compile");
+    let mut repeat = Repeat::new(RepeatConfig::default());
+
+    let held = press(&mut keyboard, KEY_A);
+    repeat.on_key(&held, keyboard.should_repeat(held.key));
+
+    let mut ticks = Vec::new();
+    repeat.synthesize(1, 0, &mut ticks);
+    keyboard.resolve(&mut ticks[0]);
+    assert_eq!(ticks[0].utf8, "a");
+
+    let shift = press(&mut keyboard, KEY_LEFTSHIFT);
+    repeat.on_key(&shift, keyboard.should_repeat(shift.key));
+    assert_eq!(repeat.held_key(), Some(KEY_A), "still the letter repeating");
+
+    ticks.clear();
+    repeat.synthesize(1, 0, &mut ticks);
+    keyboard.resolve(&mut ticks[0]);
+    assert_eq!(ticks[0].utf8, "A");
+}

@@ -27,5 +27,10 @@ libseat = { workspace = true, optional = true }
 [features]
 default = ["libseat"]
 
+# The seat probe needs a seat binding to probe with.
+[[example]]
+name = "seat"
+required-features = ["libseat"]
+
 [lints]
 workspace = true

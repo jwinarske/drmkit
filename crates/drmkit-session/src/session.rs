@@ -21,6 +21,10 @@ pub struct TakenDevice {
     /// The seat's handle, for closing it.
     pub id: DeviceId,
     /// The descriptor as it stands now. Replaced by a resume.
+    ///
+    /// Borrowed, not owned: the seat closes it, and it does so at a moment of
+    /// its choosing. Closing it here leaves the seat holding a handle to a
+    /// descriptor number the process has since reused for something else.
     pub fd: RawFd,
 }
 
@@ -252,6 +256,10 @@ impl<B: Backend> Session<B> {
             return Ok(());
         }
         self.active = false;
+        drmkit_log::log_info!(
+            "session paused: {} device(s) are no longer ours",
+            self.devices.len()
+        );
         self.pending.push_back(SessionEvent::Paused);
         // Acknowledged immediately. The queued event is what the caller acts
         // on, and holding the acknowledgement until they have would stall the
@@ -276,13 +284,21 @@ impl<B: Backend> Session<B> {
             // opening the same path again without closing leaks its handle for
             // as long as the session runs.
             self.backend.close_device(device.id)?;
-            let (id, fd) = self.backend.open_device(&device.path)?;
+            let (id, fd) = self
+                .backend
+                .open_device(&device.path)
+                .inspect_err(|error| {
+                    // The caller is told too, by the error out of `dispatch`. This
+                    // says which device, which is the part that identifies why.
+                    drmkit_log::log_error!("reopening {} failed: {error}", device.path.display());
+                })?;
             refreshed.push(TakenDevice {
                 path: device.path,
                 id,
                 fd,
             });
         }
+        drmkit_log::log_info!("session resumed: {} device(s) reopened", refreshed.len());
         self.devices.clone_from(&refreshed);
         self.pending
             .push_back(SessionEvent::Resumed { devices: refreshed });

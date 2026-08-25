@@ -26,6 +26,22 @@
 //! pause, when the pause is acknowledged, what a caller is allowed to do while
 //! inactive -- lives in [`Session`] over a [`Backend`], and is tested against
 //! a fake. The libseat binding is a thin adapter behind the `libseat` feature.
+//!
+//! # Not here yet
+//!
+//! Two things the reference has and this does not.
+//!
+//! `TakeDeviceOpts::preserve_fd_across_resume` asks the seat to hand back the
+//! same descriptor rather than a fresh one, on the grounds that the
+//! capability-revoking backends leave it valid. Plausible, and it saves a
+//! reopen per device per switch, but it is an optimisation over a path that is
+//! already correct -- and getting it wrong means scanning out through a
+//! descriptor the kernel has stopped honouring, on a machine none of the CI
+//! lanes resemble. It waits for a device to be proved on.
+//!
+//! `Seat::input_opener` routes libinput's privileged device opens through the
+//! same seat, so input descriptors get the revocable lifetime the DRM one has.
+//! That belongs with `drmkit-input`, which does not exist yet.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
@@ -38,6 +54,9 @@ mod seat;
 mod tests;
 
 pub use session::{Backend, DeviceId, RawEvent, Session, SessionEvent, TakenDevice};
+
+#[cfg(feature = "libseat")]
+pub use seat::LibseatBackend;
 
 /// What can go wrong holding a session.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

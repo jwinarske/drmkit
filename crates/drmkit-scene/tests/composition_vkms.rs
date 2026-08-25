@@ -455,3 +455,146 @@ fn a_composed_frame_is_accepted_by_the_kernel_vkms() {
 
     fx.scene.drain();
 }
+
+/// How many planes `a_frame_never_arms_more_planes_than_the_kernel_will_take`
+/// lets the frame use. Two, because that is what a Rockchip RK3566 accepts.
+const BUDGET: usize = 2;
+
+/// A committer that refuses more than `budget` planes at once.
+///
+/// Real hardware does this: a Rockchip RK3566's VOP2 advertises three planes
+/// on its CRTC and accepts two, whatever their size or stacking. vkms accepts
+/// everything, so the only way to keep that case honest here is to impose it.
+///
+/// It wraps a real [`DeviceCommitter`] rather than replacing one, so a frame
+/// inside the budget still has to satisfy the kernel.
+struct PlaneBudget<'a> {
+    inner: DeviceCommitter<'a>,
+    budget: usize,
+    /// The plane the canvas will take, once the scene has said so.
+    extra: Option<u32>,
+    /// The largest number of planes any accepted test armed.
+    high_water: usize,
+    refusals: usize,
+}
+
+impl drmkit_planes::TestCommitter for PlaneBudget<'_> {
+    fn test_assignment(
+        &mut self,
+        assignment: &[(u32, drmkit_planes::LayerRef<'_>)],
+    ) -> Result<(), drmkit_planes::TestFailure> {
+        // The canvas counts. That is the whole point: the frame the kernel is
+        // asked to take includes it.
+        let planes = assignment.len() + usize::from(self.extra.is_some());
+        if planes > self.budget {
+            self.refusals += 1;
+            return Err(drmkit_planes::TestFailure::Rejected);
+        }
+        self.inner.test_assignment(assignment)?;
+        self.high_water = self.high_water.max(planes);
+        Ok(())
+    }
+
+    fn set_extra_plane(&mut self, plane_id: u32, layer: drmkit_planes::Layer) {
+        self.extra = Some(plane_id);
+        self.inner.set_extra_plane(plane_id, layer);
+    }
+
+    fn clear_extra_plane(&mut self) {
+        self.extra = None;
+        self.inner.clear_extra_plane();
+    }
+}
+
+#[test]
+#[ignore = "needs a DRM device"]
+fn a_frame_never_arms_more_planes_than_the_kernel_will_take_vkms() {
+    // P-18. The allocator settles on an assignment the kernel accepts, and the
+    // canvas then lands on a plane that was in no test -- so the frame
+    // committed is one plane larger than the frame validated. On hardware that
+    // lights fewer planes than it advertises that is a frame the kernel
+    // refuses, and a refused frame shows nothing at all.
+    //
+    // Reproduced on a Radxa ZERO 3 (rockchip VOP2, 3 planes advertised, 2
+    // usable); imposed here so it stays reproducible without that board.
+    let _guard = card_guard();
+    let Some(mut fx) = fixture() else { return };
+    if fx.planes < 3 {
+        println!("note: skipped -- needs at least 3 candidate planes to squeeze");
+        return;
+    }
+
+    // Before the committer borrows the fixture.
+    fill(&mut fx, BUDGET + 3);
+
+    let mut committer = PlaneBudget {
+        inner: DeviceCommitter::new(
+            &fx.device,
+            &fx.map,
+            &fx.registry,
+            fx.crtc_index,
+            AtomicCommitFlags::empty(),
+            None,
+        ),
+        budget: BUDGET,
+        high_water: 0,
+        refusals: 0,
+        extra: None,
+    };
+
+    // More layers than the budget, so composition is unavoidable.
+    let build = fx
+        .scene
+        .build_frame(
+            &fx.registry,
+            fx.crtc_index,
+            CommitKind::Real { arms_flip: false },
+            &mut committer,
+        )
+        .expect("build");
+
+    let mut request = AtomicRequest::with_capacity(96);
+    emit_frame(&mut request, &fx.map, build.plan(), build.disables(), None).expect("emit");
+    let report = build.report().clone();
+    // The build owns acquisitions; handing it back is what returns them.
+    fx.scene.finalize_frame(build, KernelResult::Ok);
+
+    // Count the planes the frame actually arms: an object with a non-zero
+    // CRTC_ID is being turned on, and that is what a plane budget counts.
+    let crtc_prop = fx
+        .map
+        .property_id(
+            report
+                .placements
+                .iter()
+                .find_map(|p| p.plane_id)
+                .expect("something was placed"),
+            drmkit_planes::PropTag::CrtcId,
+        )
+        .expect("CRTC_ID");
+    let armed: std::collections::BTreeSet<u32> = request
+        .writes()
+        .iter()
+        .filter(|w| w.property_id == crtc_prop && w.value != 0)
+        .map(|w| w.object_id)
+        .collect();
+
+    println!(
+        "note: budget {BUDGET}, armed {} plane(s), assigned={} composited={} refusals={}",
+        armed.len(),
+        report.layers_assigned,
+        report.layers_composited,
+        committer.refusals
+    );
+
+    assert!(
+        armed.len() <= BUDGET,
+        "the frame arms {} planes on a budget of {BUDGET}: {armed:?}",
+        armed.len()
+    );
+    assert!(
+        report.layers_composited > 0,
+        "the squeeze should have pushed layers into the canvas: {report:?}"
+    );
+    fx.scene.drain();
+}

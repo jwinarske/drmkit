@@ -714,14 +714,27 @@ impl LayerScene {
         };
 
         let first_pass_tests = allocation.diagnostics.test_commits_issued;
+        // Arm the canvas in every test of the second pass. This is what makes
+        // the search account for it: the allocator stops when the kernel
+        // accepts, and now what the kernel is accepting is the whole frame
+        // rather than the frame minus a plane.
+        let canvas_layer = self
+            .canvas
+            .as_ref()
+            .and_then(|canvas| lower_canvas(canvas, self.crtc_id, self.canvas_zpos()));
+        if let Some(layer) = canvas_layer {
+            committer.set_extra_plane(spare, layer);
+        }
+
         // Without this the warm start would re-validate the previous
         // assignment, which still holds the plane just reserved.
         self.allocator.invalidate_allocation();
         self.allocator.set_reserved_planes(&[spare]);
-        match self
+        let outcome = self
             .allocator
-            .allocate(refs, registry, crtc_index, committer)
-        {
+            .allocate(refs, registry, crtc_index, committer);
+        committer.clear_extra_plane();
+        match outcome {
             Ok(mut second) => {
                 // `allocate` zeroes its own per-frame counter, so without this
                 // the report would show the second pass's cost and hide the
@@ -736,6 +749,21 @@ impl LayerScene {
             Err(TestFailure::Rejected) => {}
         }
         Ok(allocation)
+    }
+
+    /// Where the canvas sits in the stack: above every layer.
+    ///
+    /// Shared by the pass that tests a frame and the pass that builds it, so
+    /// the plane the kernel was asked about and the plane it is handed cannot
+    /// disagree about their stacking.
+    fn canvas_zpos(&self) -> u64 {
+        let mut zpos = 0u64;
+        for handle in self.handles().collect::<Vec<_>>() {
+            if let Some(layer) = self.layer(handle) {
+                zpos = zpos.max(layer.display().zpos.unwrap_or(0));
+            }
+        }
+        zpos.saturating_add(1)
     }
 
     fn compose_unassigned(
@@ -761,13 +789,7 @@ impl LayerScene {
         // same stacking slot as an assigned layer competes with it, and on a
         // driver that pins its primary plane high the canvas ends up hidden
         // underneath the very layers it is carrying.
-        let mut zpos = 0u64;
-        for handle in self.handles().collect::<Vec<_>>() {
-            if let Some(layer) = self.layer(handle) {
-                zpos = zpos.max(layer.display().zpos.unwrap_or(0));
-            }
-        }
-        let zpos = zpos.saturating_add(1);
+        let zpos = self.canvas_zpos();
 
         // Resolve every composited layer to its slot before touching the
         // canvas: `LayerId` packs a handle and a generation, and undoing that

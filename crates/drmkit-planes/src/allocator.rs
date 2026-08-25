@@ -95,6 +95,28 @@ pub trait TestCommitter {
     /// [`TestFailure::Rejected`] for an ordinary kernel rejection, or
     /// [`TestFailure::NotMaster`] when DRM master was lost.
     fn test_assignment(&mut self, assignment: &[(u32, LayerRef<'_>)]) -> Result<(), TestFailure>;
+
+    /// Arm one more plane in every test, alongside the assignment.
+    ///
+    /// The composition canvas lands on a plane the assignment never names, so
+    /// without this the search validates a frame one plane smaller than the
+    /// one that gets committed. Where the hardware lights fewer planes than it
+    /// advertises, that difference is a frame the kernel refuses -- and a
+    /// refused frame shows nothing at all. Telling the committer about the
+    /// canvas makes the search account for it, so it drops a layer into the
+    /// composition instead of proposing something uncommittable.
+    ///
+    /// The plane is excluded from the test's disable pass for as long as it is
+    /// set. Call [`TestCommitter::clear_extra_plane`] afterwards.
+    ///
+    /// Defaults to doing nothing, which is right for a committer that accepts
+    /// everything or one that is not talking to a device.
+    fn set_extra_plane(&mut self, plane_id: u32, layer: Layer) {
+        let _ = (plane_id, layer);
+    }
+
+    /// Stop arming the plane set by [`TestCommitter::set_extra_plane`].
+    fn clear_extra_plane(&mut self) {}
 }
 
 /// A committer that accepts everything. For tests that care about which
@@ -341,7 +363,13 @@ impl Allocator {
         }
     }
 
-    /// Set the per-frame test-commit budget.
+    /// Set the per-search test-commit budget.
+    ///
+    /// A frame that composites runs two searches -- the second holds a plane
+    /// back for the composition canvas and re-validates with it armed -- so
+    /// such a frame can spend up to twice this. That is deliberate: starving
+    /// the second search would leave it unable to validate, which is the one
+    /// thing it exists to do.
     pub const fn set_max_test_commits(&mut self, max: usize) {
         self.max_test_commits = max;
     }

@@ -327,6 +327,9 @@ pub struct DeviceCommitter<'a> {
     flags: AtomicCommitFlags,
     /// How many test commits have been issued, for diagnostics.
     pub commits: usize,
+    /// A plane armed in every test alongside the assignment -- the
+    /// composition canvas. See [`TestCommitter::set_extra_plane`].
+    extra: Option<(u32, drmkit_planes::Layer)>,
 }
 
 impl<'a> DeviceCommitter<'a> {
@@ -357,6 +360,7 @@ impl<'a> DeviceCommitter<'a> {
             flags,
             modeset,
             commits: 0,
+            extra: None,
         }
     }
 }
@@ -379,8 +383,10 @@ impl TestCommitter for DeviceCommitter<'_> {
 
         // Disable first: a plane inheriting stale state from the previous
         // commit is what makes an otherwise-valid migration look invalid.
+        let extra_plane = self.extra.as_ref().map(|(plane_id, _)| *plane_id);
         for plane_id in &self.candidates {
             if assignment.iter().all(|(assigned, _)| assigned != plane_id)
+                && extra_plane != Some(*plane_id)
                 && emit_disable(&mut request, self.map, *plane_id).is_err()
             {
                 return Err(TestFailure::Rejected);
@@ -397,12 +403,28 @@ impl TestCommitter for DeviceCommitter<'_> {
                 return Err(TestFailure::Rejected);
             }
         }
+        // The canvas, when the caller has told us there will be one. It is
+        // part of the frame the kernel will be asked to take, so it is part of
+        // the frame the kernel is asked about.
+        if let Some((plane_id, layer)) = &self.extra
+            && emit_layer(&mut request, self.map, *plane_id, layer, None).is_err()
+        {
+            return Err(TestFailure::Rejected);
+        }
 
         match request.test(self.device, self.flags) {
             Ok(()) => Ok(()),
             Err(CoreError::NotMaster) => Err(TestFailure::NotMaster),
             Err(_) => Err(TestFailure::Rejected),
         }
+    }
+
+    fn set_extra_plane(&mut self, plane_id: u32, layer: drmkit_planes::Layer) {
+        self.extra = Some((plane_id, layer));
+    }
+
+    fn clear_extra_plane(&mut self) {
+        self.extra = None;
     }
 }
 

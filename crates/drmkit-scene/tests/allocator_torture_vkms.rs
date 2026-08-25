@@ -467,9 +467,15 @@ fn a_layer_past_the_budget_is_composited_and_says_so_vkms() {
         report.budget_exhausted,
         "the budget bound this frame and the report has to say so: {report:?}"
     );
-    assert_eq!(
-        report.test_commits_issued, budget,
-        "a budget-bound frame spends exactly the budget: {report:?}"
+    // The budget bounds one search, and a frame that composites runs two: the
+    // second holds a plane back for the canvas and re-validates, which is what
+    // keeps the canvas inside a tested assignment (P-18). So a budget-bound
+    // frame that also composites spends the budget twice, and that is the
+    // ceiling.
+    assert!(
+        report.test_commits_issued >= budget && report.test_commits_issued <= 2 * budget,
+        "a budget-bound frame spends between one and two budgets, not {}: {report:?}",
+        report.test_commits_issued
     );
     assert!(
         report.layers_composited >= 1,

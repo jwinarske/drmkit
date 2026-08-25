@@ -659,3 +659,240 @@ mod profile_vkms {
         );
     }
 }
+
+/// The LUT and matrix builders, which are pure arithmetic.
+mod pipeline_curves {
+    use crate::curves::{
+        ColorLut, build_bt709_to_bt2020_ctm, build_bt2020_to_bt709_ctm, build_hlg_oetf_inverse_lut,
+        build_identity_ctm, build_identity_lut, build_pq_eotf_lut, build_pq_oetf_lut,
+        decode_s31_32, encode_s31_32, fill_lut, quantize_lut_value,
+    };
+
+    #[test]
+    fn a_negative_coefficient_sets_the_sign_bit_and_nothing_else() {
+        // S31.32 is sign-magnitude, not two's complement. Encoded as two's
+        // complement, -0.5876 reads to the kernel as an enormous positive
+        // number and the channel it feeds is blown to white.
+        let encoded = encode_s31_32(-0.5);
+        assert_eq!(encoded, (1_u64 << 63) | (1_u64 << 31));
+        assert!((decode_s31_32(encoded) + 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn one_encodes_to_the_scale_factor() {
+        assert_eq!(encode_s31_32(1.0), 1 << 32);
+        assert_eq!(encode_s31_32(0.0), 0);
+        assert_eq!(encode_s31_32(-0.0), 0, "negative zero is still zero");
+    }
+
+    #[test]
+    fn every_coefficient_survives_the_round_trip() {
+        for value in [0.0, 0.0083, 0.5, 1.0, 1.6605, -0.0728, -1.1187, 2047.5] {
+            let back = decode_s31_32(encode_s31_32(value));
+            assert!((back - value).abs() < 1e-9, "{value} came back as {back}");
+        }
+    }
+
+    #[test]
+    fn nonsense_encodes_to_zero_rather_than_something_plausible() {
+        assert_eq!(encode_s31_32(f64::NAN), 0);
+        // Saturates rather than wrapping: an overflow that wrapped would look
+        // like a small coefficient and be invisible.
+        assert_eq!(encode_s31_32(f64::INFINITY), (1_u64 << 63) - 1);
+        assert_eq!(
+            encode_s31_32(f64::NEG_INFINITY),
+            u64::MAX,
+            "sign bit and full magnitude"
+        );
+    }
+
+    #[test]
+    fn the_lut_quantizer_clamps_at_both_ends() {
+        // A curve that overshoots by a hair at the top -- which floating
+        // point does -- would wrap to black at the brightest step.
+        assert_eq!(quantize_lut_value(1.000_000_1), u16::MAX);
+        assert_eq!(quantize_lut_value(-0.000_000_1), 0);
+        assert_eq!(quantize_lut_value(f64::NAN), 0);
+        assert_eq!(quantize_lut_value(0.5), 32_768);
+    }
+
+    #[test]
+    fn an_identity_lut_walks_from_black_to_white() {
+        let mut lut = vec![ColorLut::default(); 256];
+        build_identity_lut(&mut lut);
+
+        assert_eq!(lut[0].red, 0);
+        assert_eq!(lut[255].red, u16::MAX);
+        for entry in &lut {
+            assert_eq!(entry.red, entry.green);
+            assert_eq!(entry.red, entry.blue);
+            assert_eq!(entry.reserved, 0, "the kernel reads this and wants zero");
+        }
+        assert!(
+            lut.windows(2).all(|pair| pair[0].red <= pair[1].red),
+            "an identity that is not monotonic is not an identity"
+        );
+    }
+
+    #[test]
+    fn a_single_entry_lut_does_not_divide_by_zero() {
+        // The degenerate case a driver could in principle report. The step
+        // has no range to walk, and NaN through the quantizer would come out
+        // black rather than as an error.
+        let mut lut = vec![ColorLut::default(); 1];
+        build_identity_lut(&mut lut);
+        assert_eq!(lut[0].red, 0);
+    }
+
+    #[test]
+    fn an_empty_lut_is_left_alone() {
+        let mut lut: Vec<ColorLut> = Vec::new();
+        build_identity_lut(&mut lut);
+        assert!(lut.is_empty());
+    }
+
+    #[test]
+    fn the_pq_curves_are_inverses_of_each_other() {
+        // Both go on the pipeline, at opposite ends. If they disagree, a
+        // frame that passes through both comes out with a shifted tone curve
+        // and nothing reports an error.
+        let mut eotf = vec![ColorLut::default(); 4096];
+        let mut oetf = vec![ColorLut::default(); 4096];
+        build_pq_eotf_lut(&mut eotf);
+        build_pq_oetf_lut(&mut oetf);
+
+        assert_eq!(eotf[0].red, 0);
+        assert_eq!(eotf[4095].red, u16::MAX);
+        assert_eq!(oetf[0].red, 0);
+        assert_eq!(oetf[4095].red, u16::MAX);
+
+        // PQ is steep at the bottom: the EOTF sends most of the encoded range
+        // to a small fraction of the linear one, and the OETF the reverse.
+        assert!(
+            eotf[2048].red < oetf[2048].red,
+            "the two curves are on the same side of the diagonal"
+        );
+        for lut in [&eotf, &oetf] {
+            assert!(
+                lut.windows(2).all(|pair| pair[0].red <= pair[1].red),
+                "a transfer function that is not monotonic inverts somewhere"
+            );
+        }
+    }
+
+    /// The LUT entry whose input is closest to `encoded`.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
+    fn index_for(encoded: f64, len: usize) -> usize {
+        // `encoded` is in `[0, 1]` at every call site, so the product is a
+        // non-negative index inside the LUT.
+        ((encoded * (len - 1) as f64).round() as usize).min(len - 1)
+    }
+
+    #[test]
+    fn the_pq_lut_lands_where_the_spec_says() {
+        // Two anchor points from SMPTE ST 2084. Endpoints and monotonicity
+        // pass for any plausible curve; these are what say it is *this* one.
+        // PQ encodes 100 cd/m2 at about 0.5081 and 1000 at about 0.7518, and
+        // 1.0 out of the EOTF is the 10 000 cd/m2 peak -- so the linear
+        // answers are 0.01 and 0.1.
+        let mut lut = vec![ColorLut::default(); 4096];
+        build_pq_eotf_lut(&mut lut);
+
+        let at = |encoded: f64| lut[index_for(encoded, lut.len())].red;
+        assert!(
+            at(0.5081).abs_diff(655) <= 30,
+            "100 cd/m2 came out at {}",
+            at(0.5081)
+        );
+        assert!(
+            at(0.7518).abs_diff(6553) <= 60,
+            "1000 cd/m2 came out at {}",
+            at(0.7518)
+        );
+    }
+
+    #[test]
+    fn the_hlg_lut_lands_where_the_spec_says() {
+        // Below the HLG knee the inverse OETF is E'^2 / 3, so half encodes to
+        // a twelfth of scene-linear.
+        let mut lut = vec![ColorLut::default(); 4096];
+        build_hlg_oetf_inverse_lut(&mut lut);
+        let midpoint = lut[index_for(0.5, lut.len())].red;
+        assert!(midpoint.abs_diff(5461) <= 20, "half came out at {midpoint}");
+    }
+
+    #[test]
+    fn a_half_rounds_up_rather_than_truncating() {
+        // The kernel reads the magnitude as written; truncating every
+        // coefficient toward zero biases a whole matrix inward.
+        assert_eq!(encode_s31_32(0.5), 1 << 31);
+        assert_eq!(encode_s31_32(2.5), 5 << 31);
+    }
+
+    #[test]
+    fn an_identity_matrix_is_one_on_the_diagonal() {
+        let ctm = build_identity_ctm();
+        for (index, entry) in ctm.matrix.iter().enumerate() {
+            let expected = if index % 4 == 0 { 1.0 } else { 0.0 };
+            assert!(
+                (decode_s31_32(*entry) - expected).abs() < 1e-9,
+                "entry {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_gamut_matrices_undo_each_other() {
+        // Published to four decimal places each, so the product is the
+        // identity to about that. A transposed or misordered row would be off
+        // by far more than the rounding.
+        let forward = build_bt2020_to_bt709_ctm();
+        let back = build_bt709_to_bt2020_ctm();
+        let decode = |ctm: &crate::curves::ColorCtm| ctm.matrix.map(decode_s31_32);
+        let (a, b) = (decode(&forward), decode(&back));
+
+        for row in 0..3 {
+            for column in 0..3 {
+                let product: f64 = (0..3).map(|k| a[row * 3 + k] * b[k * 3 + column]).sum();
+                let expected = if row == column { 1.0 } else { 0.0 };
+                assert!(
+                    (product - expected).abs() < 1e-3,
+                    "row {row} column {column}: {product}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn each_gamut_matrix_preserves_white() {
+        // Every row summing to one is what says the matrix maps the white
+        // point to itself. A sign error anywhere breaks it.
+        for ctm in [build_bt2020_to_bt709_ctm(), build_bt709_to_bt2020_ctm()] {
+            for row in 0..3 {
+                let sum: f64 = (0..3).map(|k| decode_s31_32(ctm.matrix[row * 3 + k])).sum();
+                assert!((sum - 1.0).abs() < 1e-3, "row {row} sums to {sum}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_curve_is_applied_to_every_channel_alike() {
+        let mut lut = vec![ColorLut::default(); 16];
+        fill_lut(&mut lut, |value| value * value);
+        for entry in &lut {
+            assert_eq!(entry.red, entry.green);
+            assert_eq!(entry.green, entry.blue);
+        }
+        // And the curve really is the one asked for: squaring the midpoint
+        // gives a quarter of full scale, not half.
+        let midpoint = f64::from(lut[8].red) / f64::from(u16::MAX);
+        assert!(
+            (midpoint - (8.0_f64 / 15.0).powi(2)).abs() < 1e-4,
+            "midpoint came out at {midpoint}"
+        );
+    }
+}

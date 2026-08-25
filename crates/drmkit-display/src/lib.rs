@@ -7,6 +7,8 @@
 //! they reach it.
 
 mod capabilities;
+mod pipeline;
+
 pub mod color;
 pub mod curves;
 #[cfg(feature = "edid")]
@@ -23,12 +25,14 @@ mod hdr_tests;
 mod tests;
 
 pub use capabilities::{BroadcastRgb, Colorspace, ConnectorCapabilities, CrtcCapabilities, MaxBpc};
+pub use curves::{ColorCtm, ColorLut};
 pub use hdr::{
     HdrBlob, HdrMetadataBlob, HdrSourceMetadata, TransferFunction, hdr_metadata_hash,
     serialize_hdr_metadata,
 };
 pub use hdr_cache::HdrMetadataCache;
 pub use modes::{ConnectorModes, Probe, query_connector_modes};
+pub use pipeline::{CrtcColorPipeline, PipelineError, Stage};
 pub use profile::{
     DriverProfile, PanelSelfRefresh, PrimeCaps, connector_type_self_refreshes, decode_prime_caps,
 };

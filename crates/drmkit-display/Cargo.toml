@@ -10,6 +10,7 @@ repository.workspace = true
 [lints]
 workspace = true
 
+
 [features]
 # EDID parsing, off by default because libdisplay-info-sys links against a
 # system library. Keeping it optional is what lets the cross lanes build this
@@ -27,3 +28,9 @@ drmkit-core = { workspace = true }
 # back the kernel's modes; reading them is the modeset crate's job.
 drmkit-modeset = { workspace = true }
 rustix = { workspace = true, features = ["std"] }
+
+
+[dev-dependencies]
+# The device tests poll the hotplug socket and ask whether they can write a
+# uevent, neither of which the library itself needs.
+rustix = { workspace = true, features = ["std", "event", "process"] }

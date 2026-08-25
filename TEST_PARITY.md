@@ -37,7 +37,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_canvas_format.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/unit/test_capture_jpg.cpp` | _drmkit-capture_ (phase 6+) | pending |  |
 | `tests/unit/test_capture_snapshot.cpp` | `drmkit-capture` `image.rs`, `png.rs`, `snapshot.rs` | ported | The four `Image` cases and both PNG cases, plus the blend arithmetic, the placement arithmetic (clipping, negative offsets, stride padding, scaling) and `RGB565`, none of which the C++ suite reaches. `snapshot` itself gets a device lane the C++ has none of |
-| `tests/unit/test_color_pipeline_curves.cpp` | `drmkit-display` `curves.rs` | partial | PQ, HLG, sRGB and BT.1886 transfer functions ported and exercised through the tone mapper's oracle. The LUT-blob builders and the CRTC pipeline are not ported |
+| `tests/unit/test_color_pipeline_curves.cpp` | `drmkit-display` `curves.rs` | ported | All twenty-four: transfer functions, S31.32 sign-magnitude encoding, LUT quantization, the LUT and matrix builders, and the two spec anchor points that say the PQ curve is that curve rather than merely monotonic. Plus a check that the two gamut matrices multiply to the identity, which upstream tests one direction of |
 | `tests/unit/test_commit_report.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/unit/test_composite_canvas.cpp` | `drmkit-scene` `canvas.rs`, `tests/canvas_oracle.rs`, `tests/canvas_surface_vkms.rs`, `tests/composition_vkms.rs` | ported | Blend diffed against the reference's own output; surface and scene integration pinned against a device. Multi-canvas and the primary-anchor reservation are not ported |
 | `tests/unit/test_connector_capabilities.cpp` | `drmkit-display` `capabilities.rs` | ported | All six, against a synthetic connector shaped like the amdgpu one this was measured on. Plus device cases upstream has none of: the probe is diffed against a raw read of the same property set, on vkms and on amdgpu |
@@ -99,7 +99,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_v4l2_decoder_source.cpp` | _drmkit-scene-v4l2_ (phase 6+) | pending |  |
 | `tests/unit/test_v4l2_plane_layout.cpp` | _drmkit-scene-v4l2_ (phase 6+) | pending |  |
 | `tests/integration/test_capture_vkms.cpp` | _drmkit-capture_ (phase 4) | pending |  |
-| `tests/integration/test_crtc_color_pipeline_vkms.cpp` | _drmkit-display_ (phase 4) | pending |  |
+| `tests/integration/test_crtc_color_pipeline_vkms.cpp` | `drmkit-display` `pipeline.rs` + `tests/pipeline_device.rs` | partial | Probe, absent-stage refusal, blob staging and replacement, and what an apply writes -- run on vkms, whose CRTC is gamma-only, and on amdgpu, whose CRTC has all three. `IdentityGammaApplyAndCommit`'s commit half is not ported: it needs DRM master, which these cases deliberately do not take |
 | `tests/integration/test_cursor_renderer_legacy.cpp` | `drmkit-cursor` `tests/renderer_vkms.rs` | ported | The legacy path is forced by offering a registry with no cursor or overlay plane, so it is exercised on drivers that would otherwise never choose it. Covers the disable-probe, install-then-move, hiding, and the two refusals: rotation, which the call cannot express, and a caller who forbade the path |
 | `tests/integration/test_cursor_source.cpp` | _drmkit-cursor_ (phase 4) | pending |  |
 | `tests/integration/test_dma_buf_source_cache_vkms.cpp` | _drmkit-scene-sources_ (phase 3) | pending |  |

@@ -4,7 +4,8 @@
 //! The xkb side, against keymaps compiled here rather than the system's.
 
 use crate::event::KeyEvent;
-use crate::keyboard::{Keyboard, KeymapNames, Leds};
+use crate::keyboard::{Keyboard, KeymapNames};
+use crate::leds::Leds;
 
 /// Evdev codes used below.
 const KEY_A: u32 = 30;

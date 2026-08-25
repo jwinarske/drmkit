@@ -16,7 +16,7 @@ categories.workspace = true
 
 [dependencies]
 drmkit-log = { workspace = true }
-rustix = { workspace = true, features = ["std", "time", "event"] }
+rustix = { workspace = true, features = ["std", "time", "event", "fs"] }
 thiserror = { workspace = true, features = ["std"] }
 
 # Keymap compilation and key resolution. Optional for the same reason the
@@ -25,9 +25,19 @@ thiserror = { workspace = true, features = ["std"] }
 # buildable and testable without it.
 xkbcommon = { workspace = true, optional = true }
 
+# The devices themselves. Optional for the same reason: it links two C
+# libraries, and the pure parts of this crate should stay buildable without
+# them.
+input = { workspace = true, optional = true }
+
 [features]
-default = ["xkb"]
+default = ["libinput", "xkb"]
+libinput = ["dep:input"]
 xkb = ["dep:xkbcommon"]
+
+[[example]]
+name = "input"
+required-features = ["libinput", "xkb"]
 
 [lints]
 workspace = true

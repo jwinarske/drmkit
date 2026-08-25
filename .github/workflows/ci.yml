@@ -31,7 +31,7 @@ jobs:
       - name: install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgbm-dev libseat-dev libxkbcommon-dev xkb-data meson ninja-build
+          sudo apt-get install -y libgbm-dev libseat-dev libxkbcommon-dev xkb-data libinput-dev libudev-dev meson ninja-build
           # Ubuntu ships libdisplay-info 0.1.1, three minor versions behind the
           # 0.3 API the EDID parser uses -- the accessors for colour primaries,
           # HDR static metadata and signal colorimetry do not exist before it.
@@ -83,7 +83,7 @@ jobs:
       - name: install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgbm-dev libseat-dev libxkbcommon-dev xkb-data meson ninja-build
+          sudo apt-get install -y libgbm-dev libseat-dev libxkbcommon-dev xkb-data libinput-dev libudev-dev meson ninja-build
           # Ubuntu ships libdisplay-info 0.1.1, three minor versions behind the
           # 0.3 API the EDID parser uses -- the accessors for colour primaries,
           # HDR static metadata and signal colorimetry do not exist before it.
@@ -164,17 +164,20 @@ jobs:
       # way to type-check the binding cross. The sequencing is the part with
       # the logic in it, and it is covered on every target; the binding is
       # covered on the host lanes, where the library is installed.
-      - run: cargo build --workspace --exclude xtask --exclude drmkit-gbm --exclude drmkit-session --target ${{ matrix.target }}
+      - run: cargo build --workspace --exclude xtask --exclude drmkit-gbm --exclude drmkit-session --exclude drmkit-input --target ${{ matrix.target }}
       - run: cargo check -p drmkit-gbm --target ${{ matrix.target }}
       - run: cargo build -p drmkit-session --no-default-features --target ${{ matrix.target }}
       # qemu-user runs T0 under the cross target; the runner comes from the
       # per-target .cargo fragment.
-      # drmkit-input is built with its keymap support but tested without it.
-      # xkbcommon has no build script, so it type-checks for the target
-      # happily; only the link needs libxkbcommon, which the runner has for
-      # amd64 alone. Same split as the seat, for the same reason.
       - run: cargo test --workspace --exclude xtask --exclude drmkit-gbm --exclude drmkit-session --exclude drmkit-input --target ${{ matrix.target }}
       - run: cargo test -p drmkit-session --no-default-features --target ${{ matrix.target }}
+      # drmkit-input splits three ways because its two C libraries behave
+      # differently. libudev-sys runs pkg-config in its build script, so the
+      # libinput half cannot even be checked cross -- held out like the seat.
+      # xkbcommon has no build script and prebuilt input-sys bindings need
+      # none either, so the keymap half type-checks for every target and only
+      # its link wants a library the runner has for amd64 alone.
+      - run: cargo check -p drmkit-input --no-default-features --features xkb --target ${{ matrix.target }}
       - run: cargo test -p drmkit-input --no-default-features --target ${{ matrix.target }}
 
   fuzz:
@@ -196,7 +199,7 @@ jobs:
       - name: install libdisplay-info
         run: |
           sudo apt-get update
-          sudo apt-get install -y libseat-dev libxkbcommon-dev xkb-data meson ninja-build
+          sudo apt-get install -y libseat-dev libxkbcommon-dev xkb-data libinput-dev libudev-dev meson ninja-build
           git clone --depth 1 --branch 0.3.0 \
             https://gitlab.freedesktop.org/emersion/libdisplay-info.git /tmp/ldi
           meson setup /tmp/ldi/build /tmp/ldi --prefix=/usr/local --buildtype=release

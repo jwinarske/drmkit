@@ -9,6 +9,7 @@ use xkbcommon::xkb;
 
 use crate::InputError;
 use crate::event::KeyEvent;
+use crate::leds::Leds;
 
 /// xkb numbers keycodes eight higher than evdev does, for X11's sake.
 const XKB_OFFSET: u32 = 8;
@@ -56,21 +57,6 @@ pub struct Modifiers {
     pub alt: bool,
     /// The Super, Windows, or Command key.
     pub logo: bool,
-}
-
-/// The lock state, as the keyboard's lights would show it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Leds {
-    /// Caps Lock.
-    pub caps_lock: bool,
-    /// Num Lock.
-    pub num_lock: bool,
-    /// Scroll Lock.
-    ///
-    /// Dead on most layouts: xkb's default compat has no mod-mapping for
-    /// `<SCLK>`, so nothing sets it and [`Keyboard::set_leds`] cannot make it
-    /// true.
-    pub scroll_lock: bool,
 }
 
 /// A keymap and the state of the keys pressed against it.

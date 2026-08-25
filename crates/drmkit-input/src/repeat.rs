@@ -123,7 +123,7 @@ impl Repeat {
 
     /// Turn a batch of timer expirations into events to deliver.
     ///
-    /// Returns how many were dropped to [`MAX_BURST`], which is worth saying
+    /// Returns how many were dropped to the burst cap, which is worth saying
     /// out loud rather than swallowing: a nonzero answer means the loop is not
     /// keeping up.
     ///

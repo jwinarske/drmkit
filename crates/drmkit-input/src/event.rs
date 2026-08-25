@@ -62,6 +62,22 @@ pub struct PointerButton {
     pub pressed: bool,
 }
 
+/// Where a scroll came from.
+///
+/// It changes what the scroll means. A wheel click is a discrete step and
+/// should move a fixed amount; a finger on a touchpad is continuous and wants
+/// kinetic scrolling, and its end is a real event -- the finger lifting --
+/// rather than the absence of one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollSource {
+    /// A mouse wheel, in discrete clicks.
+    Wheel,
+    /// One or more fingers on a touchpad.
+    Finger,
+    /// A continuous source, such as a button held and the device moved.
+    Continuous,
+}
+
 /// A scroll.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PointerAxis {
@@ -71,6 +87,29 @@ pub struct PointerAxis {
     pub horizontal: f64,
     /// Vertical scroll.
     pub vertical: f64,
+    /// What did the scrolling.
+    pub source: ScrollSource,
+}
+
+/// A pointer reporting where it is rather than how far it moved.
+///
+/// Graphics tablets, and the absolute pointing device a virtual machine
+/// gives its guest -- which is how a lot of this gets run before it reaches
+/// hardware.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PointerAbsolute {
+    /// libinput's timestamp, in milliseconds.
+    pub time_ms: u32,
+    /// Position across the device's range, in `[0, 1)`.
+    ///
+    /// Normalized here because the raw value is in millimetres, and scaling
+    /// that to a render extent needs the digitizer's physical size -- which
+    /// the consumer would have to go and ask for.
+    pub x: f64,
+    /// Position down the device's range, likewise.
+    pub y: f64,
+    /// The device this came from, if libinput named it.
+    pub device: Option<String>,
 }
 
 /// Anything a pointer does.
@@ -78,6 +117,8 @@ pub struct PointerAxis {
 pub enum PointerEvent {
     /// The pointer moved.
     Motion(PointerMotion),
+    /// The pointer reported where it is.
+    Absolute(PointerAbsolute),
     /// A button changed.
     Button(PointerButton),
     /// A scroll happened.

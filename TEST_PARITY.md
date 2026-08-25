@@ -71,8 +71,8 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_gbm_surface_source.cpp` | _drmkit-scene-gbm_ (phase 6+) | pending |  |
 | `tests/unit/test_gl_compositor_math.cpp` | _drmkit-gl_ (phase 6+) | pending |  |
 | `tests/unit/test_gst_appsink_source.cpp` | _drmkit-scene-gst_ (phase 6+) | pending |  |
-| `tests/unit/test_hdr_metadata.cpp` | _drmkit-display_ (phase 4) | pending |  |
-| `tests/unit/test_hdr_metadata_cache.cpp` | _drmkit-display_ (phase 4) | pending |  |
+| `tests/unit/test_hdr_metadata.cpp` | `drmkit-display` `hdr.rs` | ported | Twelve vectors diffed byte-for-byte against the reference's own serialiser via `parity/hdr-oracle.cc`, plus a NaN coordinate the C++ suite does not cover. `DefaultConstructedIsEmpty` has no counterpart: there is no empty blob to construct, which is what `Option` is for |
+| `tests/unit/test_hdr_metadata_cache.cpp` | `drmkit-display` `hdr_cache.rs` | ported | All ten cases, plus session-loss and flush, which the C++ suite declares but does not exercise. The cache is generic over `HdrBlob` rather than reaching for the C++'s `synthesize_for_test` back door |
 | `tests/unit/test_input.cpp` | _drmkit-input_ (phase 4) | pending |  |
 | `tests/unit/test_key_repeater.cpp` | _drmkit-input_ (phase 4) | pending |  |
 | `tests/unit/test_layer.cpp` | `drmkit-planes` | ported | 4 |

@@ -64,3 +64,31 @@ step. `W H` of `0 0` means the full display.
 Write down what the reference actually does in a comment at the top of the
 scenario. The reference is the specification, and a scenario whose expected
 answer lives only in someone's head is not a parity test.
+
+## Oracles
+
+The `*-oracle.cc` files are a second, smaller kind of parity test. Where a
+scenario drives both implementations against a live vkms and diffs the
+property writes, an oracle runs one *pure* function from drm-cxx and prints
+what it returns, so a Rust test can be written against the reference's own
+answers instead of against a reading of the specification.
+
+They exist for the functions where a paper derivation is worth little: colour
+maths (`tonemap-oracle.cc`), blending (`blend-oracle.cc`), EDID interpretation
+(`edid-oracle.cc`), and the HDR metadata wire format (`hdr-oracle.cc`), where
+CTA-861.3's green/blue/red primary ordering and the struct's tail padding are
+both invisible on a screen and both change the bytes.
+
+Each file carries its own build line in a comment at the top. They need
+drm-cxx's sources but not a configured build; the `<drm-cxx/...>` include
+prefix resolves to `$DRM_CXX/src`, so a symlink is enough:
+
+```sh
+DRM_CXX=/path/to/drm-cxx
+mkdir -p shim && ln -sfn "$DRM_CXX/src" shim/drm-cxx
+```
+
+An oracle's output belongs in the Rust test as a literal table, with a comment
+saying it was generated rather than derived. Do not regenerate it to make a
+failing test pass — a changed vector means the two implementations have parted
+company, which is the finding.

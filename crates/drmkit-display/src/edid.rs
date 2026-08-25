@@ -21,32 +21,7 @@
 
 use libdisplay_info::info::Info;
 
-/// A CIE 1931 chromaticity coordinate.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Chromaticity {
-    /// x coordinate.
-    pub x: f32,
-    /// y coordinate.
-    pub y: f32,
-}
-
-/// The display's colour primaries and white point.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct ColorimetryInfo {
-    /// Red primary.
-    pub red: Chromaticity,
-    /// Green primary.
-    pub green: Chromaticity,
-    /// Blue primary.
-    pub blue: Chromaticity,
-    /// Default white point.
-    pub white: Chromaticity,
-    /// Whether the primaries are present. When false the three above are
-    /// meaningless rather than zero-valued.
-    pub has_primaries: bool,
-    /// Whether the white point is present.
-    pub has_default_white: bool,
-}
+pub use crate::color::{Chromaticity, ColorimetryInfo};
 
 /// The display's HDR static metadata block.
 ///

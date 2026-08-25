@@ -213,6 +213,32 @@ impl PropertyBlob<'_> {
     pub const fn id(&self) -> u64 {
         self.id
     }
+
+    /// Give up the blob without asking the kernel to destroy it.
+    ///
+    /// For when the descriptor the blob was created on is gone -- a libseat
+    /// session pause revokes it, and the kernel reclaimed every blob on it at
+    /// that moment. Destroying through the replacement descriptor would at
+    /// best fail and at worst free a *different* blob that happens to have
+    /// been given the same id there.
+    ///
+    /// This leaks nothing: the blob is already gone. Do not reach for it to
+    /// silence an ordinary drop -- on a live descriptor that really is a leak,
+    /// and a long-running compositor that re-modesets will run the kernel out
+    /// of blob ids.
+    pub fn forget(self) {
+        core::mem::forget(self);
+    }
+}
+
+impl core::fmt::Debug for PropertyBlob<'_> {
+    /// The id, without the device -- a blob is identified by its id, and
+    /// printing the device behind it would be noise at best.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PropertyBlob")
+            .field("id", &self.id)
+            .finish()
+    }
 }
 
 impl Drop for PropertyBlob<'_> {

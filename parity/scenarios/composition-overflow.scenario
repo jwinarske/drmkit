@@ -4,9 +4,16 @@
 # It is drm-cxx#240: on a driver whose planes have no settable zpos, the
 # composition canvas is placed below the layers it carries. Both sides get it
 # wrong and they get it wrong differently -- upstream puts the canvas on
-# plane[1], under all eight overlays; the port puts it one plane too low. The
-# scenario is kept because it is the reproduction, and it is what will show the
-# fix when upstream decides. run.sh will report it dirty until then.
+# plane[1], under all eight overlays; the port puts it on plane[8], above
+# l1..l7 but still under l8 on plane[9]. One plane too low. The scenario is
+# kept because it is the reproduction, and it is what will show the fix when
+# upstream decides. run.sh will report it dirty until then.
+#
+# Not a corner of the fleet: 773 of 1001 atomic devices in the drmdb corpus
+# (77%) have no plane whose zpos can be written -- i915 358, amdgpu 211,
+# nvidia-drm 90. On every one of them plane index *is* the stacking order, so
+# which plane the canvas lands on is the only lever there is. Posted to #240
+# along with the side-by-side above.
 #
 # vkms offers nine usable planes on its CRTC. Twelve layers is three more
 # than can be scanned out directly, so the allocator places what it can and

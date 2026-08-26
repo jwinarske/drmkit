@@ -173,6 +173,14 @@ fn the_hotspot_is_left_alone_until_something_is_drawn_vkms() {
     // skips everywhere drmkit is currently tested. It is here so that it runs
     // the day someone points the suite at a VM, which is exactly when the
     // property starts mattering.
+    //
+    // Measured across the drmdb corpus, which is how narrow that is: 13 of
+    // 11,134 atomic planes carry HOTSPOT_X, on vmwgfx (8), qxl (4) and
+    // virtio_gpu (1). Three drivers out of fifty. vkms is a virtual *display*
+    // rather than a guest driver, so the lane it is named for cannot run it
+    // either -- `cargo xtask coverage --audit` reports this as the one
+    // assertion in the pool that executes nowhere, and a guest VM is the only
+    // thing that changes that.
     let _guard = card_guard();
     let Some((_device, props, plane)) = fixture() else {
         return;

@@ -534,10 +534,23 @@ fn a_failed_create_does_not_fire_the_release_callback_vkms() {
 /// **Plan §4.9 / upstream PR #230.** Two consecutive acquires must yield
 /// **independently closeable** descriptors.
 ///
-/// The scene acquires each source twice per frame — a TEST commit, then the
-/// real one. An owned fence handed over on the first acquire would be gone by
-/// the second, so the real commit would go out unsynced and the display engine
-/// could sample the buffer before the producer's writes land.
+/// An owned fence handed over on one acquire would be gone by the next, so a
+/// later commit would go out unsynced and the display engine could sample the
+/// buffer before the producer's writes land. Nothing reports it: the commit
+/// succeeds, the counters balance, and the frame tears under load.
+///
+/// This used to say the scene acquires each source twice per frame, once for
+/// the `TEST_ONLY` commit and once for the real one. Measured through the T7
+/// runner, it does not: six frames over two layers produce twelve acquires,
+/// exactly one per source per frame, including the frame that searches. The
+/// test commit is built by `DeviceCommitter` from the allocator's `Layer`
+/// property bags, which never carry a fence, so `IN_FENCE_FD` reaches the
+/// apply only — and drm-cxx agrees byte for byte, so it is settled behaviour
+/// rather than a divergence.
+///
+/// The requirement is unchanged; only the reason is. One fence has to arm
+/// frame after frame, which is what `fence-dup-independence.scenario` pins at
+/// the trace level.
 #[test]
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn two_acquires_yield_independently_closeable_fences_vkms() {

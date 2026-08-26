@@ -10,10 +10,11 @@
 //! default Linux backend issues syscalls directly, so `LD_PRELOAD` never gets
 //! a look at them. `parity/run.sh` sets it.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::os::fd::{AsFd as _, OwnedFd};
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::time::Duration;
@@ -38,14 +39,33 @@ use drmkit_scene::{
 struct StarvableSource {
     inner: drmkit_scene_sources::DumbBufferSource,
     starved: Rc<Cell<bool>>,
+    /// A render-done fence this layer's buffer carries, when the scenario has
+    /// given it one.
+    ///
+    /// Shared so the `fence` command can install it after the layer exists.
+    /// Held as a descriptor rather than a `SyncFence` because every acquire
+    /// hands out a *new* import of it -- see [`StarvableSource::acquire`].
+    fence: Rc<RefCell<Option<OwnedFd>>>,
 }
 
 impl LayerBufferSource for StarvableSource {
+    /// A fresh import of the fence on every acquire, never the fence itself.
+    ///
+    /// This is the behaviour the scenario exists to compare. The scene
+    /// acquires each source **twice** per frame -- once for the `TEST_ONLY`
+    /// commit and once for the real one -- so a source that handed over an
+    /// owned fence would have nothing left the second time, and the commit
+    /// that actually scans out would go unsynced. `SyncFence::import` dups,
+    /// so each acquire yields an independently closeable descriptor.
     fn acquire(&mut self) -> Result<AcquiredBuffer, SourceError> {
         if self.starved.get() {
             return Err(SourceError::WouldBlock);
         }
-        self.inner.acquire()
+        let mut acquired = self.inner.acquire()?;
+        if let Some(fd) = self.fence.borrow().as_ref() {
+            acquired.acquire_fence = drmkit_sync::SyncFence::import(fd.as_fd()).ok();
+        }
+        Ok(acquired)
     }
 
     fn release(&mut self, acquired: AcquiredBuffer) {
@@ -78,12 +98,26 @@ struct Runner<'a> {
     flip: PageFlip,
     modeset: Modeset<'a>,
     crtc_index: u32,
+    crtc_id: u32,
+    /// The CRTC's own properties, for `OUT_FENCE_PTR`.
+    crtc_props: drmkit_core::PropertyStore,
     /// Cleared after the first apply commit: the mode only needs setting once,
     /// and `ALLOW_MODESET` on every frame would let a mistake that silently
     /// re-modesets go unnoticed -- it is meant to be a full-frame stall.
     first_commit: bool,
     handles: HashMap<String, LayerHandle>,
     starve_flags: HashMap<String, Rc<Cell<bool>>>,
+    /// Each layer's acquire-fence slot, so `fence` can fill one after the
+    /// layer was added.
+    fence_slots: HashMap<String, Rc<RefCell<Option<OwnedFd>>>>,
+    /// A signalled fence kept from an earlier frame's out-fence.
+    ///
+    /// It has to be *signalled*: an acquire fence goes to the kernel as
+    /// `IN_FENCE_FD` and scanout is held until it fires, so an unsignalled one
+    /// would simply hang the flip. A previous frame's out-fence is signalled
+    /// by the time that frame has landed, which makes it the honest thing to
+    /// reuse -- it is what a compositor doing explicit sync actually has.
+    minted: Option<OwnedFd>,
     width: u32,
     height: u32,
 }
@@ -202,9 +236,19 @@ impl<'a> Runner<'a> {
             flip,
             modeset,
             crtc_index,
+            crtc_id,
+            crtc_props: {
+                let mut store = drmkit_core::PropertyStore::new();
+                store
+                    .cache_properties(device, crtc_id, drmkit_core::ObjectType::Crtc)
+                    .map_err(|e| format!("crtc properties: {e}"))?;
+                store
+            },
             first_commit: true,
             handles: HashMap::new(),
             starve_flags: HashMap::new(),
+            fence_slots: HashMap::new(),
+            minted: None,
             width: u32::from(mode.size().0),
             height: u32::from(mode.size().1),
             device,
@@ -225,11 +269,14 @@ impl<'a> Runner<'a> {
         )
         .map_err(|e| format!("dumb source: {e}"))?;
         let starved = Rc::new(Cell::new(false));
+        let fence: Rc<RefCell<Option<OwnedFd>>> = Rc::new(RefCell::new(None));
         let handle = self.scene.add_layer(Box::new(StarvableSource {
             inner: source,
             starved: Rc::clone(&starved),
+            fence: Rc::clone(&fence),
         }));
         self.starve_flags.insert(name.to_owned(), starved);
+        self.fence_slots.insert(name.to_owned(), fence);
         self.scene
             .layer_mut(handle)
             .ok_or("layer vanished")?
@@ -280,6 +327,15 @@ impl<'a> Runner<'a> {
     }
 
     fn frame(&mut self) -> Result<(), String> {
+        self.run_frame(false)
+    }
+
+    /// A frame that also asks the kernel for a fence signalling its landing.
+    fn mint(&mut self) -> Result<(), String> {
+        self.run_frame(true)
+    }
+
+    fn run_frame(&mut self, want_out_fence: bool) -> Result<(), String> {
         // The search's test commits carry the modeset too, until the CRTC is
         // up: a plane bound to an inactive CRTC is rejected, so without it the
         // very first frame would find nothing placeable.
@@ -329,9 +385,30 @@ impl<'a> Runner<'a> {
         }
 
         let programmed: Vec<u32> = build.plan().iter().map(|entry| entry.plane_id).collect();
-        let result = match request.commit(self.device, flags) {
-            Ok(()) => KernelResult::Ok,
-            Err(e) => return Err(format!("commit: {e}")),
+        // `mint` asks the kernel for a fence that signals when this frame has
+        // landed. Requested only when asked for, so every other scenario's
+        // trace is exactly what it was.
+        let mut out_fence = None;
+        let (crtc_id, out_fence_id) = (self.crtc_id, self.out_fence_property());
+        let result = if want_out_fence {
+            let out_fence_id = out_fence_id?;
+            match drmkit_core::commit_with_out_fence(self.device, flags, |out, slot| {
+                for write in request.writes() {
+                    out.add_property(write.object_id, write.property_id, write.value)?;
+                }
+                out.add_property(crtc_id, out_fence_id, slot)
+            }) {
+                Ok(fence) => {
+                    out_fence = fence;
+                    KernelResult::Ok
+                }
+                Err(e) => return Err(format!("commit with out-fence: {e}")),
+            }
+        } else {
+            match request.commit(self.device, flags) {
+                Ok(()) => KernelResult::Ok,
+                Err(e) => return Err(format!("commit: {e}")),
+            }
         };
         self.first_commit = false;
         // Only now: a commit the kernel refused carried nothing.
@@ -347,6 +424,38 @@ impl<'a> Runner<'a> {
             .dispatch(Timeout::Bounded(Duration::from_secs(1)))
             .map_err(|e| format!("dispatch: {e}"))?;
         self.scene.flip_landed();
+
+        // Taken after the flip has landed, which is what makes it signalled
+        // and therefore safe to arm as an IN_FENCE_FD later.
+        if let Some(fence) = out_fence {
+            self.minted = Some(fence);
+        }
+        Ok(())
+    }
+
+    /// The CRTC's `OUT_FENCE_PTR`, which is where a frame's own fence comes
+    /// from.
+    fn out_fence_property(&self) -> Result<u32, String> {
+        self.crtc_props
+            .property_id(self.crtc_id, "OUT_FENCE_PTR")
+            .map_err(|e| format!("this CRTC has no OUT_FENCE_PTR: {e}"))
+    }
+
+    /// Give a layer the minted fence, so its buffer says "not ready yet".
+    fn set_fence(&mut self, name: &str, on: bool) -> Result<(), String> {
+        let slot = self.fence_slots.get(name).ok_or("fence: unknown layer")?;
+        if !on {
+            *slot.borrow_mut() = None;
+            return Ok(());
+        }
+        let minted = self
+            .minted
+            .as_ref()
+            .ok_or("fence: nothing minted yet -- run `mint` first")?;
+        // A dup per layer, so no two layers share a descriptor and closing one
+        // cannot disturb another.
+        let dup = minted.try_clone().map_err(|e| format!("fence: dup: {e}"))?;
+        *slot.borrow_mut() = Some(dup);
         Ok(())
     }
 }
@@ -363,6 +472,11 @@ fn run() -> Result<(), String> {
         let Some(cmd) = parts.next() else { continue };
         match cmd {
             "frame" => runner.frame()?,
+            "mint" => runner.mint()?,
+            "fence" | "unfence" => {
+                let name = parts.next().ok_or("fence: missing name")?;
+                runner.set_fence(name, cmd == "fence")?;
+            }
             "starve" | "unstarve" => {
                 let name = parts.next().ok_or("starve: missing name")?;
                 runner.set_starved(name, cmd == "starve")?;

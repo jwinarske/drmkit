@@ -18,4 +18,5 @@ drmkit-modeset = { workspace = true }
 drmkit-planes = { workspace = true }
 drmkit-scene = { workspace = true }
 drmkit-scene-sources = { workspace = true }
+drmkit-sync = { workspace = true }
 drmkit-time = { workspace = true }

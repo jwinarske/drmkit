@@ -68,7 +68,7 @@ by quietly doing nothing.
 | Real commit path: property map, modeset, emission | done |
 | Composition fallback: blend, canvas, plane arming | done |
 | `drmkit-scene-sources` tier 1: dumb, external, ring, pool, cache | done — `GbmBufferSource` waits on `drmkit-gbm` |
-| T7 differential harness runs its first scenario | done — six scenarios, five diff-clean |
+| T7 differential harness runs its first scenario | done — seven scenarios, six diff-clean; all four the plan requires are present |
 
 **Phase 4 — met.**
 
@@ -101,9 +101,11 @@ instrumented.
 Building it found eleven defects in this port — a missing modeset path, a
 composition fallback that blinked layers off screen, inverted z-order on
 hardware that cannot reorder planes — most of them invisible to every counter
-and test in the tree. Five scenarios now produce byte-identical traces; the
-sixth is a reproduction for an open upstream question and is expected to
-diverge. See [`docs/parity-findings.md`](docs/parity-findings.md).
+and test in the tree. Six of the seven scenarios produce byte-identical traces; the
+remaining one is a reproduction for an open upstream question and is expected
+to diverge. The corpus now carries all four the plan requires — the fence-dup
+scenario was the missing one, and writing it corrected a documented rationale
+that measurement did not support. See [`docs/parity-findings.md`](docs/parity-findings.md).
 
 **Upstream first.** drm-cxx is the origin of authority: anything this port
 surfaces is [filed there](docs/upstream-findings.md) rather than fixed only

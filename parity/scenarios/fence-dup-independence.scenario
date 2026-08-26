@@ -1,0 +1,63 @@
+# T7-007 -- acquire-fence dup independence (plan T7 corpus, §4.9 / drm-cxx #230)
+#
+# A buffer's acquire fence says "these pixels are not valid yet". Where the
+# assigned plane exposes IN_FENCE_FD the descriptor goes to KMS and the kernel
+# holds scanout until it signals, so the layer reaches the screen only after
+# the producer's writes have landed.
+#
+# The property under test is that a source hands out an *independently
+# closeable* descriptor every time it is acquired, rather than the fence it
+# holds. A source that gave away ownership would arm the first frame and then
+# have nothing: the second frame commits, the kernel accepts it, every counter
+# balances, and the buffer scans out unsynced. The symptom is a torn frame
+# under load and nothing in the report says so.
+#
+# What the trace shows is IN_FENCE_FD on the apply of *each* fenced frame --
+# two consecutive ones here. One would prove nothing; a source that handed
+# over its only fence would still manage the first.
+#
+# Measured while writing this, and worth recording because it contradicts the
+# reason given in `two_acquires_yield_independently_closeable_fences_vkms`:
+# that case says the scene acquires each source twice per frame, once for the
+# TEST_ONLY commit and once for the real one. It does not, on this path. Six
+# frames over two layers produce twelve acquires -- exactly one per source per
+# frame, including the frame that searches. The test commit is built by
+# DeviceCommitter from the allocator's Layer property bags, which never carry
+# the fence, so IN_FENCE_FD appears on applies only. Both implementations
+# agree on that, byte for byte, which is what makes it a pinned behaviour
+# rather than a divergence. The dup still matters -- it is what lets the same
+# fence arm frame after frame -- but for that reason, not the stated one.
+#
+# The fence is a real one: `mint` keeps the out-fence of a frame that has
+# already landed and is therefore already signalled. An unsignalled fence
+# armed as IN_FENCE_FD would simply hang the flip, and a scenario that hung
+# would be worse than none.
+
+add bg  0 0 0 0 0
+add ov1 1 64 64 256 256
+
+# Settle first: the interesting frame must be one that searches, and a cold
+# start searches for reasons of its own.
+frame
+frame
+
+# Keep this frame's out-fence. It signals when the frame lands, so by the time
+# anything arms it, it is already signalled.
+mint
+
+# ov1's buffer now carries a render-done fence.
+fence ov1
+
+# A geometry change defeats the FB-only fast path, so this frame searches
+# before it applies.
+move ov1 80 80
+frame
+
+# The frame that proves the dup: the source has been acquired once already and
+# must still arm this one.
+frame
+
+# And once the producer stops fencing, IN_FENCE_FD stops being written.
+unfence ov1
+move ov1 64 64
+frame

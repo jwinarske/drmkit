@@ -139,6 +139,20 @@ static void render_value(char *buf, size_t n, const char *pname, uint64_t v) {
     snprintf(buf, n, "#%d", idx);
     return;
   }
+  // An acquire fence is passed as a descriptor number, which depends on how
+  // many files the process happened to have open -- so the two runners write
+  // different integers for identical behaviour. What has to match is whether a
+  // fence was armed at all, and -1 is the kernel's "none" rather than an fd.
+  if (strcmp(pname, "IN_FENCE_FD") == 0) {
+    if ((int64_t)v < 0) { snprintf(buf, n, "none"); return; }
+    snprintf(buf, n, "fence");
+    return;
+  }
+  // Likewise a userspace address, which never matches across processes.
+  if (strcmp(pname, "OUT_FENCE_PTR") == 0) {
+    snprintf(buf, n, v ? "ptr" : "0");
+    return;
+  }
   snprintf(buf, n, "%llu", (unsigned long long)v);
 }
 

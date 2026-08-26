@@ -17,6 +17,7 @@
 #include <drm-cxx/scene/dumb_buffer_source.hpp>
 #include <drm-cxx/scene/layer_desc.hpp>
 #include <drm-cxx/scene/layer_scene.hpp>
+#include <drm-cxx/sync/fence.hpp>
 
 #include <drm_fourcc.h>
 #include <xf86drm.h>
@@ -55,12 +56,26 @@ class StarvableSource : public drm::scene::LayerBufferSource {
 
   void set_starved(bool starved) noexcept { starved_ = starved; }
 
+  // The descriptor stays owned by the runner; this only borrows it, and every
+  // acquire below imports (dups) it afresh.
+  void set_fence(int fence_fd) noexcept { fence_fd_ = fence_fd; }
+
   drm::expected<drm::scene::AcquiredBuffer, std::error_code> acquire() override {
     if (starved_) {
       return drm::unexpected<std::error_code>(
           std::make_error_code(std::errc::resource_unavailable_try_again));
     }
-    return inner_->acquire();
+    auto buf = inner_->acquire();
+    // A fresh import on every acquire, never the fence itself. The scene
+    // acquires each source twice for a frame that searches -- once for the
+    // TEST_ONLY commit and once for the real one -- so handing over an owned
+    // fence would leave the second commit unsynced while every counter still
+    // balanced. import_fd dups, so each acquire yields its own descriptor.
+    if (buf && fence_fd_ >= 0) {
+      auto imported = drm::sync::SyncFence::import_fd(fence_fd_);
+      if (imported) buf->acquire_fence = std::move(*imported);
+    }
+    return buf;
   }
 
   void release(drm::scene::AcquiredBuffer buf) noexcept override {
@@ -86,6 +101,7 @@ class StarvableSource : public drm::scene::LayerBufferSource {
 
  private:
   std::unique_ptr<drm::scene::DumbBufferSource> inner_;
+  int fence_fd_{-1};
   bool starved_{false};
 };
 
@@ -181,6 +197,8 @@ int main(int argc, char** argv) {
 
   drm::PageFlip flip(dev);
   std::map<std::string, LayerHandle> handles;
+  // A signalled fence kept from an earlier frame's out-fence, for `fence`.
+  drm::sync::SyncFence minted;
 
   std::string line;
   while (std::getline(script, line)) {
@@ -197,6 +215,37 @@ int main(int argc, char** argv) {
       auto r = scene.commit(DRM_MODE_PAGE_FLIP_EVENT, &flip);
       if (!r) return fail("commit");
       if (!scene.drain(flip, 1000)) return fail("drain");
+      continue;
+    }
+
+    // A frame that also asks the kernel for a fence signalling its landing.
+    // Kept so a later `fence` can arm something already signalled: an
+    // unsignalled IN_FENCE_FD would just hang the flip.
+    if (cmd == "mint") {
+      drm::sync::SyncFence out;
+      auto r = scene.commit(DRM_MODE_PAGE_FLIP_EVENT, &flip, &out);
+      if (!r) return fail("mint: commit");
+      if (!scene.drain(flip, 1000)) return fail("mint: drain");
+      if (!out.valid()) return fail("mint: no OUT_FENCE_PTR on this CRTC");
+      minted = std::move(out);
+      continue;
+    }
+
+    if (cmd == "fence" || cmd == "unfence") {
+      std::string name;
+      if (!(in >> name)) return fail("fence: missing name");
+      auto it = handles.find(name);
+      if (it == handles.end()) return fail("fence: unknown layer");
+      auto* layer = scene.get_layer(it->second);
+      if (layer == nullptr) return fail("fence: stale handle");
+      auto* src = dynamic_cast<StarvableSource*>(&layer->source());
+      if (src == nullptr) return fail("fence: not a starvable source");
+      if (cmd == "unfence") {
+        src->set_fence(-1);
+        continue;
+      }
+      if (!minted.valid()) return fail("fence: nothing minted yet -- run `mint` first");
+      src->set_fence(minted.fd());
       continue;
     }
 

@@ -92,3 +92,23 @@ An oracle's output belongs in the Rust test as a literal table, with a comment
 saying it was generated rather than derived. Do not regenerate it to make a
 failing test pass — a changed vector means the two implementations have parted
 company, which is the finding.
+
+## The corpus
+
+The plan names four required scenarios; all four are here, alongside three
+that came out of defects found on hardware.
+
+| Scenario | What it pins |
+|---|---|
+| `warm-start-stability` | A layer removed mid-stack must not move the survivors (§4.6). |
+| `eagain-skip-accounting` | A starved source holds its plane and its last framebuffer, and the residual arithmetic balances. |
+| `fast-path-classification` | Which frames may skip the `TEST_ONLY` commit, in both directions. |
+| `fence-dup-independence` | One acquire fence arms frame after frame, because each acquire yields its own descriptor. |
+| `plane-migration` | Ordering within one commit, and z-order on planes that cannot be reordered. |
+| `composition-overflow` | Layers past the plane count reach the screen through the canvas. |
+| `zorder-reorder` | A restack, and the upstream bug it found. |
+
+A scenario that cannot fail is worth nothing, so each is checked by breaking
+the behaviour it describes and confirming the diff catches it. For the fence
+one that means handing over the fence instead of an import of it: the second
+fenced frame then arms nothing, and the trace loses a line.

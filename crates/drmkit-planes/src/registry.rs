@@ -165,6 +165,17 @@ pub struct PlaneCapabilities {
     /// opaque pixel-replace, so a transparent source pixel paints opaque black
     /// over whatever is beneath it.
     pub has_pixel_blend_mode: bool,
+    /// Whether the plane exposes `FB_DAMAGE_CLIPS`.
+    ///
+    /// Per plane, not per device, because it is not all-or-nothing: amdgpu
+    /// attaches it to six of its ten planes. A scene that reports partial
+    /// damage on a plane without it gets full-frame repaints there and
+    /// partial ones elsewhere, which is correct but worth being able to see.
+    ///
+    /// Narrower than it looks. `drm_plane_enable_fb_damage_clips` is opt-in
+    /// per driver: amdgpu calls it, vkms and vc4 do not.
+    pub has_fb_damage_clips: bool,
+
     /// Whether the plane exposes the `"alpha"` per-plane alpha property.
     /// Independent of [`has_pixel_blend_mode`](Self::has_pixel_blend_mode) —
     /// some hardware has one without the other.

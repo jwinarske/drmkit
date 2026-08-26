@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: (c) 2026 Joel Winarske
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "drmkit-probe"
+description = "Measures what a DRM device actually is, for the validation baselines."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+drm = { workspace = true }
+drmkit-core = { workspace = true }
+drmkit-display = { workspace = true }
+drmkit-dumb = { workspace = true }
+drmkit-fmt = { workspace = true }
+drmkit-planes = { workspace = true }
+
+[lints]
+workspace = true

@@ -116,6 +116,7 @@ fn probe_plane(
         // the search corrects it. See the field's documentation.
         supports_scaling: present("SRC_W"),
         has_pixel_blend_mode: present("pixel blend mode"),
+        has_fb_damage_clips: present("FB_DAMAGE_CLIPS"),
         has_per_plane_alpha: present("alpha"),
         blend_modes: BlendModeValues {
             premultiplied: enum_value("pixel blend mode", "Pre-multiplied"),

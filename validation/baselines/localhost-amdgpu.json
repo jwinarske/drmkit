@@ -1,0 +1,74 @@
+{
+  "host": {
+    "kernel": "7.1.9-200.fc44.x86_64",
+    "arch": "x86_64",
+    "model": ""
+  },
+  "cards": [
+    {
+      "path": "/dev/dri/card1",
+      "driver": "amdgpu",
+      "plane_visibility": {
+        "neither_cap": 2,
+        "atomic_only": 10,
+        "universal_only": 10,
+        "both": 10
+      },
+      "min_framebuffer": {
+        "min_width": 1,
+        "min_height": 1
+      },
+      "planes": {
+        "total": 10,
+        "primary": 4,
+        "cursor": 4,
+        "overlay": 2,
+        "with_damage_clips": 6,
+        "with_blend_mode": 2,
+        "with_alpha": 2,
+        "with_color_encoding": 6,
+        "with_in_formats": 10,
+        "with_zpos": 10,
+        "with_rotation": 6,
+        "rotation_masks": {
+          "0x0": 4,
+          "0xf": 6
+        },
+        "zpos_ranges": {
+          "[0,254]": 2,
+          "[2,2]": 4,
+          "[255,255]": 4
+        }
+      },
+      "crtcs": {
+        "total": 4,
+        "color_pipelines": {
+          "degamma=true ctm=true gamma=true": 4
+        },
+        "gamma_lut_sizes": {
+          "4096": 4
+        }
+      },
+      "connectors": [
+        {
+          "name": "HDMI-A-1",
+          "connected": true,
+          "modes": 20,
+          "colorspace_entries": 5,
+          "hdr_output_metadata": true,
+          "can_signal_hdr": true,
+          "max_bpc": "[8,16]"
+        },
+        {
+          "name": "DP-1",
+          "connected": true,
+          "modes": 18,
+          "colorspace_entries": 5,
+          "hdr_output_metadata": true,
+          "can_signal_hdr": true,
+          "max_bpc": "[8,16]"
+        }
+      ]
+    }
+  ]
+}

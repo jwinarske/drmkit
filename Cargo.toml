@@ -27,6 +27,7 @@ members = [
     "tests-integration",
     "benches/plane-stress",
     "parity/runner",
+    "validation/probe",
     "xtask",
 ]
 

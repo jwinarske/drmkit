@@ -24,6 +24,7 @@ use std::process::ExitCode;
 mod invariants;
 mod parity;
 mod refs;
+mod validate;
 
 const USAGE: &str = "\
 drmkit xtask
@@ -35,10 +36,20 @@ COMMANDS:
     check         Run every linter (parity + invariants)
     parity        Verify TEST_PARITY.md covers every upstream test file
     invariants    Verify INVARIANTS.md matches the upstream contract list
+    validate      Probe the hardware pool and diff against the baselines
     help          Show this message
 
 OPTIONS:
     --ref <PATH>  Path to a drm-cxx checkout. Defaults to $DRMKIT_DRM_CXX.
+
+VALIDATE OPTIONS:
+    --device=<ID>        Only this device; repeatable
+    --require=<A,B>      Fail if these devices could not be reached
+    --update-baselines   Accept what the hardware now reports
+    --verbose            Show the full build output for a device that fails
+
+    A device that cannot be reached is reported, never counted as passing.
+    See docs/validation.md.
 ";
 
 fn main() -> ExitCode {
@@ -48,6 +59,13 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
     let command = head.as_str();
+
+    // `validate` carries its own options, and the reference parser rejects
+    // anything it does not know -- so it is parsed only for the commands that
+    // take a reference.
+    if command == "validate" {
+        return report(validate::run(options));
+    }
 
     let reference = match refs::parse_ref_option(options) {
         Ok(value) => value,
@@ -68,6 +86,11 @@ fn main() -> ExitCode {
         other => Err(format!("unknown command `{other}`\n\n{USAGE}")),
     };
 
+    report(outcome)
+}
+
+/// Turn a command's result into an exit code.
+fn report(outcome: Result<(), String>) -> ExitCode {
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {

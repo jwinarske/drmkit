@@ -1,0 +1,125 @@
+{
+  "host": {
+    "kernel": "6.18.33+rpt-rpi-2712",
+    "arch": "aarch64",
+    "model": "Raspberry Pi 5 Model B Rev 1.0"
+  },
+  "cards": [
+    {
+      "path": "/dev/dri/card0",
+      "driver": "vc4",
+      "plane_visibility": {
+        "neither_cap": 48,
+        "atomic_only": 56,
+        "universal_only": 56,
+        "both": 56
+      },
+      "min_framebuffer": {
+        "min_width": 1,
+        "min_height": 1
+      },
+      "planes": {
+        "total": 56,
+        "primary": 4,
+        "cursor": 4,
+        "overlay": 48,
+        "with_damage_clips": 0,
+        "with_blend_mode": 56,
+        "with_alpha": 56,
+        "with_color_encoding": 56,
+        "with_in_formats": 56,
+        "with_zpos": 56,
+        "with_rotation": 56,
+        "rotation_masks": {
+          "0x35": 56
+        },
+        "zpos_ranges": {
+          "[0,0]": 4,
+          "[1,17]": 52
+        }
+      },
+      "crtcs": {
+        "total": 4,
+        "color_pipelines": {
+          "degamma=false ctm=false gamma=false": 4
+        },
+        "gamma_lut_sizes": {
+          
+        }
+      },
+      "connectors": [
+        {
+          "name": "HDMI-A-1",
+          "connected": true,
+          "modes": 20,
+          "colorspace_entries": 13,
+          "hdr_output_metadata": true,
+          "can_signal_hdr": true,
+          "max_bpc": "[8,12]"
+        },
+        {
+          "name": "HDMI-A-2",
+          "connected": false,
+          "modes": 0,
+          "colorspace_entries": 13,
+          "hdr_output_metadata": true,
+          "can_signal_hdr": true,
+          "max_bpc": "[8,12]"
+        }
+      ]
+    },
+    {
+      "path": "/dev/dri/card1",
+      "driver": "drm-rp1-dsi",
+      "plane_visibility": {
+        "neither_cap": 0,
+        "atomic_only": 1,
+        "universal_only": 1,
+        "both": 1
+      },
+      "min_framebuffer": {
+        "min_width": 1,
+        "min_height": 1
+      },
+      "planes": {
+        "total": 1,
+        "primary": 1,
+        "cursor": 0,
+        "overlay": 0,
+        "with_damage_clips": 0,
+        "with_blend_mode": 0,
+        "with_alpha": 0,
+        "with_color_encoding": 0,
+        "with_in_formats": 1,
+        "with_zpos": 0,
+        "with_rotation": 0,
+        "rotation_masks": {
+          "0x0": 1
+        },
+        "zpos_ranges": {
+          "none": 1
+        }
+      },
+      "crtcs": {
+        "total": 1,
+        "color_pipelines": {
+          "degamma=false ctm=false gamma=false": 1
+        },
+        "gamma_lut_sizes": {
+          
+        }
+      },
+      "connectors": [
+        {
+          "name": "DSI-2",
+          "connected": true,
+          "modes": 1,
+          "colorspace_entries": 0,
+          "hdr_output_metadata": false,
+          "can_signal_hdr": false,
+          "max_bpc": "none"
+        }
+      ]
+    }
+  ]
+}

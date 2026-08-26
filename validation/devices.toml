@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: (c) 2026 Joel Winarske
+# SPDX-License-Identifier: MIT
+#
+# The validation pool.
+#
+# One entry per device the suite is validated on. `cargo xtask validate`
+# reaches each over SSH, cross-builds for its target, runs the probe and the
+# device suite, and diffs the result against `validation/baselines/<id>.json`.
+#
+# A device that cannot be reached is recorded as unreached. It is never
+# recorded as passing, and `--require` turns unreached into a failure for the
+# devices a release depends on.
+#
+# Fields:
+#   id       file-safe name; the baseline is `baselines/<id>.json`
+#   ssh      what to hand ssh; empty means the orchestrator's own machine
+#   target   Rust target triple, or empty to build natively
+#   sysroot  borrowed sysroot for cross-linking; see docs/cross-to-a-board.md
+#   cards    DRM nodes to probe, in order; empty means every /dev/dri/cardN
+#   notes    what this device uniquely exercises, so a pool with a gap is
+#            visible in the inventory rather than only in a coverage report
+
+[[device]]
+id = "localhost-vkms"
+ssh = ""
+target = ""
+sysroot = ""
+cards = ["/dev/dri/card0"]
+notes = "The CI card. Interchangeable planes, no zpos, gamma-only pipeline, 10x10 minimum framebuffer."
+
+[[device]]
+id = "localhost-amdgpu"
+ssh = ""
+target = ""
+sysroot = ""
+cards = ["/dev/dri/card1"]
+notes = "The only device here with FB_DAMAGE_CLIPS, a full colour pipeline, and heterogeneous zpos ranges. A desktop compositor holds DRM master, so cases needing it are skipped."
+
+[[device]]
+id = "rpi5-vc4"
+ssh = "joel@192.168.45.88"
+target = "aarch64-unknown-linux-gnu"
+sysroot = "~/.cache/pi-sysroot"
+cards = ["/dev/dri/card0", "/dev/dri/card1"]
+notes = "vc4: 56 planes, rotation without 90/270, no colour pipeline at all, a genuinely disconnected HDMI-A-2. card1 is rp1-dsi, a one-plane controller with no zpos, blend or alpha."
+
+[[device]]
+id = "radxa-zero3-rk3566"
+ssh = "joel@192.168.45.171"
+target = "aarch64-unknown-linux-gnu"
+sysroot = "~/.cache/radxa-sysroot"
+cards = ["/dev/dri/card0"]
+notes = "VOP2: three planes eligible on the CRTC and two simultaneously usable. The only device that can make the allocator's search backtrack, which is what P-14 needs."

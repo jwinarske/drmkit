@@ -1,0 +1,62 @@
+{
+  "host": {
+    "kernel": "7.1.9-200.fc44.x86_64",
+    "arch": "x86_64",
+    "model": ""
+  },
+  "cards": [
+    {
+      "path": "/dev/dri/card0",
+      "driver": "vkms",
+      "plane_visibility": {
+        "neither_cap": 8,
+        "atomic_only": 10,
+        "universal_only": 10,
+        "both": 10
+      },
+      "min_framebuffer": {
+        "min_width": 10,
+        "min_height": 10
+      },
+      "planes": {
+        "total": 10,
+        "primary": 1,
+        "cursor": 1,
+        "overlay": 8,
+        "with_damage_clips": 0,
+        "with_blend_mode": 0,
+        "with_alpha": 0,
+        "with_color_encoding": 10,
+        "with_in_formats": 10,
+        "with_zpos": 0,
+        "with_rotation": 10,
+        "rotation_masks": {
+          "0x3f": 10
+        },
+        "zpos_ranges": {
+          "none": 10
+        }
+      },
+      "crtcs": {
+        "total": 1,
+        "color_pipelines": {
+          "degamma=false ctm=false gamma=true": 1
+        },
+        "gamma_lut_sizes": {
+          "256": 1
+        }
+      },
+      "connectors": [
+        {
+          "name": "Virtual-1",
+          "connected": true,
+          "modes": 34,
+          "colorspace_entries": 0,
+          "hdr_output_metadata": false,
+          "can_signal_hdr": false,
+          "max_bpc": "none"
+        }
+      ]
+    }
+  ]
+}

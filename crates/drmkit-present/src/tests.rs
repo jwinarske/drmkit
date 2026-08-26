@@ -222,3 +222,92 @@ fn releasing_the_scanning_slot_does_nothing() {
     let b = ring.acquire().expect("b");
     assert_ne!(b.slot, a.slot, "still scanning, so still not available");
 }
+
+// --- negotiate: parity port of tests/unit/test_negotiate.cpp -----------------
+
+mod negotiate {
+    use crate::negotiate;
+    use drmkit_fmt::{Modifier, Rotation};
+
+    /// The three layouts the reference's cases use, in the same roles.
+    const LINEAR: Modifier = Modifier::LINEAR;
+    /// An ARM AFBC layout — the compression class.
+    const AFBC: Modifier = Modifier(0x0800_0000_0000_0001);
+    /// A Broadcom VC4 T-tiled layout — the tiling class.
+    const TILED: Modifier = Modifier(0x0700_0000_0000_0001);
+
+    /// The three constants above really are one of each bandwidth class.
+    ///
+    /// Without this the ranking case below passes just as happily on three
+    /// modifiers that all classify the same way, which would make it a test of
+    /// nothing.
+    #[test]
+    fn the_fixtures_cover_one_of_each_class() {
+        use drmkit_fmt::{BandwidthClass, classify};
+        assert_eq!(classify(LINEAR), BandwidthClass::Linear);
+        assert_eq!(classify(AFBC), BandwidthClass::Compression);
+        assert_eq!(classify(TILED), BandwidthClass::Tiling);
+    }
+
+    /// A producer listing linear first still gets compression ranked first.
+    #[test]
+    fn the_intersection_is_ranked_compression_then_tiling_then_linear() {
+        let producer = [LINEAR, TILED, AFBC];
+        let plane = [AFBC, LINEAR, TILED];
+        assert_eq!(
+            negotiate(&producer, &plane, Rotation::Rotate0),
+            vec![AFBC, TILED, LINEAR],
+            "bandwidth order, not the order either side happened to list"
+        );
+    }
+
+    /// Only modifiers in both sets survive.
+    #[test]
+    fn a_modifier_only_one_side_has_is_dropped() {
+        assert_eq!(
+            negotiate(&[AFBC, LINEAR], &[LINEAR, TILED], Rotation::Rotate0),
+            vec![LINEAR]
+        );
+    }
+
+    /// No overlap, and either side empty, are all well-defined.
+    #[test]
+    fn no_overlap_yields_nothing() {
+        assert!(negotiate(&[AFBC], &[TILED, LINEAR], Rotation::Rotate0).is_empty());
+        assert!(negotiate(&[], &[TILED, LINEAR], Rotation::Rotate0).is_empty());
+        assert!(negotiate(&[AFBC], &[], Rotation::Rotate0).is_empty());
+    }
+
+    /// A producer listing a modifier twice gets it once.
+    #[test]
+    fn duplicates_in_the_producer_collapse() {
+        assert_eq!(
+            negotiate(&[AFBC, AFBC], &[AFBC], Rotation::Rotate0).len(),
+            1
+        );
+    }
+
+    /// A 90 or 270 rotation transposes the fetch order, which a linear buffer
+    /// cannot provide — so linear drops out and the tiled layouts stay.
+    #[test]
+    fn a_transposing_rotation_drops_linear() {
+        let both = [LINEAR, AFBC, TILED];
+        assert_eq!(negotiate(&both, &both, Rotation::Rotate0).len(), 3);
+
+        for rotation in [Rotation::Rotate90, Rotation::Rotate270] {
+            let got = negotiate(&both, &both, rotation);
+            assert_eq!(got.len(), 2, "{rotation:?}");
+            assert!(!got.contains(&LINEAR), "{rotation:?} cannot fetch linear");
+        }
+    }
+
+    /// 180 does not transpose, so nothing is filtered.
+    ///
+    /// The reference's cases do not cover this, and it is the half of
+    /// `transposes()` that would silently over-filter if it were wrong.
+    #[test]
+    fn a_half_turn_filters_nothing() {
+        let both = [LINEAR, AFBC, TILED];
+        assert_eq!(negotiate(&both, &both, Rotation::Rotate180).len(), 3);
+    }
+}

@@ -320,6 +320,9 @@ dependencies = [
 [[package]]
 name = "drmkit-present"
 version = "0.0.0"
+dependencies = [
+ "drmkit-fmt",
+]
 
 [[package]]
 name = "drmkit-probe"

@@ -16,3 +16,5 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
+# Modifier classification and the rotation pre-filter the negotiator applies.
+drmkit-fmt = { workspace = true }

@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: (c) 2026 Joel Winarske
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "drmkit-drmdb"
+description = "Replays the drmdb corpus of real devices through drmkit's own capability logic."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+# Untyped, deliberately: the corpus spans years of drm_info versions and a
+# typed schema would reject the older dumps rather than read what they do
+# carry.
+serde_json = "1"
+
+drmkit-fmt = { workspace = true }
+drmkit-planes = { workspace = true }
+drmkit-scene = { workspace = true }
+
+[lints]
+workspace = true

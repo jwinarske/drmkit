@@ -1228,6 +1228,33 @@ fn a_canvas_zpos_above_the_plane_range_is_clamped_not_sent() {
     );
 }
 
+/// A zpos fixed at one value, which the kernel does not flag immutable.
+///
+/// This is P-6, and the hardware is real: two Allwinner boards in the drmdb
+/// corpus advertise `zpos` with `min == max == 0` and leave it mutable, so
+/// `PlanePropertyMap` keeps it in the writable set. Writing anything but 0 to
+/// such a plane is `EINVAL`, which refuses the whole frame.
+///
+/// The reference guards it separately, with `zpos_is_fixed`, because it sends
+/// the requested value through unchanged. Here the clamp added for P-15
+/// already covers it: a degenerate range admits exactly one value, so the
+/// derived zpos becomes a write the kernel takes.
+///
+/// If the clamp is ever narrowed to skip degenerate ranges as a no-op, this
+/// is what says those two boards stop scanning out.
+#[test]
+fn a_degenerate_zpos_clamps_to_the_only_value_it_will_take() {
+    let mut map = PlanePropertyMap::new();
+    map.zpos_range.insert(42, (0, 0));
+
+    assert_eq!(
+        map.clamp_zpos(42, 3),
+        0,
+        "the only legal value, not the one that would be refused"
+    );
+    assert_eq!(map.clamp_zpos(42, 0), 0, "and asking for it is unchanged");
+}
+
 /// The acquire-fence close discipline, at the level the scene works at.
 ///
 /// `drmkit-sync` covers the fence itself -- that `import` dups, that a move

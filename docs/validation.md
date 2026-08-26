@@ -90,6 +90,40 @@ is real. But it changes what the suite covers, so it is a reviewed change:
 re-run with `--update-baselines` and say in the commit **what changed on the
 hardware and why**, the same way a parity finding is recorded.
 
+## The corpus, where the lab has no board
+
+The lab has the devices we bought. [drmdb](https://drmdb.emersion.fr) has the
+devices people own -- around 1,200 `drm_info` dumps across 50 drivers,
+refreshed weekly -- and `validation/drmdb` replays every one of them through
+drmkit's own capability logic.
+
+```
+cargo run -p drmkit-drmdb -- drmdb-data
+```
+
+The `drmdb` workflow does this on a schedule and on pull requests that touch
+the logic the rules cover. It caches the snapshot by ISO year-week, so a
+failing scan can be re-run against the same corpus rather than the next one.
+
+The distinction that matters is between a **rule** and a **survey**.
+
+A rule is an assumption this tree acts on. It gates: hardware that breaks one
+is a defect here, not an observation about that hardware. The reference's
+equivalent scan is intelligence-only; this one fails the job.
+
+A survey is a distribution, printed and never gated -- but printed *whole*.
+An early version truncated each survey at fourteen rows, and the two planes
+that closed [P-6](parity-findings.md) were in the tail: every visible row
+agreed, so the histogram read as unanimous when it was not. A survey now
+summarises what it dropped.
+
+P-6 is what this is for. A guard upstream carries, that no board here could
+reproduce, sitting open for want of hardware. The corpus has it: two Allwinner
+boards, 2 planes out of 11,134. It turned out the port was already right --
+for a reason that had nothing to do with the guard -- but that is a thing
+worth knowing rather than assuming, and no lane, lab or otherwise, was going
+to say so.
+
 ## What this does not do yet
 
 It does not yet record which assertions actually executed on which device.

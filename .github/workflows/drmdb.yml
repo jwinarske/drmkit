@@ -1,0 +1,106 @@
+# Replay the drmdb corpus through drmkit's own capability logic.
+#
+# drmdb (https://drmdb.emersion.fr) collects `drm_info` dumps from real
+# machines -- around 1,200 across 50 drivers. The lanes in ci.yml and vkms.yml
+# cover the hardware we have; this covers the hardware people have, which is
+# where assumptions drawn from one board go to die. P-6 is the worked example:
+# a case dismissed as "not reproducible on the cited hardware" turned out to
+# exist on two Allwinner boards nobody here owns.
+#
+# Unlike the reference's equivalent scan, this one gates. A rule in
+# validation/drmdb is not a compatibility observation -- it is an assumption
+# this tree acts on, so hardware that breaks one is a defect here and the job
+# fails. Surveys alongside them are printed and never gate.
+name: drmdb
+
+on:
+  schedule:
+    # 04:23 UTC on Mondays, shortly after the snapshot's own weekly refresh
+    # and off GitHub's busy-hour scheduler.
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+  # The corpus is fixed for the week, so a PR touching the logic these rules
+  # cover is checked against it before merge rather than the Monday after.
+  pull_request:
+    paths:
+      - 'validation/drmdb/**'
+      - 'crates/drmkit-planes/**'
+      - 'crates/drmkit-scene/**'
+      - 'crates/drmkit-fmt/**'
+      - '.github/workflows/drmdb.yml'
+
+concurrency:
+  group: drmdb-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  scan:
+    name: replay the corpus
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+
+      # The snapshot URL serves whatever is current, with no version pin, so
+      # the cache key is the ISO year-week: a re-run inside the same week gets
+      # the same corpus, and a scan that fails can be reproduced exactly.
+      - name: compute the week key
+        id: week
+        run: echo "yw=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: cache the drmdb snapshot
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: drmdb-data
+          key: drmdb-snapshot-${{ steps.week.outputs.yw }}
+
+      - name: download the drmdb snapshot
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p drmdb-data
+          curl -sSLf --retry 3 https://drmdb.emersion.fr/snapshot.tar.gz -o snapshot.tar.gz
+          tar -xzf snapshot.tar.gz -C drmdb-data
+          rm snapshot.tar.gz
+
+      # A corpus that arrived empty or truncated would let every rule pass by
+      # having nothing to check, which is the one failure mode a scan like this
+      # cannot report on itself. The scanner exits non-zero on an empty
+      # directory; this puts a floor under "not empty" as well.
+      - name: check the corpus arrived
+        run: |
+          count=$(find drmdb-data -name '*.json' | wc -l)
+          echo "$count dump(s)"
+          if [ "$count" -lt 500 ]; then
+            echo "::error::only $count dumps; the snapshot carries ~1200"
+            exit 1
+          fi
+
+      - name: replay it
+        run: cargo run --release -p drmkit-drmdb -- drmdb-data | tee scan.txt
+
+      - name: publish the report
+        if: always()
+        run: |
+          {
+            echo "# drmdb scan (${{ steps.week.outputs.yw }})"
+            echo
+            echo '```'
+            cat scan.txt || echo "the scan produced no output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drmdb-scan-${{ steps.week.outputs.yw }}
+          path: scan.txt
+          retention-days: 90

@@ -111,6 +111,7 @@ pub(crate) fn check_all(devices: &[Device]) -> Report {
             cursor_paths(devices),
             colour_pipeline_shapes(devices),
             connector_signalling_shapes(devices),
+            crtcs_with_more_than_one_primary(devices),
             in_formats_by_driver(devices),
         ],
     }
@@ -547,6 +548,56 @@ fn connector_signalling_shapes(devices: &[Device]) -> Survey {
         title: "connector output-signalling shapes".to_owned(),
         note: "the two properties are gated separately because the split runs \
                both ways -- neither is a subset of the other",
+        rows,
+    }
+}
+
+/// CRTCs that can be fed by more than one primary plane.
+///
+/// The port and the reference place the composition canvas differently, and
+/// the difference is invisible until this shape turns up. Upstream scores a
+/// primary +8 for the composition layer and then, after allocation, moves it
+/// to the first *unassigned primary* on the CRTC. `compose_unassigned` here
+/// takes the first unassigned non-cursor plane in enumeration order, whatever
+/// its type.
+///
+/// With one primary the two agree: if it is free both take it, and if a layer
+/// has it neither has a primary to move to. With two, upstream skips past the
+/// taken one to the second primary while this takes whichever free plane the
+/// kernel happens to list first -- typically an overlay.
+///
+/// Reported rather than asserted: neither behaviour is wrong, and nothing has
+/// been measured diverging. What the survey establishes is that the hardware
+/// is real, and on two of the drivers the lab is being built around.
+fn crtcs_with_more_than_one_primary(devices: &[Device]) -> Survey {
+    let mut by_driver: BTreeMap<&str, usize> = BTreeMap::new();
+    for device in devices {
+        if !device.atomic {
+            continue;
+        }
+        for crtc in 0..device.crtc_count() {
+            let primaries = device
+                .planes
+                .iter()
+                .filter(|plane| {
+                    plane.caps.plane_type == PlaneType::Primary
+                        && plane.caps.compatible_with_crtc(crtc)
+                })
+                .count();
+            if primaries > 1 {
+                *by_driver.entry(device.driver.as_str()).or_default() += 1;
+            }
+        }
+    }
+    let mut rows: Vec<(String, usize)> = by_driver
+        .into_iter()
+        .map(|(driver, count)| (driver.to_owned(), count))
+        .collect();
+    rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Survey {
+        title: "CRTCs fed by more than one primary plane".to_owned(),
+        note: "where the canvas-placement rule here and upstream's can pick \
+               different planes -- see P-24",
         rows,
     }
 }

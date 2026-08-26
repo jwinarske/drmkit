@@ -255,6 +255,18 @@ baseline yet. The step adapts: with no baseline it records one and attaches it
 to the run, and with one it checks. So the first green run after this produces
 the file to commit, and gating starts the moment it lands — no flag day.
 
+New cases are reported, not failed — a baseline goes stale the moment anyone
+adds a test, and failing for that would train people to ignore it. Refreshing
+is mechanical: the lane uploads its own run as `ci-vkms-coverage`, so
+
+```sh
+gh run download <run-id> --name ci-vkms-coverage --dir /tmp/vk
+cargo xtask coverage --device=ci-vkms --record < /tmp/vk/vkms-run.txt
+```
+
+re-records from exactly the run whose numbers you are looking at, rather than
+from a workstation whose card is something else entirely.
+
 That lane matters twice over. It is where [P-20](parity-findings.md) hid,
 twelve rigs exercising plane migration on a CRTC with nowhere to migrate to,
 green throughout. And vkms is the only virtualized driver in the pool, so it

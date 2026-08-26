@@ -138,9 +138,20 @@ impl<'a> Renderer<'a> {
             .by_id(plane.plane_id)
             .map_or(0, |caps| caps.rotation_bits);
 
-        // The driver's own preference, bounded by what the plane says it can
-        // carry.
-        let cap = (plane.cursor_max_w != 0).then_some(plane.cursor_max_w);
+        // The driver's own preference, asked of the device.
+        //
+        // This used to read `plane.cursor_max_w`, which nothing ever fills:
+        // `PlaneRegistry::probe` sets it to zero on every plane, so the cap was
+        // always absent and every atomic path silently fell back to 64 -- a
+        // 64x64 cursor on a card advertising 512x512, four times coarser than
+        // the hardware offers, with a doc comment promising the opposite. The
+        // reference asks the device directly at this point, and so does this.
+        //
+        // `DRM_CAP_CURSOR_WIDTH` is a device capability rather than a plane
+        // one, which is why it cannot come from the registry. It is also an
+        // upper bound rather than a list of accepted sizes, so `probe_size`
+        // still walks the ladder down from it and asks the kernel.
+        let cap = cursor_cap(device);
         let preferred = preferred_size(config.preferred_size, plane.path, cap);
 
         let mut buffers: Option<[Buffer; 2]> = None;
@@ -530,6 +541,24 @@ impl<'a> Renderer<'a> {
         self.which.mark_drawn();
         Ok(())
     }
+}
+
+/// The largest cursor the driver admits to, or `None` if it will not say.
+///
+/// Both dimensions, because a driver free to differ on them would otherwise
+/// have the width silently applied to the height. The smaller wins: the buffer
+/// is square, and asking for a rectangle the card cannot take is how a probe
+/// that should have succeeded ends up walking all the way down the ladder.
+fn cursor_cap(device: &Device) -> Option<u32> {
+    let cap = |which| {
+        drm::Device::get_driver_capability(device, which)
+            .ok()
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|value| *value != 0)
+    };
+    let width = cap(drm::DriverCapability::CursorWidth)?;
+    let height = cap(drm::DriverCapability::CursorHeight)?;
+    Some(width.min(height))
 }
 
 /// Permute a shadow pixel into the plane's channel order.

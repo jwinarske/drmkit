@@ -141,6 +141,42 @@ fn a_renderer_settles_on_a_plane_and_a_size_vkms() {
     );
     assert_eq!(w, h, "a cursor buffer is square");
     assert!(w >= 64, "never below the floor: {w}");
+
+    // The size has to come from the driver's own cap, not from a floor.
+    //
+    // It used to read `PlaneCapabilities::cursor_max_w`, which nothing fills:
+    // `PlaneRegistry::probe` zeroes it on every plane, so the cap was always
+    // absent and every atomic path quietly took 64. On this card, which
+    // advertises 512, that was a cursor four times coarser than the hardware
+    // offers -- and the only visible symptom was a blurry pointer.
+    //
+    // `DRM_CAP_CURSOR_WIDTH` is an upper bound rather than a list of accepted
+    // sizes, so the settled size is the largest rung of the {256, 128, 64}
+    // ladder that fits under it and that the kernel accepted. Asserting the
+    // rung rather than the cap keeps this honest on a driver that refuses its
+    // own advertised maximum.
+    let cap = |which| {
+        drm::Device::get_driver_capability(&device, which)
+            .ok()
+            .and_then(|v| u32::try_from(v).ok())
+            .filter(|v| *v != 0)
+    };
+    if let (Some(cap_w), Some(cap_h)) = (
+        cap(drm::DriverCapability::CursorWidth),
+        cap(drm::DriverCapability::CursorHeight),
+    ) {
+        let advertised = cap_w.min(cap_h);
+        let expected = [256, 128, 64]
+            .into_iter()
+            .find(|rung| *rung <= advertised)
+            .unwrap_or(64);
+        assert!(
+            w >= expected.min(advertised),
+            "this card advertises {advertised}x{advertised} and the buffer is \
+             {w}x{h}; a cursor pinned at the 64px floor means the driver cap \
+             is not being read"
+        );
+    }
 }
 
 #[test]
@@ -192,8 +228,16 @@ fn a_cursor_is_drawn_and_staged_vkms() {
     let centring = i64::from(buffer_w - 16) / 2;
     let expected_x = 100 - (8 + centring);
     let expected_y = 200 - (8 + centring);
-    assert_eq!(value("CRTC_X"), Some(expected_x.cast_unsigned()));
-    assert_eq!(value("CRTC_Y"), Some(expected_y.cast_unsigned()));
+    // CRTC_X/Y are signed *32-bit* properties, so a negative coordinate is a
+    // 32-bit two's complement widened to the property's u64 slot -- not a
+    // 64-bit one. The distinction was invisible while the cursor was 64px:
+    // centring kept the coordinate positive and both encodings agreed. At the
+    // driver's real cursor size it goes negative and they do not.
+    // `a_negative_position_is_written_as_twos_complement_vkms` pins the
+    // encoding itself.
+    let as_property = |v: i64| Some(u64::from(i32::try_from(v).expect("fits").cast_unsigned()));
+    assert_eq!(value("CRTC_X"), as_property(expected_x));
+    assert_eq!(value("CRTC_Y"), as_property(expected_y));
     assert_ne!(value("FB_ID"), Some(0), "a visible cursor names a buffer");
     assert_eq!(value("CRTC_ID"), Some(u64::from(crtc_id)));
 }

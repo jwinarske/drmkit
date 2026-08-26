@@ -289,6 +289,25 @@ pub enum SceneError {
 }
 
 /// One CRTC's layers and the commit machinery around them.
+///
+/// Layers are added once and kept: [`add_layer`](Self::add_layer) returns a
+/// [`LayerHandle`] that stays valid until the layer is removed, and a stale
+/// one resolves to nothing rather than to whatever now occupies the slot. Per
+/// frame, the caller changes what it wants — geometry through
+/// [`set_display`](SceneLayer::set_display), content through the source — and
+/// asks for a [`build_frame`](Self::build_frame).
+///
+/// The scene is deliberately not a commit loop. It builds a plan and reads the
+/// kernel's answer; issuing the commit, attaching a modeset, and dispatching
+/// the page-flip event belong to the caller, because a compositor has its own
+/// ideas about all three. See the crate documentation for the shape of a
+/// frame.
+///
+/// Four of the six pinned invariants are the scene's: buffers released a flip
+/// late rather than an ioctl early (1), a failed commit releasing immediately
+/// because no flip will gate it (2), the FB-only fast path (4), and teardown
+/// draining an outstanding flip before letting go of what it scans out (5).
+/// None of them is something a caller opts into; they are what the type does.
 pub struct LayerScene {
     crtc_id: u32,
     slots: Vec<Slot>,

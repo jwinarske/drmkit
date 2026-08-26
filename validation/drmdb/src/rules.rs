@@ -101,6 +101,7 @@ pub(crate) fn check_all(devices: &[Device]) -> Report {
             src_w_on_every_atomic_plane(devices),
             rotation_always_advertises_zero(devices),
             every_primary_can_host_a_canvas(devices),
+            every_crtc_has_a_primary_plane(devices),
         ],
         surveys: vec![
             damage_clips_by_driver(devices),
@@ -109,6 +110,7 @@ pub(crate) fn check_all(devices: &[Device]) -> Report {
             degenerate_mutable_zpos(devices),
             cursor_paths(devices),
             colour_pipeline_shapes(devices),
+            in_formats_by_driver(devices),
         ],
     }
 }
@@ -421,6 +423,89 @@ fn colour_pipeline_shapes(devices: &[Device]) -> Survey {
         title: "CRTC colour pipeline shapes".to_owned(),
         note: "every stage refuses on its own, which is what lets a partial \
                pipeline work rather than being refused whole",
+        rows,
+    }
+}
+
+/// Every CRTC has a primary plane that can feed it.
+///
+/// `ScanoutTarget` is built from a CRTC and its primary plane, and every
+/// consumer downstream assumes that pair exists. `NoPrimaryPlane` says so in
+/// its message -- "was universal planes enabled?" -- because the case it was
+/// written for is a client that forgot the capability, not hardware that
+/// shipped without one.
+///
+/// The corpus agrees: not one CRTC of 3,578 lacks a compatible primary plane.
+/// So the error keeps pointing at the client rather than the device, and a
+/// failure here would mean that stopped being true.
+fn every_crtc_has_a_primary_plane(devices: &[Device]) -> Finding {
+    let mut checked = 0;
+    let mut violations = Vec::new();
+    for device in devices {
+        if !device.atomic {
+            continue;
+        }
+        for crtc in 0..device.crtc_count() {
+            checked += 1;
+            let has_primary = device.planes.iter().any(|plane| {
+                plane.caps.plane_type == PlaneType::Primary && plane.caps.compatible_with_crtc(crtc)
+            });
+            if !has_primary {
+                violations.push(format!(
+                    "{} ({}): CRTC index {crtc} has no primary plane",
+                    device.name, device.driver
+                ));
+            }
+        }
+    }
+    Finding {
+        rule: "every CRTC has a primary plane that can feed it",
+        matters: "ScanoutTarget is that pair, and NoPrimaryPlane blames the \
+                  client for not enabling universal planes -- which is only \
+                  the right thing to say while no device ships without one",
+        checked,
+        violations,
+    }
+}
+
+/// How many planes describe their formats with `IN_FORMATS`, by driver.
+///
+/// Without it `build_format_metadata` synthesises a table pairing every
+/// advertised `FourCC` with `LINEAR`, which is the pre-modifier reading and
+/// the conservative one: nothing compressed is offered to a plane that never
+/// said it could take it.
+///
+/// Printed because the fallback is easy to assume is legacy-only. It is not
+/// -- roughly one atomic plane in seven runs on it.
+fn in_formats_by_driver(devices: &[Device]) -> Survey {
+    let mut by_driver: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    for device in devices {
+        if !device.atomic {
+            continue;
+        }
+        let entry = by_driver.entry(device.driver.as_str()).or_default();
+        for plane in &device.planes {
+            entry.1 += 1;
+            if plane.properties.iter().any(|p| p == "IN_FORMATS") {
+                entry.0 += 1;
+            }
+        }
+    }
+    let mut rows: Vec<(String, usize)> = by_driver
+        .into_iter()
+        .filter(|(_, (with, total))| with < total)
+        .map(|(driver, (with, total))| {
+            (
+                format!("{driver}: {} of {total} planes fall back", total - with),
+                total - with,
+            )
+        })
+        .collect();
+    rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Survey {
+        title: "planes with no IN_FORMATS, by driver".to_owned(),
+        note: "these get a synthesised FourCC-by-LINEAR table, which offers \
+               nothing compressed to a plane that never claimed it",
         rows,
     }
 }

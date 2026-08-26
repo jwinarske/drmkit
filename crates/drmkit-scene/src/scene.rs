@@ -255,11 +255,15 @@ impl FrameBuild {
 
 impl Drop for FrameBuild {
     fn drop(&mut self) {
-        if !self.finalized && !self.acquisitions.is_empty() {
+        if !self.finalized && !self.acquisitions.is_empty() && !std::thread::panicking() {
             // Same hazard as invariant 5's, one level up: these buffers never
             // go back to their sources, so the producer's ring starves. There
             // is nothing safe to do about it here -- the sources live in the
             // scene, which is not reachable from a drop -- so say so loudly.
+            //
+            // Not while already unwinding, though: a second panic during
+            // cleanup aborts the process, which replaces the failure the
+            // caller needs to read with this one.
             debug_assert!(
                 false,
                 "FrameBuild dropped without finalize_frame: {} acquisitions leaked",
@@ -1326,11 +1330,15 @@ fn build_plan(
 
 impl Drop for LayerScene {
     fn drop(&mut self) {
-        if self.lifecycle.has_pending_flip() {
+        if self.lifecycle.has_pending_flip() && !std::thread::panicking() {
             // Invariant 5. The flip still references a framebuffer this drop is
             // about to tear down. Nothing can be done here -- waiting is
             // exactly what a drop must not do -- so make it loud in
             // development rather than a rare tear in production.
+            //
+            // Except while unwinding: a panicking caller drops the scene on
+            // its way out, and asserting here aborts the process and hides
+            // the panic that actually started it.
             debug_assert!(
                 false,
                 "LayerScene dropped with a page-flip event still armed: call \

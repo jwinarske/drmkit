@@ -412,3 +412,49 @@ mod frame_economy {
         assert!(FrameAction::CommitDamaged.commits());
     }
 }
+
+/// Parity port of the reachable half of `tests/unit/test_dumb_scanout_sink.cpp`.
+///
+/// Upstream's case builds a sink on `Device::from_fd(-1)` and expects the
+/// build to fail. drmkit has no such constructor -- a `Device` exists only
+/// where an open succeeded -- so that half is answered by the type and cannot
+/// be written as a test. What remains is the argument guard upstream checks
+/// underneath it, which is worth proving without a device precisely because
+/// it must reject a frame *before* any IO.
+#[cfg(feature = "device")]
+mod frame_span {
+    use crate::dumb_sink::frame_span;
+
+    /// The ordinary case: a frame is its rows, each a stride wide.
+    #[test]
+    fn a_frame_is_height_rows_of_stride() {
+        assert_eq!(frame_span(1080, 1920 * 4), Some(1080 * 1920 * 4));
+    }
+
+    /// A zero-row or zero-stride frame needs nothing, and must not be
+    /// confused with the overflow answer below.
+    #[test]
+    fn an_empty_frame_needs_no_bytes() {
+        assert_eq!(frame_span(0, 7680), Some(0));
+        assert_eq!(frame_span(1080, 0), Some(0));
+    }
+
+    /// A product too large for the host refuses rather than wrapping.
+    ///
+    /// Only a 32-bit host can reach this, and there it is the whole point: a
+    /// wrapped product is *small*, so the caller's `src.len() < needed` check
+    /// would pass on a frame far shorter than the copy is about to read.
+    #[test]
+    fn a_span_that_cannot_fit_the_host_is_refused_not_wrapped() {
+        let span = frame_span(u32::MAX, u32::MAX);
+        if usize::BITS >= 64 {
+            assert_eq!(
+                span,
+                Some(u32::MAX as usize * u32::MAX as usize),
+                "this fits a 64-bit usize, so it is an answer, not an overflow"
+            );
+        } else {
+            assert_eq!(span, None, "wrapping here would defeat the length check");
+        }
+    }
+}

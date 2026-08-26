@@ -28,6 +28,7 @@ device = [
     "dep:drmkit-planes",
     "drmkit-planes/device",
     "dep:drm",
+    "dep:drmkit-modeset",
 ]
 
 [dependencies]
@@ -41,6 +42,7 @@ drmkit-core = { workspace = true, optional = true }
 drmkit-dumb = { workspace = true, optional = true }
 drmkit-scene = { workspace = true, optional = true }
 drmkit-planes = { workspace = true, optional = true }
+drmkit-modeset = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Device cases report which card they ran on and when they bailed.
@@ -49,4 +51,8 @@ drmkit-testkit = { workspace = true }
 # The device cases need what the `device` feature pulls in.
 [[test]]
 name = "dumb_ring_device"
+required-features = ["device"]
+
+[[test]]
+name = "dumb_sink_device"
 required-features = ["device"]

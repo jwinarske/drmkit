@@ -325,6 +325,7 @@ dependencies = [
  "drmkit-core",
  "drmkit-dumb",
  "drmkit-fmt",
+ "drmkit-modeset",
  "drmkit-planes",
  "drmkit-scene",
  "drmkit-testkit",

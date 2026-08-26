@@ -27,6 +27,8 @@
 mod buffer_ring;
 #[cfg(feature = "device")]
 mod dumb_ring;
+#[cfg(feature = "device")]
+mod dumb_sink;
 mod frame_economy;
 mod negotiate;
 #[cfg(feature = "device")]
@@ -35,6 +37,8 @@ mod scanout_format;
 pub use buffer_ring::{BufferRing, Lease, Rect, Repaint};
 #[cfg(feature = "device")]
 pub use dumb_ring::{DumbRingSource, PaintError};
+#[cfg(feature = "device")]
+pub use dumb_sink::{Config, DumbScanoutSink, PresentError};
 pub use frame_economy::{FrameAction, FrameEconomy};
 pub use negotiate::{negotiate, negotiate_for_format};
 #[cfg(feature = "device")]

@@ -265,6 +265,7 @@ Each was tested by breaking what it guards and confirming it goes red.
 | fuzz lane | Real, seeded, 60s per target. **The corpus was not cumulative** despite saying so. Fixed. |
 | oracle tables | Match the reference at tip. **Nothing re-ran them when the baseline moved**; `parity/oracles.sh` now does. |
 | `cargo-deny` | Teeth. A wildcard dependency fails `bans` and exits 2. |
+| asan lane | Teeth. A one-past-the-end read is caught as `heap-buffer-overflow` with the frame named. 350 cases, ~9s. |
 | allocator torture thresholds | Three pin a mechanism; `rapid_churn` pins none — see [P-14](parity-findings.md). |
 
 Two of those were only visible from outside. `DRMKIT_MIN_PLANES` looked correct

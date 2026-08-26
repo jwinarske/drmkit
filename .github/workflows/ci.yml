@@ -265,6 +265,42 @@ jobs:
       - run: cargo +nightly fuzz run cursor_file corpus/cursor_file seeds/cursor_file -- -max_total_time=60
         working-directory: fuzz
 
+  # T3's other half. The miri lane below covers the fd-free crates; these are
+  # the ones it cannot touch, because linking the drm bindings puts FFI in
+  # front of the interpreter even in tests that never open a device.
+  #
+  # Verified to have teeth rather than assumed: a deliberate one-past-the-end
+  # read in a scratch test is caught as `heap-buffer-overflow` with the frame
+  # named. A sanitizer lane that cannot fail is just more green.
+  asan:
+    name: asan (fd-bound crates, T3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Nightly is a tool exception, the same one miri and fuzz take: no crate
+      # may use a nightly language feature. `-Zsanitizer` and `-Zbuild-std` do
+      # not exist on stable, and build-std is what puts an instrumented std
+      # underneath -- without it the sanitizer sees only this tree's frames.
+      - run: rustup toolchain install nightly --component rust-src
+      - uses: Swatinem/rust-cache@v2
+      # `--lib --tests` and not the default target set: doctests fail to link
+      # under the sanitizer, and a lane red for that reason teaches people to
+      # ignore it. Device cases are `#[ignore]`d and do not run here; what this
+      # covers is the host-side logic of crates Miri is shut out of.
+      #
+      # gbm, session, input and display are left out: each links an
+      # uninstrumented C library, which LeakSanitizer reports on and which the
+      # fuzz lane already needed a suppression for. Adding them means adding
+      # suppressions, and a suppression file is how a sanitizer stops finding
+      # things.
+      - run: >
+          cargo +nightly test
+          -p drmkit-core -p drmkit-dumb -p drmkit-modeset -p drmkit-sync
+          -p drmkit-scene -p drmkit-cursor -p drmkit-capture
+          -Zbuild-std --target x86_64-unknown-linux-gnu --lib --tests
+        env:
+          RUSTFLAGS: -Zsanitizer=address
+
   miri:
     name: miri (pure crates)
     runs-on: ubuntu-latest

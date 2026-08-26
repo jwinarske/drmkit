@@ -22,7 +22,9 @@
 use std::time::Duration;
 
 use drmkit_core::Device;
-use drmkit_scene::{AcquiredBuffer, DamageRect, LayerBufferSource, SourceError, SourceFormat};
+use drmkit_scene::{
+    AcquiredBuffer, DamageRect, DmaBufDesc, LayerBufferSource, SourceError, SourceFormat,
+};
 use drmkit_sync::SyncFence;
 
 use crate::external::{ExternalError, ExternalPlane, ImportedFramebuffer};
@@ -42,6 +44,12 @@ pub struct ExternalDmaBufRing {
     presenter: RingPresenter,
     on_release: Option<OnRelease>,
     format: SourceFormat,
+    /// Which slot the last successful acquire handed out.
+    ///
+    /// `export_dma_buf` describes *the currently-acquired buffer*, and a ring
+    /// rotates -- so the answer is a different slot each frame, and there is
+    /// nothing to describe before the first acquire.
+    presented: Option<usize>,
 }
 
 impl std::fmt::Debug for ExternalDmaBufRing {
@@ -91,6 +99,7 @@ impl ExternalDmaBufRing {
 
         Ok(Self {
             slots: imported,
+            presented: None,
             presenter: RingPresenter::new(fence_deadline),
             on_release: None,
             format,
@@ -153,6 +162,35 @@ impl ExternalDmaBufRing {
 }
 
 impl LayerBufferSource for ExternalDmaBufRing {
+    /// Lend the currently-acquired slot's descriptors, so the layer can be
+    /// composited.
+    ///
+    /// Same contract as [`ExternalDmaBufSource`](crate::ExternalDmaBufSource): these buffers
+    /// expose no CPU mapping, so without this the layer blanks whenever the
+    /// allocator cannot place it. The ring answers for whichever slot the last
+    /// acquire handed out, since that is the one holding this frame's pixels.
+    ///
+    /// # Errors
+    ///
+    /// [`SourceError::Unsupported`] before the first acquire, and after a
+    /// session pause has forgotten every slot.
+    fn export_dma_buf(&mut self) -> Result<DmaBufDesc<'_>, SourceError> {
+        let slot = self
+            .presented
+            .and_then(|index| self.slots.get(index))
+            .ok_or(SourceError::Unsupported)?;
+        let (fds, offsets, pitches) = slot.dma_buf_planes();
+        if fds.is_empty() {
+            return Err(SourceError::Unsupported);
+        }
+        Ok(DmaBufDesc {
+            fds: fds.iter().map(std::os::fd::AsFd::as_fd).collect(),
+            offsets: offsets.to_vec(),
+            pitches: pitches.to_vec(),
+            format: self.format,
+        })
+    }
+
     fn acquire(&mut self) -> Result<AcquiredBuffer, SourceError> {
         let decision = self.presenter.acquire();
         match decision.kind {
@@ -160,6 +198,7 @@ impl LayerBufferSource for ExternalDmaBufRing {
                 let fb_id = self
                     .fb_of(decision.key)
                     .ok_or(SourceError::Failed(rustix::io::Errno::INVAL))?;
+                self.presented = usize::try_from(decision.key).ok();
                 Ok(AcquiredBuffer {
                     fb_id,
                     token: decision.token,
@@ -172,6 +211,7 @@ impl LayerBufferSource for ExternalDmaBufRing {
             // committing a stale id would take the whole frame down.
             Present::Hold => {
                 let fb_id = self.fb_of(decision.key).ok_or(SourceError::WouldBlock)?;
+                self.presented = usize::try_from(decision.key).ok();
                 Ok(AcquiredBuffer {
                     fb_id,
                     token: decision.token,
@@ -216,6 +256,9 @@ impl LayerBufferSource for ExternalDmaBufRing {
         for slot in &mut self.slots {
             slot.forget();
         }
+        // Nothing is on screen and the forgotten slots have no descriptors
+        // left to lend, so there is no acquired buffer to describe.
+        self.presented = None;
         self.presenter.reset();
     }
 }

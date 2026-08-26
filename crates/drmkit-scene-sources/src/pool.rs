@@ -28,7 +28,9 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use drmkit_core::Device;
-use drmkit_scene::{AcquiredBuffer, DamageRect, LayerBufferSource, SourceError, SourceFormat};
+use drmkit_scene::{
+    AcquiredBuffer, DamageRect, DmaBufDesc, LayerBufferSource, SourceError, SourceFormat,
+};
 use drmkit_sync::SyncFence;
 
 use crate::external::{ExternalPlane, ImportedFramebuffer};
@@ -182,6 +184,29 @@ impl ExternalDmaBufPool {
 }
 
 impl LayerBufferSource for ExternalDmaBufPool {
+    /// **Not implemented**, unlike [`ExternalDmaBufSource`](crate::ExternalDmaBufSource)
+    /// and [`ExternalDmaBufRing`](crate::ExternalDmaBufRing), which both lend
+    /// their descriptors.
+    ///
+    /// The descriptors exist -- the imports hold them -- but they live inside a
+    /// `Mutex<HashMap<..>>`, and `DmaBufDesc` borrows what it describes. A
+    /// borrow taken from inside the guard cannot outlive it, so there is no
+    /// signature that lends them out without first moving the acquired slot's
+    /// import out from behind the lock. Upstream has no such constraint: its
+    /// pool returns the descriptors directly.
+    ///
+    /// The cost is real and not cosmetic: a layer fed from this pool blanks
+    /// whenever the allocator cannot place it, where the same layer fed from a
+    /// ring would be composited. Tracked as P-29 with the fix -- holding the
+    /// acquired slot as an `Arc` outside the lock.
+    ///
+    /// # Errors
+    ///
+    /// Always [`SourceError::Unsupported`].
+    fn export_dma_buf(&mut self) -> Result<DmaBufDesc<'_>, SourceError> {
+        Err(SourceError::Unsupported)
+    }
+
     fn acquire(&mut self) -> Result<AcquiredBuffer, SourceError> {
         let decision = self.presenter.acquire();
         let result = match decision.kind {

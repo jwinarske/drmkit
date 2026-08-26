@@ -174,9 +174,18 @@ fn owned_device_closes_on_drop() {
     open_and_drop(240);
     let after_many = count();
 
+    // The threshold is half the leak, not a tight bound on the noise.
+    //
+    // A missing close grows the table by exactly 240 here; concurrent cases in
+    // this binary opening their own descriptors between the two snapshots grow
+    // it by however many they happen to hold at that instant. The first version
+    // of this bound was 16, and a loaded workspace run exceeded it -- a false
+    // failure, since nothing had leaked. Anything below 120 cannot be the
+    // defect this is looking for, and anything at or above it cannot be noise
+    // from a handful of sibling cases.
     let growth = after_many.saturating_sub(after_few);
     assert!(
-        growth < 16,
+        growth < 120,
         "240 further owning devices grew the fd table by {growth}; \
          a device that failed to close would grow it by 240"
     );

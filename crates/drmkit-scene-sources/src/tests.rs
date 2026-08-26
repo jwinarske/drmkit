@@ -1530,3 +1530,119 @@ fn a_gbm_source_is_compositable_through_its_dma_buf_vkms() {
         "so the DMA-BUF export is the only thing keeping the layer compositable"
     );
 }
+
+// --- composability of imported sources ---------------------------------------
+
+/// An imported buffer is compositable through its descriptors.
+///
+/// The trait's own documentation names this case as the reason
+/// `export_dma_buf` exists -- "a source whose pixels never reach CPU memory
+/// ... can still be composited by importing its DMA-BUF". This source is that
+/// case. Without the export it is uncompositable, and its layer blanks
+/// whenever the allocator cannot find it a plane.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn an_imported_buffer_lends_its_descriptors_back_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let (dma_buf, pitch) = real_dma_buf(&device, 64, 64).expect("export a real dma-buf");
+
+    let format = SourceFormat {
+        fourcc: XRGB8888,
+        modifier: 0,
+        width: 64,
+        height: 64,
+    };
+    let mut source = ExternalDmaBufSource::create(
+        &device,
+        format,
+        &[ExternalPlane {
+            fd: std::os::fd::AsFd::as_fd(&dma_buf),
+            offset: 0,
+            pitch,
+        }],
+        None,
+    )
+    .expect("import");
+
+    assert!(
+        matches!(
+            source.map(drmkit_dumb::MapAccess::Read),
+            Err(SourceError::Unsupported)
+        ),
+        "a foreign buffer exposes no CPU mapping"
+    );
+
+    let exported = source
+        .export_dma_buf()
+        .expect("so it must lend descriptors");
+    assert_eq!(exported.fds.len(), 1);
+    assert_eq!(exported.pitches, vec![pitch]);
+    assert_eq!(exported.offsets, vec![0]);
+    assert_eq!(
+        exported.format, format,
+        "the descriptor describes the same buffer the framebuffer does"
+    );
+}
+
+/// A ring describes the slot the last acquire handed out, not slot zero.
+///
+/// A ring rotates, so "the currently-acquired buffer" is a different slot each
+/// frame. Answering with a fixed slot would describe the wrong pixels -- and
+/// on a two-slot ring it would be right half the time, which is worse than
+/// being wrong every time.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_ring_describes_the_slot_it_just_handed_out_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let (first_fd, first_pitch) = real_dma_buf(&device, 64, 64).expect("export a real dma-buf");
+    let (second_fd, second_pitch) = real_dma_buf(&device, 64, 64).expect("export a real dma-buf");
+
+    let format = SourceFormat {
+        fourcc: XRGB8888,
+        modifier: 0,
+        width: 64,
+        height: 64,
+    };
+    let plane_a = [ExternalPlane {
+        fd: std::os::fd::AsFd::as_fd(&first_fd),
+        offset: 0,
+        pitch: first_pitch,
+    }];
+    let plane_b = [ExternalPlane {
+        fd: std::os::fd::AsFd::as_fd(&second_fd),
+        offset: 0,
+        pitch: second_pitch,
+    }];
+    let mut ring = ExternalDmaBufRing::create(&device, format, &[&plane_a, &plane_b], None)
+        .expect("build a two-slot ring");
+
+    assert!(
+        matches!(ring.export_dma_buf(), Err(SourceError::Unsupported)),
+        "before the first acquire there is no acquired buffer to describe"
+    );
+
+    // The slots are distinguished by descriptor, not by shape: a ring holds one
+    // format across every slot, so the strides are equal by construction and
+    // only the import's own duplicated descriptor tells them apart.
+    let mut seen = Vec::new();
+    for slot in 0..2 {
+        ring.submit(slot, None, &[]);
+        let acquired = ring.acquire().expect("acquire");
+        let exported = ring.export_dma_buf().expect("describe the acquired slot");
+        assert_eq!(
+            exported.pitches,
+            vec![first_pitch],
+            "both slots share a shape"
+        );
+        seen.push(std::os::fd::AsRawFd::as_raw_fd(&exported.fds[0]));
+        ring.release(acquired);
+    }
+
+    assert_ne!(
+        seen[0], seen[1],
+        "two acquires described the same slot, so the ring answers with a fixed one"
+    );
+    assert_eq!(second_pitch, first_pitch, "the fixture allocated two alike");
+}

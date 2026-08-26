@@ -9,7 +9,9 @@ use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 
 use drm::control::{Device as ControlDevice, FbCmd2Flags, framebuffer};
 use drmkit_core::Device;
-use drmkit_scene::{AcquiredBuffer, BindingModel, LayerBufferSource, SourceError, SourceFormat};
+use drmkit_scene::{
+    AcquiredBuffer, BindingModel, DmaBufDesc, LayerBufferSource, SourceError, SourceFormat,
+};
 use drmkit_sync::SyncFence;
 
 /// One plane of an externally allocated buffer.
@@ -53,13 +55,28 @@ const MAX_PLANES: usize = 4;
 pub(crate) struct ImportedFramebuffer {
     /// Kept alive so the framebuffer's backing descriptors outlive the
     /// caller's — the caller may close theirs the moment this returns.
-    _duped_fds: Vec<OwnedFd>,
+    ///
+    /// Lent back out by [`dma_buf_planes`](Self::dma_buf_planes), which is what
+    /// makes an imported layer compositable: these sources expose no CPU
+    /// mapping, so the descriptors are the only view of the pixels there is.
+    duped_fds: Vec<OwnedFd>,
+    /// Per-plane byte offset and row stride, as imported.
+    offsets: Vec<u32>,
+    pitches: Vec<u32>,
     fb: Option<framebuffer::Handle>,
     /// The descriptor the framebuffer was registered on, for teardown.
     device_fd: std::os::fd::RawFd,
 }
 
 impl ImportedFramebuffer {
+    /// The imported planes: their descriptors, offsets, and row strides.
+    ///
+    /// Empty for an import that has been taken (`into_imported`) or never
+    /// made, which is what a caller checks before offering a descriptor.
+    pub(crate) fn dma_buf_planes(&self) -> (&[OwnedFd], &[u32], &[u32]) {
+        (&self.duped_fds, &self.offsets, &self.pitches)
+    }
+
     /// Import `planes` and register a framebuffer over them.
     ///
     /// # Errors
@@ -243,7 +260,9 @@ impl ExternalDmaBufSource {
 
         Ok(Self {
             imported: ImportedFramebuffer {
-                _duped_fds: duped,
+                duped_fds: duped,
+                offsets: offsets[..planes.len()].to_vec(),
+                pitches: pitches[..planes.len()].to_vec(),
                 fb: Some(fb),
                 device_fd: device.raw_fd(),
             },
@@ -285,7 +304,9 @@ impl ExternalDmaBufSource {
         std::mem::replace(
             &mut self.imported,
             ImportedFramebuffer {
-                _duped_fds: Vec::new(),
+                duped_fds: Vec::new(),
+                offsets: Vec::new(),
+                pitches: Vec::new(),
                 fb: None,
                 device_fd: -1,
             },
@@ -332,6 +353,33 @@ impl LayerBufferSource for ExternalDmaBufSource {
             token: 0,
             acquire_fence,
             damage: Vec::new(),
+        })
+    }
+
+    /// Lend the imported descriptors back, so the layer can be composited.
+    ///
+    /// A foreign buffer exposes no CPU mapping, so `map` is correctly
+    /// `Unsupported` -- and that alone would make this layer *uncompositable*:
+    /// it would blank whenever the allocator could not find it a plane, which
+    /// is the case composition exists to rescue. The descriptors are the only
+    /// view of these pixels there is, so lending them is what keeps the layer
+    /// recoverable. Upstream's `ExternalDmaBufSource` does the same from its
+    /// per-plane `duped_fd`.
+    ///
+    /// # Errors
+    ///
+    /// [`SourceError::Unsupported`] once the import has been taken by a ring,
+    /// which leaves nothing to lend.
+    fn export_dma_buf(&mut self) -> Result<DmaBufDesc<'_>, SourceError> {
+        let (fds, offsets, pitches) = self.imported.dma_buf_planes();
+        if fds.is_empty() {
+            return Err(SourceError::Unsupported);
+        }
+        Ok(DmaBufDesc {
+            fds: fds.iter().map(std::os::fd::AsFd::as_fd).collect(),
+            offsets: offsets.to_vec(),
+            pitches: pitches.to_vec(),
+            format: self.format,
         })
     }
 

@@ -41,7 +41,14 @@
 //!
 //! `Seat::input_opener` routes libinput's privileged device opens through the
 //! same seat, so input descriptors get the revocable lifetime the DRM one has.
-//! That belongs with `drmkit-input`, which does not exist yet.
+//!
+//! Both halves it needs now exist: this crate opens devices through a seat,
+//! and `drmkit_input::Seat::open` takes any `LibinputInterface` the caller
+//! supplies. What is missing is the piece between them — an implementation of
+//! that trait backed by a [`Session`], so an input descriptor is revoked and
+//! reissued on a VT switch the way the DRM one is. Until it exists a caller
+//! passing their own opener gets input descriptors with an ordinary lifetime,
+//! which works and is not what the seat is for.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 

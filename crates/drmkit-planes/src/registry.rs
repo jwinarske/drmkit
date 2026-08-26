@@ -136,7 +136,10 @@ pub struct PlaneCapabilities {
     ///
     /// A plane can have [`supports_rotation`](Self::supports_rotation) true and
     /// still omit 90/270 here — 0/180- or reflect-only hardware — which is why
-    /// the allocator gates on these bits rather than the flag.
+    /// the allocator gates on these bits rather than the flag. Not
+    /// hypothetical: measured on a Raspberry Pi 5, every one of vc4's 56
+    /// planes reports `0x35` — 0, 180, and both reflects, with no 90 or 270.
+    /// vkms reports `0x3f` and amdgpu `0xf` on the same probe.
     pub rotation_bits: u64,
     /// Whether the plane exposes a rotation property at all.
     pub supports_rotation: bool,

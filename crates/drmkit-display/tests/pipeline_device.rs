@@ -40,6 +40,12 @@ fn open_card() -> Option<Device> {
 }
 
 /// The first CRTC that has any colour pipeline at all.
+///
+/// `None` is a real answer, not a missing device: vc4 exposes no
+/// `DEGAMMA_LUT`, `CTM` or `GAMMA_LUT` on any of its four CRTCs. Callers use
+/// [`no_pipeline_anywhere`] to say so and to check the refusal is the right
+/// one, which is the only place `PipelineError::NoPipeline` is reachable --
+/// vkms has gamma, amdgpu has all three.
 fn any_pipeline(device: &Device) -> Option<u32> {
     let resources = device.resource_handles().expect("resources");
     resources
@@ -49,13 +55,36 @@ fn any_pipeline(device: &Device) -> Option<u32> {
         .find(|id| CrtcColorPipeline::new(device, *id).is_ok())
 }
 
+/// Confirm every CRTC really has no pipeline, and say so.
+///
+/// Returns true when the caller should stop. Not a bare skip: a card with no
+/// colour pipeline still has something to assert -- that every CRTC is
+/// classified as having none, rather than one of them failing to be read.
+fn no_pipeline_anywhere(device: &Device) -> bool {
+    let resources = device.resource_handles().expect("resources");
+    for handle in resources.crtcs() {
+        let id = u32::from(*handle);
+        match CrtcColorPipeline::new(device, id) {
+            Err(PipelineError::NoPipeline) => {}
+            Err(error) => panic!("crtc {id}: {error}"),
+            Ok(_) => return false,
+        }
+    }
+    println!(
+        "note: no CRTC on this card has a colour pipeline, and every one of \
+         them says so"
+    );
+    true
+}
+
 #[test]
 #[ignore = "needs a DRM device"]
 fn a_stage_the_crtc_has_takes_a_blob() {
     let _guard = card_guard();
     let Some(device) = open_card() else { return };
     let Some(crtc_id) = any_pipeline(&device) else {
-        panic!("no CRTC on this card has a colour pipeline");
+        assert!(no_pipeline_anywhere(&device));
+        return;
     };
 
     let mut pipeline = CrtcColorPipeline::new(&device, crtc_id).expect("pipeline");
@@ -95,7 +124,8 @@ fn a_stage_the_crtc_lacks_refuses_rather_than_committing_nothing() {
     let _guard = card_guard();
     let Some(device) = open_card() else { return };
     let Some(crtc_id) = any_pipeline(&device) else {
-        panic!("no CRTC on this card has a colour pipeline");
+        assert!(no_pipeline_anywhere(&device));
+        return;
     };
 
     let mut pipeline = CrtcColorPipeline::new(&device, crtc_id).expect("pipeline");
@@ -133,7 +163,8 @@ fn a_lut_of_the_wrong_length_is_refused_before_the_kernel_sees_it() {
     let _guard = card_guard();
     let Some(device) = open_card() else { return };
     let Some(crtc_id) = any_pipeline(&device) else {
-        panic!("no CRTC on this card has a colour pipeline");
+        assert!(no_pipeline_anywhere(&device));
+        return;
     };
 
     let mut pipeline = CrtcColorPipeline::new(&device, crtc_id).expect("pipeline");
@@ -173,7 +204,8 @@ fn restaging_a_stage_replaces_its_blob() {
     let _guard = card_guard();
     let Some(device) = open_card() else { return };
     let Some(crtc_id) = any_pipeline(&device) else {
-        panic!("no CRTC on this card has a colour pipeline");
+        assert!(no_pipeline_anywhere(&device));
+        return;
     };
 
     let mut pipeline = CrtcColorPipeline::new(&device, crtc_id).expect("pipeline");
@@ -196,7 +228,8 @@ fn an_apply_writes_only_what_was_staged() {
     let _guard = card_guard();
     let Some(device) = open_card() else { return };
     let Some(crtc_id) = any_pipeline(&device) else {
-        panic!("no CRTC on this card has a colour pipeline");
+        assert!(no_pipeline_anywhere(&device));
+        return;
     };
 
     let mut pipeline = CrtcColorPipeline::new(&device, crtc_id).expect("pipeline");

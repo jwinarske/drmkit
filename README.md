@@ -108,15 +108,23 @@ diverge. See [`docs/parity-findings.md`](docs/parity-findings.md).
 **Upstream first.** drm-cxx is the origin of authority: anything this port
 surfaces is [filed there](docs/upstream-findings.md) rather than fixed only
 here, and the default for a bug is to reproduce the C++ behaviour so the two
-agree byte for byte. Twenty-four issues filed so far, plus two against
+agree byte for byte. Twenty-six issues filed so far, plus two against
 third-party libraries.
 
-**Three drivers, not one.** Every device test runs on vkms in CI and is also
-run against amdgpu and vc4 (Raspberry Pi 5) by hand. They disagree in the
+**Three drivers, then fifty.** Every device test runs on vkms in CI and is
+also run against amdgpu and vc4 (Raspberry Pi 5) by hand. They disagree in the
 places that matter: rotation masks of `0x3f`, `0xf` and `0x35` — vc4's planes
 do 0/180 and both reflects but *not* 90 or 270 — and colour pipelines of
 gamma-only, all three stages, and none at all. Several branches are reachable
 on exactly one of them; see [`docs/parity-findings.md`](docs/parity-findings.md).
+
+Three boards still only answer for three boards. `validation/drmdb` replays
+the [drmdb](https://drmdb.emersion.fr) corpus — roughly 1,200 `drm_info` dumps
+across 50 drivers — through drmkit's own capability types and decisions, and
+gates on the assumptions this tree acts on. It has already closed a finding
+that sat open for want of hardware (P-6, on two Allwinner boards) and found a
+live defect on hardware nobody here owns (P-23, Tegra's cursor plane). See
+[`docs/validation.md`](docs/validation.md).
 
 **Upstream baseline:** `jwinarske/drm-cxx` @ `dc2915b` (v2.0.1, PR #231).
 

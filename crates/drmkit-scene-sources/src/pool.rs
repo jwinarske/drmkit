@@ -40,6 +40,12 @@ use crate::ring::OnRelease;
 /// One imported buffer.
 struct PoolSlot {
     imported: ImportedFramebuffer,
+    /// A monotonic stamp, bumped on every submit of this key.
+    ///
+    /// Ordering, not time: what the cap needs is which import has gone longest
+    /// without being submitted, and a counter answers that without a clock the
+    /// producer thread would otherwise have to read.
+    last_used: u64,
     /// Set by [`ExternalDmaBufPool::reset_generation`]: the buffer belongs to a
     /// configuration the producer has moved on from, and is torn down once no
     /// commit still references it.
@@ -52,7 +58,18 @@ pub struct ExternalDmaBufPool {
     presenter: RingPresenter,
     format: Mutex<SourceFormat>,
     on_release: Option<OnRelease>,
+    /// How many imports to keep. See [`set_max_pool`](Self::set_max_pool).
+    max_pool: usize,
+    /// Source of `last_used` stamps.
+    tick: std::sync::atomic::AtomicU64,
 }
+
+/// How many imports a pool keeps before evicting the least recently used.
+///
+/// Upstream's default, and generous for what it guards: a producer cycling a
+/// V4L2 queue works through a handful of buffers, so reaching 32 distinct live
+/// keys means the producer is minting new identities rather than reusing them.
+const DEFAULT_MAX_POOL: usize = 32;
 
 impl std::fmt::Debug for ExternalDmaBufPool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -76,7 +93,23 @@ impl ExternalDmaBufPool {
             presenter: RingPresenter::new(fence_deadline),
             format: Mutex::new(format),
             on_release: None,
+            max_pool: DEFAULT_MAX_POOL,
+            tick: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// Cap the number of cached imports, evicting least-recently-used first.
+    ///
+    /// A pool with no cap grows for as long as the producer keeps minting keys,
+    /// and every entry is a GEM handle, a framebuffer and a descriptor the
+    /// kernel holds until the pool drops. That is a leak with a producer whose
+    /// buffer identities are not stable -- which is the case the pool exists
+    /// for.
+    ///
+    /// Zero is treated as one: a pool that cached nothing would re-import on
+    /// every frame, which is the cost this type exists to avoid.
+    pub const fn set_max_pool(&mut self, max_pool: usize) {
+        self.max_pool = if max_pool == 0 { 1 } else { max_pool };
     }
 
     /// Set the callback fired when a buffer leaves the screen.
@@ -117,9 +150,21 @@ impl ExternalDmaBufPool {
                 };
                 entry.insert(PoolSlot {
                     imported,
+                    last_used: 0,
                     retiring: false,
                 });
             }
+            let stamp = self
+                .tick
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                .wrapping_add(1);
+            if let Some(slot) = slots.get_mut(&key) {
+                slot.last_used = stamp;
+                // A key submitted again is wanted again, whatever the cap
+                // decided about it earlier.
+                slot.retiring = false;
+            }
+            self.enforce_cap(&mut slots);
         }
         // The two locks are never held together: the import map is released
         // before the presenter's handoff is taken, so there is no order to get
@@ -149,6 +194,43 @@ impl ExternalDmaBufPool {
         *self.lock_format() = format;
         for slot in self.lock_slots().values_mut() {
             slot.retiring = true;
+        }
+    }
+
+    /// Bring the cache back within `max_pool`, oldest first.
+    ///
+    /// A slot no commit references is dropped outright. One still in flight is
+    /// only *marked*: tearing down a framebuffer the kernel is scanning out is
+    /// how a display tears, so the teardown waits for [`sweep`](Self::sweep)
+    /// to find it unreferenced on a later acquire. That is the same deferral
+    /// `reset_generation` relies on, which is why this reuses `retiring`
+    /// rather than inventing a second state.
+    ///
+    /// Marked oldest-first and only as many as the cap is over by, so a pool
+    /// entirely in flight retires its stalest entries and keeps the rest.
+    fn enforce_cap(&self, slots: &mut HashMap<u64, PoolSlot>) {
+        if slots.len() <= self.max_pool {
+            return;
+        }
+        let mut by_age: Vec<(u64, u64)> = slots
+            .iter()
+            .map(|(key, slot)| (*key, slot.last_used))
+            .collect();
+        by_age.sort_unstable_by_key(|(_, last_used)| *last_used);
+
+        let mut over = slots.len() - self.max_pool;
+        for (key, _) in by_age {
+            if over == 0 {
+                break;
+            }
+            if self.presenter.is_referenced(key) {
+                if let Some(slot) = slots.get_mut(&key) {
+                    slot.retiring = true;
+                }
+            } else {
+                slots.remove(&key);
+            }
+            over -= 1;
         }
     }
 

@@ -25,10 +25,14 @@
 //! GBM, GL and Vulkan producers are separate crates after that.
 
 mod buffer_ring;
+#[cfg(feature = "device")]
+mod dumb_ring;
 mod frame_economy;
 mod negotiate;
 
 pub use buffer_ring::{BufferRing, Lease, Rect, Repaint};
+#[cfg(feature = "device")]
+pub use dumb_ring::{DumbRingSource, PaintError};
 pub use frame_economy::{FrameAction, FrameEconomy};
 pub use negotiate::{negotiate, negotiate_for_format};
 

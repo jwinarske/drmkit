@@ -15,6 +15,28 @@ homepage.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Everything that needs a DRM device. Off by default so the spine's pure half
+# -- the ring, the negotiator, the economy -- builds and runs under Miri with
+# no FFI in front of the interpreter, the same arrangement drmkit-planes uses
+# for its probe.
+default = []
+device = ["dep:drmkit-core", "dep:drmkit-dumb", "dep:drmkit-scene"]
+
 [dependencies]
 # Modifier classification and the rotation pre-filter the negotiator applies.
 drmkit-fmt = { workspace = true }
+thiserror = { workspace = true }
+
+drmkit-core = { workspace = true, optional = true }
+drmkit-dumb = { workspace = true, optional = true }
+drmkit-scene = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Device cases report which card they ran on and when they bailed.
+drmkit-testkit = { workspace = true }
+
+# The device cases need what the `device` feature pulls in.
+[[test]]
+name = "dumb_ring_device"
+required-features = ["device"]

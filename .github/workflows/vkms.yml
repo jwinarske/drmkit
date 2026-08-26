@@ -64,7 +64,7 @@ jobs:
           # libudev, which the cross lanes have no sysroot for -- but its
           # cases need a real uevent and root, which is exactly what this
           # lane is. Without it they are built out and never run anywhere.
-          cargo test --workspace --features drmkit-display/hotplug --no-run --message-format=json \
+          cargo test --workspace --features drmkit-display/hotplug,drmkit-present/device --no-run --message-format=json \
             | jq -r 'select(.reason == "compiler-artifact" and .executable != null
                             and .profile.test == true) | .executable' \
             > test-binaries.txt

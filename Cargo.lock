@@ -321,7 +321,12 @@ dependencies = [
 name = "drmkit-present"
 version = "0.0.0"
 dependencies = [
+ "drmkit-core",
+ "drmkit-dumb",
  "drmkit-fmt",
+ "drmkit-scene",
+ "drmkit-testkit",
+ "thiserror",
 ]
 
 [[package]]

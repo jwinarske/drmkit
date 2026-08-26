@@ -293,6 +293,14 @@ jobs:
       # underneath -- without it the sanitizer sees only this tree's frames.
       - run: rustup toolchain install nightly --component rust-src
       - uses: Swatinem/rust-cache@v2
+      # drmkit-input pulls libudev-sys, xkbcommon and libinput through their
+      # -sys crates, and their build scripts run pkg-config. The seven crates
+      # in the first step need none of this; the second step does, and adding
+      # that step without these is what made this lane's first run fail.
+      - name: install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev xkb-data libinput-dev libudev-dev
       # `--lib --tests` and not the default target set: doctests fail to link
       # under the sanitizer, and a lane red for that reason teaches people to
       # ignore it. Device cases are `#[ignore]`d and do not run here; what this

@@ -37,6 +37,31 @@ const BURST_RECOVERY: usize = 4;
 
 static CARD_LOCK: Mutex<()> = Mutex::new(());
 
+// --- which case pins which mechanism -----------------------------------------
+//
+// Measured by disabling each caching mechanism in the allocator and seeing
+// which cases notice. Recorded because "the suite is green" says nothing about
+// whether a case would go red for the reason it is named after, and two of
+// these turned out not to.
+//
+//                                    warm-start off   fast path off   both off
+//   a_steady_frame_costs_no_test_...        ok            FAILS         FAILS
+//   slow_drift_holds_at_one_test_...      FAILS             ok          FAILS
+//   a_burst_settles_within_a_few_...        ok              ok          FAILS
+//   rapid_churn_averages_under_the_...      ok              ok            ok
+//   n_plus_one_places_every_layer           ok              ok            ok
+//
+// The first three pin something, and between them cover both mechanisms.
+//
+// `n_plus_one_places_every_layer` surviving both is correct: it is about the
+// matcher placing every layer, not about caching.
+//
+// `rapid_churn_averages_under_the_threshold` surviving both is P-14. It does
+// not merely lack teeth on this hardware -- it asserts nothing about caching
+// at all, and would pass against an allocator that searched from scratch every
+// frame. It is kept because the threshold is upstream's contract and the
+// metric it prints is real, but it is not a regression test for anything.
+
 fn card_guard() -> std::sync::MutexGuard<'static, ()> {
     CARD_LOCK
         .lock()

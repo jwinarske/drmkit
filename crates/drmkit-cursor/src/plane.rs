@@ -49,13 +49,44 @@ pub struct SelectedPlane {
     pub cursor_max_w: u32,
     /// The plane's maximum cursor height, when it advertises one.
     pub cursor_max_h: u32,
+    /// The `FourCC` the cursor buffer is allocated and drawn in.
+    ///
+    /// Not always `ARGB8888`. Tegra's cursor plane advertises `RGBA8888` and
+    /// nothing else, and a plane that differs only in channel order is
+    /// perfectly able to carry a cursor -- see [`CURSOR_FORMATS`].
+    pub fourcc: u32,
 }
 
-/// Whether a plane can carry a cursor at all.
+/// The formats a cursor can be drawn in, best first.
 ///
-/// `ARGB8888` specifically: a cursor without an alpha channel is a rectangle.
-fn usable(plane: &PlaneCapabilities) -> bool {
-    plane.supports_format(drmkit_fmt::fourcc::ARGB8888)
+/// All four are 32-bit with alpha and differ only in channel order, so the
+/// renderer reaches any of them by permuting the pixel it already has. There
+/// is no `XRGB8888` here on purpose: a cursor without an alpha channel is a
+/// rectangle.
+///
+/// `ARGB8888` leads because it is what the shadow is already in and what the
+/// legacy path requires; the rest are taken only when a plane offers nothing
+/// better.
+///
+/// This list is why the port lights a cursor plane on hardware the reference
+/// falls back from. `plane_supports_argb8888` there tests one `FourCC` for
+/// equality, so Tegra's cursor plane -- `RGBA8888` only -- is rejected and an
+/// overlay is spent on a cursor the dedicated hardware could have carried.
+pub const CURSOR_FORMATS: [u32; 4] = [
+    drmkit_fmt::fourcc::ARGB8888,
+    drmkit_fmt::fourcc::RGBA8888,
+    drmkit_fmt::fourcc::ABGR8888,
+    drmkit_fmt::fourcc::BGRA8888,
+];
+
+/// The format this plane would carry a cursor in, if it can carry one.
+///
+/// [`CURSOR_FORMATS`] in order, so a plane that takes `ARGB8888` is drawn in
+/// what the shadow already holds and nothing is permuted.
+fn usable(plane: &PlaneCapabilities) -> Option<u32> {
+    CURSOR_FORMATS
+        .into_iter()
+        .find(|fourcc| plane.supports_format(*fourcc))
 }
 
 /// Pick a plane for the cursor on `crtc_index`.
@@ -85,34 +116,39 @@ pub fn select_plane(
     if let Some(plane_id) = forced {
         let plane = registry
             .by_id(plane_id)
-            .filter(|plane| plane.compatible_with_crtc(crtc_index) && usable(plane))
+            .filter(|plane| plane.compatible_with_crtc(crtc_index))
             .ok_or(CursorError::PlaneUnusable)?;
-        return Ok(selected(plane));
+        let fourcc = usable(plane).ok_or(CursorError::PlaneUnusable)?;
+        return Ok(selected(plane, fourcc));
     }
 
     // A cursor plane first. It is per-CRTC hardware built for this, with no
     // z-order to negotiate and no overlay taken away from anyone.
-    if let Some(plane) = registry
+    if let Some((plane, fourcc)) = registry
         .for_crtc(crtc_index)
-        .find(|plane| plane.plane_type == PlaneType::Cursor && usable(plane))
+        .filter(|plane| plane.plane_type == PlaneType::Cursor)
+        .find_map(|plane| usable(plane).map(|fourcc| (plane, fourcc)))
     {
-        return Ok(selected(plane));
+        return Ok(selected(plane, fourcc));
     }
 
     // Otherwise an overlay, preferring one no other CRTC is using. Some parts
     // expose only a handful, and a compositor wants the rest for layers.
-    let mut fallback: Option<&PlaneCapabilities> = None;
+    let mut fallback: Option<(&PlaneCapabilities, u32)> = None;
     for plane in registry.for_crtc(crtc_index) {
-        if plane.plane_type != PlaneType::Overlay || !usable(plane) {
+        if plane.plane_type != PlaneType::Overlay {
             continue;
         }
+        let Some(fourcc) = usable(plane) else {
+            continue;
+        };
         if !bound_elsewhere(plane.id) {
-            return Ok(selected(plane));
+            return Ok(selected(plane, fourcc));
         }
-        fallback.get_or_insert(plane);
+        fallback.get_or_insert((plane, fourcc));
     }
-    if let Some(plane) = fallback {
-        return Ok(selected(plane));
+    if let Some((plane, fourcc)) = fallback {
+        return Ok(selected(plane, fourcc));
     }
 
     if allow_legacy {
@@ -121,13 +157,16 @@ pub fn select_plane(
             path: PlanePath::Legacy,
             cursor_max_w: 0,
             cursor_max_h: 0,
+            // `drmModeSetCursor` has no format argument: the kernel reads the
+            // buffer as ARGB8888 and there is nothing to negotiate.
+            fourcc: drmkit_fmt::fourcc::ARGB8888,
         });
     }
     Err(CursorError::NoPlane)
 }
 
 /// Describe a chosen plane.
-fn selected(plane: &PlaneCapabilities) -> SelectedPlane {
+fn selected(plane: &PlaneCapabilities, fourcc: u32) -> SelectedPlane {
     let path = if plane.plane_type == PlaneType::Cursor {
         PlanePath::AtomicCursor
     } else {
@@ -141,5 +180,6 @@ fn selected(plane: &PlaneCapabilities) -> SelectedPlane {
         // rather than "zero by zero".
         cursor_max_w: plane.cursor_max_w,
         cursor_max_h: plane.cursor_max_h,
+        fourcc,
     }
 }

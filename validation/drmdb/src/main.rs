@@ -18,6 +18,12 @@
 //! - Every primary plane can host a composition canvas, or composition is
 //!   impossible on that device and layers past the plane count are dropped.
 //!
+//! It also replays decisions rather than only inspecting properties. The
+//! cursor survey rebuilds each device as a `PlaneRegistry` and asks
+//! `select_plane` what it would pick, once per CRTC -- which is how P-23 was
+//! found: Tegra's cursor plane advertises `RGBA8888` and nothing else, so a
+//! `FourCC` equality test rejected the hardware built for the job.
+//!
 //! A rule that fails here has found real hardware the code is wrong about.
 
 use std::collections::BTreeMap;

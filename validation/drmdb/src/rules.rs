@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use drmkit_planes::PlaneType;
+use drmkit_planes::{PlaneRegistry, PlaneType};
 use drmkit_scene::canvas_format_for_plane;
 
 use crate::device::Device;
@@ -97,6 +97,7 @@ const SURVEY_ROWS: usize = 14;
 pub(crate) fn check_all(devices: &[Device]) -> Report {
     Report {
         findings: vec![
+            the_corpus_parsed_into_something_usable(devices),
             src_w_on_every_atomic_plane(devices),
             rotation_always_advertises_zero(devices),
             every_primary_can_host_a_canvas(devices),
@@ -106,7 +107,55 @@ pub(crate) fn check_all(devices: &[Device]) -> Report {
             rotation_shapes(devices),
             zpos_shapes(devices),
             degenerate_mutable_zpos(devices),
+            cursor_paths(devices),
         ],
+    }
+}
+
+/// Every device has a plane that can feed a CRTC.
+///
+/// This one is about the scanner, not the hardware. Real hardware always
+/// satisfies it -- a plane that can drive nothing is not a plane anyone
+/// shipped -- so it can only fail when a field stopped being read.
+///
+/// It is here because a survey answering "zero" reads exactly like a survey
+/// answering a real question. Twice now a field quietly went unparsed and the
+/// output stayed confident: once when `Max` was read only in lowercase, so
+/// every zpos range looked degenerate, and once when `possible_crtcs` was
+/// never wired, so every CRTC in the corpus appeared to have no cursor plane
+/// and to fall back to the legacy path. Both looked like findings.
+///
+/// A rule that fails loudly on the shape a parse error produces is cheaper
+/// than noticing the number is implausible.
+fn the_corpus_parsed_into_something_usable(devices: &[Device]) -> Finding {
+    let mut checked = 0;
+    let mut violations = Vec::new();
+    for device in devices {
+        if !device.atomic || device.planes.is_empty() || device.crtc_count == 0 {
+            continue;
+        }
+        checked += 1;
+        let usable = device
+            .planes
+            .iter()
+            .any(|plane| (0..device.crtc_count).any(|crtc| plane.caps.compatible_with_crtc(crtc)));
+        if !usable {
+            violations.push(format!(
+                "{} ({}): {} plane(s), {} CRTC(s), and no plane can feed any of them",
+                device.name,
+                device.driver,
+                device.planes.len(),
+                device.crtc_count
+            ));
+        }
+    }
+    Finding {
+        rule: "every device has a plane that can feed a CRTC",
+        matters: "not a hardware claim -- this is the shape a field that \
+                  stopped being parsed produces, and every survey downstream \
+                  would report zeros with the same confidence as a real answer",
+        checked,
+        violations,
     }
 }
 
@@ -251,6 +300,85 @@ fn degenerate_mutable_zpos(devices: &[Device]) -> Survey {
         title: "degenerate but mutable zpos, by driver (the P-6 shape)".to_owned(),
         note: "clamp_zpos turns these into a write of the only legal value; \
                without it the frame is refused whole",
+        rows,
+    }
+}
+
+/// Which cursor path each CRTC in the corpus would actually get.
+///
+/// `select_plane` prefers a dedicated cursor plane, falls back to an overlay
+/// when there is none or when the cursor plane cannot take `ARGB8888`, and
+/// falls back again to the legacy `drmModeSetCursor`. Each fallback costs
+/// something real -- an overlay the compositor wanted, or the ability to
+/// coalesce the cursor with a frame and to rotate it.
+///
+/// This is a genuine replay rather than a count: the plane list is rebuilt as
+/// a `PlaneRegistry` and `select_plane` is asked, once per CRTC, with the same
+/// `possible_crtcs` the device reported.
+///
+/// What it answers is whether the fallbacks are reachable. `supports_scaling`
+/// is the cautionary case -- a field read from a property that is always
+/// present, feeding a matcher edge that never excluded anything. A path no
+/// hardware takes is the same thing wearing different clothes.
+fn cursor_paths(devices: &[Device]) -> Survey {
+    let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut no_cursor_plane = 0;
+    let mut cursor_plane_without_argb = 0;
+
+    for device in devices {
+        // A pre-atomic dump has no plane types to speak of, and the cursor
+        // path is not a question that can be asked of it.
+        if !device.atomic {
+            continue;
+        }
+        let registry = PlaneRegistry::from_capabilities(
+            device.planes.iter().map(|p| p.caps.clone()).collect(),
+        );
+        for crtc in 0..device.crtc_count {
+            let cursors: Vec<_> = device
+                .planes
+                .iter()
+                .filter(|p| {
+                    p.caps.plane_type == PlaneType::Cursor && p.caps.compatible_with_crtc(crtc)
+                })
+                .collect();
+            if cursors.is_empty() {
+                no_cursor_plane += 1;
+            } else if !cursors
+                .iter()
+                .any(|p| p.caps.supports_format(drmkit_fmt::fourcc::ARGB8888))
+            {
+                cursor_plane_without_argb += 1;
+            }
+
+            let label = match drmkit_cursor::select_plane(&registry, crtc, None, true, &|_| false) {
+                Ok(selected) => match selected.path {
+                    drmkit_cursor::PlanePath::AtomicCursor => "a dedicated cursor plane",
+                    drmkit_cursor::PlanePath::AtomicOverlay => "an overlay, atomically",
+                    drmkit_cursor::PlanePath::Legacy => "drmModeSetCursor, the legacy path",
+                },
+                Err(_) => "nothing can carry a cursor",
+            };
+            *counts.entry(label).or_default() += 1;
+        }
+    }
+
+    let mut rows: Vec<(String, usize)> = counts
+        .into_iter()
+        .map(|(label, count)| (label.to_owned(), count))
+        .collect();
+    rows.push((
+        "  (of which: no cursor plane on the CRTC)".to_owned(),
+        no_cursor_plane,
+    ));
+    rows.push((
+        "  (of which: a cursor plane that cannot take ARGB8888)".to_owned(),
+        cursor_plane_without_argb,
+    ));
+    Survey {
+        title: "cursor path per CRTC, replayed through select_plane".to_owned(),
+        note: "each fallback costs an overlay, or the ability to coalesce the \
+               cursor with a frame and to rotate it",
         rows,
     }
 }

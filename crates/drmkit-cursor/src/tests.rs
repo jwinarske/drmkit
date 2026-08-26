@@ -1642,8 +1642,113 @@ fn the_selection_is_a_value_worth_comparing() {
             path: PlanePath::AtomicCursor,
             cursor_max_w: 0,
             cursor_max_h: 0,
+            fourcc: drmkit_fmt::fourcc::ARGB8888,
         }
     );
+}
+
+/// A cursor plane that offers only `RGBA8888` is still a cursor plane.
+///
+/// Tegra. Its cursor plane advertises `RGBA8888` and nothing else, so a check
+/// that tests `ARGB8888` for equality rejects hardware built for exactly this
+/// job and spends an overlay -- or drops to legacy, losing atomic coalescing
+/// and rotation with it. Found by replaying the drmdb corpus: 4 CRTCs across
+/// 2 boards, and the only cursor planes in 1,195 devices that decline
+/// `ARGB8888`.
+///
+/// The reference has the same defect in `plane_supports_argb8888`.
+#[test]
+fn a_cursor_plane_offering_only_rgba_is_used_rather_than_spending_an_overlay() {
+    let cursor = PlaneCapabilities {
+        formats: vec![drmkit_fmt::fourcc::RGBA8888],
+        ..plane(43, PlaneType::Cursor)
+    };
+    let registry = registry_of(vec![cursor, plane(44, PlaneType::Overlay)]);
+
+    let selected = select_plane(&registry, 0, None, true, &all_free).expect("select");
+    assert_eq!(
+        selected.path,
+        PlanePath::AtomicCursor,
+        "the dedicated hardware, not the overlay next to it"
+    );
+    assert_eq!(selected.plane_id, 43);
+    assert_eq!(
+        selected.fourcc,
+        drmkit_fmt::fourcc::RGBA8888,
+        "and the buffer is allocated in what the plane will take"
+    );
+}
+
+/// A plane that takes `ARGB8888` is drawn in it, permuting nothing.
+#[test]
+fn argb_is_preferred_so_the_common_case_copies_the_shadow_unchanged() {
+    let both = PlaneCapabilities {
+        formats: vec![drmkit_fmt::fourcc::RGBA8888, drmkit_fmt::fourcc::ARGB8888],
+        ..plane(50, PlaneType::Cursor)
+    };
+    let registry = registry_of(vec![both]);
+    let selected = select_plane(&registry, 0, None, true, &all_free).expect("select");
+    assert_eq!(selected.fourcc, drmkit_fmt::fourcc::ARGB8888);
+}
+
+/// An opaque-only plane is still refused: a cursor needs alpha.
+#[test]
+fn widening_the_format_list_did_not_let_an_opaque_plane_through() {
+    let registry = registry_of(vec![opaque_plane(60, PlaneType::Cursor)]);
+    let selected = select_plane(&registry, 0, None, true, &all_free).expect("select");
+    assert_eq!(
+        selected.path,
+        PlanePath::Legacy,
+        "XRGB8888 carries no alpha, so the cursor would be a rectangle"
+    );
+}
+
+/// The channel permutations, checked as bytes in memory.
+///
+/// The shadow pixel is `0xAARRGGBB` in a host word. What the kernel scans out
+/// is the byte order, so that is what this asserts -- a test written against
+/// the word would pass on a permutation that lays the bytes down wrong.
+#[test]
+fn each_cursor_format_lays_its_channels_down_in_the_right_order() {
+    use crate::renderer::pack;
+
+    // Distinct values per channel, so a swapped pair cannot look correct.
+    let pixel = 0x11_22_33_44_u32;
+    let (a, r, g, b) = (0x11, 0x22, 0x33, 0x44);
+
+    // DRM names a format by its channels from the top of a little-endian
+    // word, so `ARGB8888` puts alpha at byte 3 and blue at byte 0.
+    assert_eq!(
+        pack(pixel, drmkit_fmt::fourcc::ARGB8888).to_le_bytes(),
+        [b, g, r, a],
+        "ARGB8888"
+    );
+    assert_eq!(
+        pack(pixel, drmkit_fmt::fourcc::RGBA8888).to_le_bytes(),
+        [a, b, g, r],
+        "RGBA8888, which is what Tegra's cursor plane wants"
+    );
+    assert_eq!(
+        pack(pixel, drmkit_fmt::fourcc::ABGR8888).to_le_bytes(),
+        [r, g, b, a],
+        "ABGR8888"
+    );
+    assert_eq!(
+        pack(pixel, drmkit_fmt::fourcc::BGRA8888).to_le_bytes(),
+        [a, r, g, b],
+        "BGRA8888"
+    );
+
+    // Every format the selector can hand the renderer is one it permutes
+    // deliberately, so none of them can reach the fallthrough by accident.
+    for fourcc in crate::CURSOR_FORMATS {
+        let packed = pack(pixel, fourcc);
+        assert_eq!(
+            packed.count_ones(),
+            pixel.count_ones(),
+            "a permutation moves bits without inventing or dropping any"
+        );
+    }
 }
 
 // --- buffer size -----------------------------------------------------------

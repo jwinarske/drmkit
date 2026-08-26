@@ -20,6 +20,9 @@ pub(crate) struct Device {
     /// getting this wrong is how "978 planes lack `SRC_W`" reads as a finding
     /// when every one of them is from a radeon or nouveau dump.
     pub(crate) atomic: bool,
+    /// How many CRTCs the dump lists, which bounds the `possible_crtcs` bits
+    /// worth asking about.
+    pub(crate) crtc_count: u32,
     pub(crate) planes: Vec<Plane>,
 }
 
@@ -57,10 +60,16 @@ impl Device {
             .iter()
             .any(|plane| plane.properties.iter().any(|p| p == "CRTC_X"));
 
+        let crtc_count = value
+            .get("crtcs")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+
         Self {
             name: name.to_owned(),
             driver,
             atomic,
+            crtc_count: u32::try_from(crtc_count).unwrap_or(0),
             planes,
         }
     }
@@ -108,6 +117,13 @@ fn plane_from_json(value: &Value) -> Plane {
     Plane {
         caps: PlaneCapabilities {
             id: u32::try_from(value.get("id").and_then(Value::as_u64).unwrap_or(0)).unwrap_or(0),
+            possible_crtcs: u32::try_from(
+                value
+                    .get("possible_crtcs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+            )
+            .unwrap_or(0),
             plane_type,
             formats,
             zpos_min,

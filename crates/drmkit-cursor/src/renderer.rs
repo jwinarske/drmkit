@@ -145,7 +145,7 @@ impl<'a> Renderer<'a> {
 
         let mut buffers: Option<[Buffer; 2]> = None;
         let size = probe_size(preferred, |candidate| {
-            match allocate_pair(device, candidate) {
+            match allocate_pair(device, candidate, plane.fourcc) {
                 Ok(pair) => {
                     // The kernel is asked about the real thing: a request that
                     // arms this plane with this framebuffer at this size.
@@ -167,7 +167,7 @@ impl<'a> Renderer<'a> {
             // with no mode set every test fails for unrelated reasons. Take
             // the fallback size and let the first real commit say what is
             // wrong.
-            None => allocate_pair(device, size)?,
+            None => allocate_pair(device, size, plane.fourcc)?,
         };
 
         Ok(Self {
@@ -235,7 +235,7 @@ impl<'a> Renderer<'a> {
         // One buffer: the call uploads on install and would need reinstalling
         // for a content change anyway.
         let size = preferred_size(config.preferred_size, PlanePath::Legacy, None);
-        let buffers = allocate_pair(device, size)?;
+        let buffers = allocate_pair(device, size, plane.fourcc)?;
 
         Ok(Self {
             device,
@@ -502,6 +502,7 @@ impl<'a> Renderer<'a> {
 
         // Read what depends on `self` before the buffer is borrowed mutably.
         let rotation = self.draw_rotation();
+        let fourcc = self.plane.fourcc;
         let target = self.which.draw_target();
         let buffer = &mut self.buffers[target];
         let (width, height) = (buffer.width(), buffer.height());
@@ -519,7 +520,7 @@ impl<'a> Renderer<'a> {
                 let from = y as usize * stride_px;
                 for (x, pixel) in scratch[from..from + width as usize].iter().enumerate() {
                     let at = x * 4;
-                    row[at..at + 4].copy_from_slice(&pixel.to_ne_bytes());
+                    row[at..at + 4].copy_from_slice(&pack(*pixel, fourcc).to_ne_bytes());
                 }
             }
         }
@@ -528,6 +529,33 @@ impl<'a> Renderer<'a> {
         self.drawn_frame = Some(index);
         self.which.mark_drawn();
         Ok(())
+    }
+}
+
+/// Permute a shadow pixel into the plane's channel order.
+///
+/// The shadow is `0xAARRGGBB` in a host word, which is `ARGB8888` in memory on
+/// a little-endian host. The other three cursor formats are the same eight-bit
+/// channels in a different order, so each is a permutation of that word rather
+/// than a conversion: no precision is lost and no channel is invented.
+///
+/// A format not in [`CURSOR_FORMATS`] cannot be selected, so the fallthrough
+/// is unreachable by construction; it returns the pixel unchanged rather than
+/// panicking, because a wrongly ordered cursor is a visible bug and a dead
+/// process is a black screen.
+pub(crate) const fn pack(pixel: u32, fourcc: u32) -> u32 {
+    let (a, r, g, b) = (
+        pixel >> 24,
+        (pixel >> 16) & 0xff,
+        (pixel >> 8) & 0xff,
+        pixel & 0xff,
+    );
+    match fourcc {
+        drmkit_fmt::fourcc::RGBA8888 => (r << 24) | (g << 16) | (b << 8) | a,
+        drmkit_fmt::fourcc::ABGR8888 => (a << 24) | (b << 16) | (g << 8) | r,
+        drmkit_fmt::fourcc::BGRA8888 => (b << 24) | (g << 16) | (r << 8) | a,
+        // `ARGB8888`, and anything that never reaches selection.
+        _ => pixel,
     }
 }
 
@@ -565,11 +593,11 @@ fn crtc_handle(crtc_id: u32) -> Option<drm::control::crtc::Handle> {
 }
 
 /// Allocate a pair of cursor buffers with framebuffers registered.
-fn allocate_pair(device: &Device, size: u32) -> Result<[Buffer; 2], CursorError> {
+fn allocate_pair(device: &Device, size: u32, fourcc: u32) -> Result<[Buffer; 2], CursorError> {
     let config = Config {
         width: size,
         height: size,
-        fourcc: drmkit_fmt::fourcc::ARGB8888,
+        fourcc,
         bpp: 32,
         add_fb: true,
     };
@@ -677,7 +705,7 @@ impl Paused {
             plane: self.plane,
             rotation_mask: self.rotation_mask,
             props,
-            buffers: allocate_pair(device, self.size)?,
+            buffers: allocate_pair(device, self.size, self.plane.fourcc)?,
             which: if self.plane.path == PlanePath::Legacy {
                 PingPong::single()
             } else {

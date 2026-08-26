@@ -108,6 +108,7 @@ pub(crate) fn check_all(devices: &[Device]) -> Report {
             zpos_shapes(devices),
             degenerate_mutable_zpos(devices),
             cursor_paths(devices),
+            colour_pipeline_shapes(devices),
         ],
     }
 }
@@ -131,21 +132,20 @@ fn the_corpus_parsed_into_something_usable(devices: &[Device]) -> Finding {
     let mut checked = 0;
     let mut violations = Vec::new();
     for device in devices {
-        if !device.atomic || device.planes.is_empty() || device.crtc_count == 0 {
+        if !device.atomic || device.planes.is_empty() || device.crtcs.is_empty() {
             continue;
         }
         checked += 1;
-        let usable = device
-            .planes
-            .iter()
-            .any(|plane| (0..device.crtc_count).any(|crtc| plane.caps.compatible_with_crtc(crtc)));
+        let usable = device.planes.iter().any(|plane| {
+            (0..device.crtc_count()).any(|crtc| plane.caps.compatible_with_crtc(crtc))
+        });
         if !usable {
             violations.push(format!(
                 "{} ({}): {} plane(s), {} CRTC(s), and no plane can feed any of them",
                 device.name,
                 device.driver,
                 device.planes.len(),
-                device.crtc_count
+                device.crtcs.len()
             ));
         }
     }
@@ -334,7 +334,7 @@ fn cursor_paths(devices: &[Device]) -> Survey {
         let registry = PlaneRegistry::from_capabilities(
             device.planes.iter().map(|p| p.caps.clone()).collect(),
         );
-        for crtc in 0..device.crtc_count {
+        for crtc in 0..device.crtc_count() {
             let cursors: Vec<_> = device
                 .planes
                 .iter()
@@ -379,6 +379,48 @@ fn cursor_paths(devices: &[Device]) -> Survey {
         title: "cursor path per CRTC, replayed through select_plane".to_owned(),
         note: "each fallback costs an overlay, or the ability to coalesce the \
                cursor with a frame and to rotate it",
+        rows,
+    }
+}
+
+/// Which colour stages each CRTC in the corpus actually has.
+///
+/// `CrtcColorPipeline::new` refuses a CRTC with none of the three, and a CRTC
+/// with some of them succeeds while the missing stages refuse individually.
+/// That design only earns its keep if partial pipelines are common.
+///
+/// They are, and P-21 understated it: the finding reads as a vc4 quirk, but a
+/// CRTC with no colour pipeline at all is the second most common shape in the
+/// corpus. The `NoPipeline` branch is not an edge case a Raspberry Pi
+/// happened to expose.
+fn colour_pipeline_shapes(devices: &[Device]) -> Survey {
+    let mut shapes: BTreeMap<String, usize> = BTreeMap::new();
+    for device in devices {
+        for crtc in &device.crtcs {
+            let mut stages = Vec::new();
+            if crtc.has("DEGAMMA_LUT") {
+                stages.push("degamma");
+            }
+            if crtc.has("CTM") {
+                stages.push("ctm");
+            }
+            if crtc.has("GAMMA_LUT") {
+                stages.push("gamma");
+            }
+            let key = if stages.is_empty() {
+                "no colour pipeline at all".to_owned()
+            } else {
+                stages.join(" + ")
+            };
+            *shapes.entry(key).or_default() += 1;
+        }
+    }
+    let mut rows: Vec<(String, usize)> = shapes.into_iter().collect();
+    rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Survey {
+        title: "CRTC colour pipeline shapes".to_owned(),
+        note: "every stage refuses on its own, which is what lets a partial \
+               pipeline work rather than being refused whole",
         rows,
     }
 }

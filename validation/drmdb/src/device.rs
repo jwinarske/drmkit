@@ -20,10 +20,22 @@ pub(crate) struct Device {
     /// getting this wrong is how "978 planes lack `SRC_W`" reads as a finding
     /// when every one of them is from a radeon or nouveau dump.
     pub(crate) atomic: bool,
-    /// How many CRTCs the dump lists, which bounds the `possible_crtcs` bits
+    /// The CRTCs the dump lists. Their count bounds the `possible_crtcs` bits
     /// worth asking about.
-    pub(crate) crtc_count: u32,
+    pub(crate) crtcs: Vec<Crtc>,
     pub(crate) planes: Vec<Plane>,
+}
+
+/// One CRTC, as much of it as the rules ask about.
+pub(crate) struct Crtc {
+    /// Property names the dump lists.
+    pub(crate) properties: Vec<String>,
+}
+
+impl Crtc {
+    pub(crate) fn has(&self, name: &str) -> bool {
+        self.properties.iter().any(|p| p == name)
+    }
 }
 
 /// One plane, in drmkit's own capability type plus what the dump adds.
@@ -39,6 +51,11 @@ pub(crate) struct Plane {
 }
 
 impl Device {
+    /// How many CRTCs the dump lists, as a bit index bound.
+    pub(crate) fn crtc_count(&self) -> u32 {
+        u32::try_from(self.crtcs.len()).unwrap_or(u32::MAX)
+    }
+
     pub(crate) fn from_json(name: &str, value: &Value) -> Self {
         let driver = value
             .get("driver")
@@ -60,16 +77,28 @@ impl Device {
             .iter()
             .any(|plane| plane.properties.iter().any(|p| p == "CRTC_X"));
 
-        let crtc_count = value
+        let crtcs: Vec<Crtc> = value
             .get("crtcs")
             .and_then(Value::as_array)
-            .map_or(0, Vec::len);
+            .map(|crtcs| {
+                crtcs
+                    .iter()
+                    .map(|crtc| Crtc {
+                        properties: crtc
+                            .get("properties")
+                            .and_then(Value::as_object)
+                            .map(|map| map.keys().cloned().collect())
+                            .unwrap_or_default(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         Self {
             name: name.to_owned(),
             driver,
             atomic,
-            crtc_count: u32::try_from(crtc_count).unwrap_or(0),
+            crtcs,
             planes,
         }
     }

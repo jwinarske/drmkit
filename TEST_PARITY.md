@@ -66,7 +66,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_external_dma_buf_source.cpp` | `drmkit-scene-sources` `external.rs` + `tests.rs` | ported | Eleven of fourteen. The three `Accepts*LayoutValidation` cases make their point by handing `create` a device built from fd -1 and checking the error is `bad_file_descriptor` rather than `invalid_argument`; a `&Device` here is a live DRM device by construction, so the same distinction is drawn from the other side -- a valid NV12, YUV420 or tiled layout must not come back `Invalid`. `RejectsBadDeviceFd` and `RejectsNonDrmDeviceFd` have no counterpart for the same reason |
 | `tests/unit/test_format.cpp` | `drmkit-fmt` `src/tests.rs` | ported |  |
 | `tests/unit/test_format_mod.cpp` | `drmkit-fmt` `src/tests.rs` | ported |  |
-| `tests/unit/test_frame_economy.cpp` | _drmkit-present_ (phase 6+) | pending |  |
+| `tests/unit/test_frame_economy.cpp` | `drmkit-present` `frame_economy.rs` | ported | All five upstream cases, plus two the reference has no equivalent of: forcing full *before* the first frame consumes one flag rather than two — `first_` and `force_full_` share a branch there, so separating them would lose a force — and that `commits()` agrees with the variant. `FrameAction` is a three-variant enum rather than `{action, full}`, where `full` is meaningless on a skip and is set to `false` a caller can read and act on. |
 | `tests/unit/test_gbm.cpp` | `drmkit-gbm` | partial | Device open, allocation, geometry, dma-buf export, format refusal. `modifier` is unpinned on vkms (P-13) and surface allocation is not ported |
 | `tests/unit/test_gbm_surface_source.cpp` | _drmkit-scene-gbm_ (phase 6+) | pending |  |
 | `tests/unit/test_gl_compositor_math.cpp` | _drmkit-gl_ (phase 6+) | pending |  |

@@ -20,14 +20,16 @@
 //!
 //! # Not here yet
 //!
-//! Being built up. [`BufferRing`] and [`negotiate`] are in; `ScanoutBackend`,
-//! `FrameEconomy`, `DumbScanoutSink` and `DumbRingSource` follow, and the GBM,
-//! GL and Vulkan producers are separate crates after that.
+//! Being built up. [`BufferRing`], [`negotiate`] and [`FrameEconomy`] are in;
+//! `ScanoutBackend`, `DumbScanoutSink` and `DumbRingSource` follow, and the
+//! GBM, GL and Vulkan producers are separate crates after that.
 
 mod buffer_ring;
+mod frame_economy;
 mod negotiate;
 
 pub use buffer_ring::{BufferRing, Lease, Rect, Repaint};
+pub use frame_economy::{FrameAction, FrameEconomy};
 pub use negotiate::{negotiate, negotiate_for_format};
 
 #[cfg(test)]

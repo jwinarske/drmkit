@@ -311,3 +311,104 @@ mod negotiate {
         assert_eq!(negotiate(&both, &both, Rotation::Rotate180).len(), 3);
     }
 }
+
+// --- frame economy: parity port of tests/unit/test_frame_economy.cpp --------
+
+mod frame_economy {
+    use crate::{FrameAction, FrameEconomy};
+
+    /// The first frame commits full whatever it is told, because the scanout
+    /// buffer's contents are undefined until something has been put in it.
+    #[test]
+    fn the_first_frame_commits_full_regardless() {
+        let mut economy = FrameEconomy::new();
+        assert_eq!(
+            economy.decide(false, true),
+            FrameAction::CommitFull,
+            "not skipped, despite nothing having changed"
+        );
+        assert_eq!(economy.committed(), 1);
+        assert_eq!(economy.skipped(), 0);
+    }
+
+    /// An unchanged frame after the first is skipped: no commit at all.
+    #[test]
+    fn an_idle_frame_costs_nothing() {
+        let mut economy = FrameEconomy::new();
+        economy.decide(true, false);
+
+        for _ in 0..5 {
+            assert_eq!(economy.decide(false, true), FrameAction::Skip);
+        }
+        assert_eq!(economy.committed(), 1);
+        assert_eq!(economy.skipped(), 5);
+    }
+
+    /// Changed content commits: damaged when the producer supplied damage,
+    /// full when it did not.
+    #[test]
+    fn changed_content_commits_damaged_only_when_damage_exists() {
+        let mut economy = FrameEconomy::new();
+        economy.decide(true, false);
+
+        assert_eq!(economy.decide(true, true), FrameAction::CommitDamaged);
+        assert_eq!(
+            economy.decide(true, false),
+            FrameAction::CommitFull,
+            "no damage to attach means the whole frame"
+        );
+        assert_eq!(economy.committed(), 3);
+        assert_eq!(economy.skipped(), 0);
+    }
+
+    /// `force_full` overrides available damage, and is one-shot.
+    #[test]
+    fn force_full_wins_once_over_available_damage() {
+        let mut economy = FrameEconomy::new();
+        economy.decide(true, false);
+
+        economy.force_full();
+        assert_eq!(economy.decide(true, true), FrameAction::CommitFull);
+        assert_eq!(
+            economy.decide(true, true),
+            FrameAction::CommitDamaged,
+            "the force applied to one frame, not to the rest"
+        );
+    }
+
+    /// `force_full` also turns an idle frame into a commit — the post-resume
+    /// case, where nothing changed but what is on screen is no longer ours.
+    #[test]
+    fn force_full_overrides_an_idle_frame() {
+        let mut economy = FrameEconomy::new();
+        economy.decide(true, false);
+
+        economy.force_full();
+        assert_eq!(economy.decide(false, true), FrameAction::CommitFull);
+    }
+
+    /// Forcing full before the first frame consumes one flag, not two.
+    ///
+    /// The reference has no equivalent: `first_` and `force_full_` are cleared
+    /// by the same branch, so a caller who forces before the first decision
+    /// would lose the force if the branches were ever separated.
+    #[test]
+    fn forcing_before_the_first_frame_does_not_swallow_a_later_one() {
+        let mut economy = FrameEconomy::new();
+        economy.force_full();
+        assert_eq!(economy.decide(true, true), FrameAction::CommitFull);
+        assert_eq!(
+            economy.decide(true, true),
+            FrameAction::CommitDamaged,
+            "the first frame and the force were the same commit, not two"
+        );
+    }
+
+    /// `commits` says what it looks like it says.
+    #[test]
+    fn only_skip_is_not_a_commit() {
+        assert!(!FrameAction::Skip.commits());
+        assert!(FrameAction::CommitFull.commits());
+        assert!(FrameAction::CommitDamaged.commits());
+    }
+}

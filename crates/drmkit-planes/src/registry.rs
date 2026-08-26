@@ -331,6 +331,32 @@ impl PlaneRegistry {
             .filter(move |plane| plane.compatible_with_crtc(crtc_index))
     }
 
+    /// Every modifier any non-cursor plane on `crtc_index` can scan `fourcc`
+    /// out with, deduplicated and in ascending order.
+    ///
+    /// The union across all of them, not the primary's `IN_FORMATS` alone.
+    /// On a split `SoC` the primary can advertise only a compressed layout while
+    /// the producer exports `LINEAR`: intersecting against the primary would
+    /// come back empty and miss the `LINEAR`-capable overlay the allocator was
+    /// always going to place the layer on. The `TEST_ONLY` commit during
+    /// placement remains the real arbiter of which plane takes it.
+    ///
+    /// Cursor planes are excluded for the same reason they are excluded from
+    /// [`force_disable_candidates`](Self::force_disable_candidates): the cursor
+    /// path owns them, and a scanout layer is never placed there.
+    #[must_use]
+    pub fn candidate_modifiers(&self, crtc_index: u32, fourcc: u32) -> Vec<u64> {
+        let mut modifiers: Vec<u64> = self
+            .for_crtc(crtc_index)
+            .filter(|plane| plane.plane_type != PlaneType::Cursor)
+            .flat_map(|plane| plane.format_table.modifiers_for(fourcc))
+            .map(|modifier| modifier.0)
+            .collect();
+        modifiers.sort_unstable();
+        modifiers.dedup();
+        modifiers
+    }
+
     /// Planes on `crtc_index` that a commit may force-disable.
     ///
     /// [`for_crtc`](Self::for_crtc) minus the cursor planes. A cursor plane is

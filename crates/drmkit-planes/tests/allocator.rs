@@ -634,3 +634,102 @@ fn layers_are_assigned_bottom_up_when_planes_cannot_be_reordered() {
          planes; got {bottom_plane}, {middle_plane}, {top_plane}"
     );
 }
+
+// --- candidate_modifiers -----------------------------------------------------
+
+/// A plane advertising exactly `modifiers` for `XRGB8888`.
+fn plane_with(id: u32, plane_type: PlaneType, modifiers: &[u64]) -> PlaneCapabilities {
+    let mut cap = plane(id, plane_type, None);
+    cap.has_format_modifiers = true;
+    cap.format_table = drmkit_fmt::FormatTable::from_pairs(
+        modifiers
+            .iter()
+            .map(|m| (fourcc::XRGB8888, drmkit_fmt::Modifier(*m))),
+    );
+    cap
+}
+
+const LINEAR: u64 = 0;
+/// `AFBC(16x16)` on ARM, standing in for a compressed primary-only layout.
+const AFBC: u64 = 0x0800_0000_0000_0001;
+
+/// The union is taken across every non-cursor plane, not the primary alone.
+///
+/// This is the split-`SoC` shape the union exists for: the primary scans out
+/// only the compressed layout, and a producer that exports `LINEAR` would
+/// intersect to empty against it -- missing the overlay that can take the
+/// layer, which is where the allocator was going to put it anyway.
+#[test]
+fn a_linear_only_overlay_is_still_a_candidate_when_the_primary_is_compressed_only() {
+    let registry = PlaneRegistry::from_capabilities(vec![
+        plane_with(31, PlaneType::Primary, &[AFBC]),
+        plane_with(32, PlaneType::Overlay, &[LINEAR]),
+    ]);
+
+    assert_eq!(
+        registry.candidate_modifiers(0, fourcc::XRGB8888),
+        vec![LINEAR, AFBC],
+        "intersecting against the primary alone would answer nothing here"
+    );
+}
+
+/// A modifier two planes share is offered once.
+#[test]
+fn a_modifier_several_planes_share_is_reported_once() {
+    let registry = PlaneRegistry::from_capabilities(vec![
+        plane_with(31, PlaneType::Primary, &[LINEAR, AFBC]),
+        plane_with(32, PlaneType::Overlay, &[LINEAR]),
+        plane_with(33, PlaneType::Overlay, &[LINEAR]),
+    ]);
+
+    assert_eq!(
+        registry.candidate_modifiers(0, fourcc::XRGB8888),
+        vec![LINEAR, AFBC]
+    );
+}
+
+/// The cursor plane is not a scanout candidate, so what it can scan out is
+/// not offered to the producer.
+///
+/// Offering it would be a real error rather than a cosmetic one: a producer
+/// told a cursor-only modifier is available can allocate in it, and no plane
+/// the layer may land on will take the result.
+#[test]
+fn the_cursor_planes_modifiers_are_not_offered() {
+    let registry = PlaneRegistry::from_capabilities(vec![
+        plane_with(31, PlaneType::Primary, &[LINEAR]),
+        plane_with(34, PlaneType::Cursor, &[AFBC]),
+    ]);
+
+    assert_eq!(
+        registry.candidate_modifiers(0, fourcc::XRGB8888),
+        vec![LINEAR],
+        "the cursor path owns that plane; a scanout layer never lands there"
+    );
+}
+
+/// A format no plane advertises has no candidates, which is the answer that
+/// sends the caller to the `LINEAR` fallback rather than an empty allocation.
+#[test]
+fn a_format_no_plane_scans_out_has_no_candidates() {
+    let registry =
+        PlaneRegistry::from_capabilities(vec![plane_with(31, PlaneType::Primary, &[LINEAR])]);
+
+    assert!(registry.candidate_modifiers(0, fourcc::NV12).is_empty());
+}
+
+/// Planes on another CRTC are not candidates.
+#[test]
+fn a_plane_on_another_crtc_contributes_nothing() {
+    let mut other = plane_with(32, PlaneType::Overlay, &[AFBC]);
+    other.possible_crtcs = 0b10;
+    let registry = PlaneRegistry::from_capabilities(vec![
+        plane_with(31, PlaneType::Primary, &[LINEAR]),
+        other,
+    ]);
+
+    assert_eq!(
+        registry.candidate_modifiers(0, fourcc::XRGB8888),
+        vec![LINEAR]
+    );
+}

@@ -7,15 +7,25 @@ composition, and scanout.
 [![ci](https://github.com/jwinarske/drmkit/actions/workflows/ci.yml/badge.svg)](https://github.com/jwinarske/drmkit/actions/workflows/ci.yml)
 [![vkms](https://github.com/jwinarske/drmkit/actions/workflows/vkms.yml/badge.svg)](https://github.com/jwinarske/drmkit/actions/workflows/vkms.yml)
 
-> **Status: phases 0–3 met, phase 4 started.** Twelve crates, 357 tests, and
-> all six [`INVARIANTS.md`](INVARIANTS.md) contracts pinned against a real
-> device. A scene can build a frame, allocate planes, commit it, composite
-> what it cannot place, and hand buffers back on the right vblank.
+> **Status: phases 0–4 met, phase 5 (the v0.1.0-minimal ship gate) under way.**
+> Eighteen crates; 712 unit and integration tests plus 27 doctests on the host,
+> 93 more that need a card, and 1,336 cases run under qemu on the aarch64 and
+> riscv64 cross lanes. All six [`INVARIANTS.md`](INVARIANTS.md) contracts are
+> pinned against a real device. A scene can build a frame, allocate planes,
+> commit it, composite what it cannot place, and hand buffers back on the right
+> vblank; EDID, colour management, the cursor and capture paths are in and
+> tested.
 >
-> Not yet a display library you would ship: EDID, colour management, the
-> cursor and capture paths, and the whole present spine are still ahead, and
-> nothing has run on non-vkms hardware. See [`plan.md`](plan.md) for the full
-> porting plan.
+> Not yet a display library you would ship: the present spine, CSD, and the
+> GL/GBM/stream source tiers are still ahead — 47 of the 97 upstream test files
+> are unported, and every one of them waits on a crate that does not exist yet.
+> See [`plan.md`](plan.md) for the full porting plan.
+>
+> It has run on more than vkms. amdgpu and vc4 (Raspberry Pi 5) by hand, a
+> rockchip VOP2 for the case that needed it, and — for the assumptions no lab
+> can settle — the [drmdb](https://drmdb.emersion.fr) corpus of ~1,200 real
+> devices across 50 drivers, replayed through this tree's own capability logic.
+> Several findings here came from hardware nobody owns.
 
 ### Phase gates
 

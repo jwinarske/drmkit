@@ -598,3 +598,101 @@ fn a_frame_never_arms_more_planes_than_the_kernel_will_take_vkms() {
     );
     fx.scene.drain();
 }
+
+/// A scene where nothing can be placed composites everything, twice running.
+///
+/// A budget of zero produces the empty assignment: no plane count is
+/// acceptable, so the allocator places nothing and composition has to rescue
+/// every layer. vkms accepts any assignment, so the constraint is imposed --
+/// the same reason the plane-budget case above imposes one.
+///
+/// # What this does *not* pin
+///
+/// The reference's version of this case exists for a specific bug: an empty
+/// assignment left marked valid, so the next frame took the warm path, found
+/// nothing to re-validate and returned `EAGAIN` on a placeable scene. That is
+/// not reachable here, and it is worth saying so rather than implying the
+/// case covers it.
+///
+/// Measured: both frames report `test_commits=6, fast_path=false`, so the
+/// second never enters the warm path at all. Three separate things stop it --
+/// `previous_valid` is cleared on an empty assignment, the warm path checks
+/// `!previous.is_empty()`, and `has_new_layer` is true for every layer when
+/// the cache is empty, which forces a full search on its own. Removing all
+/// three still passes, because the warm path then re-validates an empty
+/// assignment successfully and produces the same answer.
+///
+/// So what is pinned is the weaker property the case still discriminates on:
+/// a fully-composited frame stays fully composited, drops nothing, and its
+/// accounting balances -- injecting a composition that rescues nothing fails
+/// it.
+#[test]
+#[ignore = "needs a DRM device"]
+fn a_scene_that_places_nothing_composites_everything_vkms() {
+    let _guard = card_guard();
+    let Some(mut fx) = fixture() else { return };
+
+    fill(&mut fx, 2);
+
+    // Two frames through a committer that refuses every assignment.
+    let mut reports = Vec::new();
+    for _ in 0..2 {
+        let mut committer = PlaneBudget {
+            inner: DeviceCommitter::new(
+                &fx.device,
+                &fx.map,
+                &fx.registry,
+                fx.crtc_index,
+                AtomicCommitFlags::empty(),
+                None,
+            ),
+            budget: 0,
+            high_water: 0,
+            refusals: 0,
+            extra: None,
+        };
+        let build = fx
+            .scene
+            .build_frame(
+                &fx.registry,
+                fx.crtc_index,
+                CommitKind::Real { arms_flip: false },
+                &mut committer,
+            )
+            .expect("build must not fail on a placeable scene");
+        let report = build.report().clone();
+        fx.scene.finalize_frame(build, KernelResult::Ok);
+        reports.push(report);
+    }
+
+    for (index, report) in reports.iter().enumerate() {
+        println!(
+            "note: frame {index}: total={} assigned={} composited={} unassigned={} test_commits={} fast_path={}",
+            report.layers_total,
+            report.layers_assigned,
+            report.layers_composited,
+            report.layers_unassigned,
+            report.test_commits_issued,
+            report.fb_delta_fast_path
+        );
+        assert_eq!(report.layers_total, 2, "frame {index}");
+        assert_eq!(
+            report.layers_assigned, 0,
+            "frame {index}: the committer refused every plane"
+        );
+        assert_eq!(
+            report.layers_composited, 2,
+            "frame {index}: both layers should have been rescued onto the canvas"
+        );
+        assert_eq!(
+            report.layers_unassigned, 0,
+            "frame {index}: a layer was dropped rather than composited"
+        );
+        assert!(report.accounting_balances(), "frame {index}: {report:?}");
+    }
+
+    assert_eq!(
+        reports[0].layers_composited, reports[1].layers_composited,
+        "the second frame came out differently from the first"
+    );
+}

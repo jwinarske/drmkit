@@ -36,6 +36,7 @@
 use drmkit_core::Device;
 use drmkit_dumb::{Buffer, DumbError};
 use drmkit_fmt::fourcc;
+use drmkit_planes::PlaneCapabilities;
 
 /// A rectangle in whole pixels, half-open in extent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -367,6 +368,101 @@ fn copy_rows(dst: &mut [u8], dst_stride: usize, shadow: &[u8], row_bytes: usize,
 
 // --- the surface ------------------------------------------------------------
 
+/// Bytes per pixel the canvas can write in `fourcc`, or zero.
+///
+/// Zero is the gate: a format the canvas cannot emit is not offered even if
+/// the plane advertises it. Keeping the check here rather than in the
+/// preference list is what stops the two drifting apart, which would show up
+/// as a canvas allocated in a format `flush` then writes garbage into.
+#[must_use]
+pub const fn canvas_output_bpp(fourcc: u32) -> u32 {
+    match fourcc {
+        fourcc::ARGB8888 | fourcc::XRGB8888 | fourcc::XBGR8888 | fourcc::ABGR8888 => 4,
+        fourcc::RGB565 | fourcc::BGR565 => 2,
+        _ => 0,
+    }
+}
+
+/// Formats the canvas will take, best first.
+///
+/// `ARGB8888` first because it is what the shadow already holds and needs no
+/// conversion; the alpha-carrying variants ahead of the opaque ones because a
+/// canvas that has blended transparency into it should be able to say so; and
+/// the 565s last, which lose two bits a channel but are all some panels take.
+const CANVAS_FORMATS: [u32; 6] = [
+    fourcc::ARGB8888,
+    fourcc::XRGB8888,
+    fourcc::XBGR8888,
+    fourcc::ABGR8888,
+    fourcc::RGB565,
+    fourcc::BGR565,
+];
+
+/// The best canvas format this plane can scan out, if any.
+///
+/// The device-free core of the single-plane composition fallback. On a
+/// controller with one plane and no `ARGB8888` -- tilcdc on a `BeagleBone` is
+/// the canonical one, and i.MX LCDIF and the small SPI panels have the same
+/// shape -- a canvas that insisted on `ARGB8888` could not be allocated at
+/// all, and every layer that overflowed the plane count would be dropped
+/// instead of composited.
+///
+/// `None` means the plane advertises nothing the canvas can write, which is
+/// the honest answer: composition is not available there.
+#[must_use]
+pub fn canvas_format_for_plane(plane: &PlaneCapabilities) -> Option<u32> {
+    CANVAS_FORMATS
+        .into_iter()
+        .find(|fourcc| canvas_output_bpp(*fourcc) != 0 && plane.supports_format(*fourcc))
+}
+
+/// Convert one row of the `ARGB8888` shadow into `out_fourcc`.
+///
+/// Scalar. The reference hand-vectorizes this with NEON and leans on
+/// autovectorization elsewhere; here the loop is written so the compiler can
+/// do the same, and the conversion is one row per frame per canvas rather
+/// than anything on the per-layer path.
+fn convert_row(dst: &mut [u8], src: &[u8], pixels: usize, out_fourcc: u32) {
+    match out_fourcc {
+        // The shadow is already this. `XRGB8888` differs only in that the
+        // high byte is ignored rather than read as alpha, so the bytes are
+        // the same either way.
+        fourcc::ARGB8888 | fourcc::XRGB8888 => {
+            dst[..pixels * 4].copy_from_slice(&src[..pixels * 4]);
+        }
+        // Same layout with red and blue exchanged.
+        fourcc::XBGR8888 | fourcc::ABGR8888 => {
+            for i in 0..pixels {
+                let s = &src[i * 4..i * 4 + 4];
+                // Memory order is B, G, R, A on a little-endian host, so
+                // swapping red and blue is swapping bytes 0 and 2.
+                dst[i * 4] = s[2];
+                dst[i * 4 + 1] = s[1];
+                dst[i * 4 + 2] = s[0];
+                dst[i * 4 + 3] = s[3];
+            }
+        }
+        fourcc::RGB565 | fourcc::BGR565 => {
+            let swap = out_fourcc == fourcc::BGR565;
+            for i in 0..pixels {
+                let s = &src[i * 4..i * 4 + 4];
+                let (b, g, r) = (s[0], s[1], s[2]);
+                let (high, low) = if swap { (b, r) } else { (r, b) };
+                // Truncating, not rounding: the reference truncates, and a
+                // canvas that rounded would differ from it by one step on
+                // half the pixels of any gradient.
+                let packed =
+                    (u16::from(high >> 3) << 11) | (u16::from(g >> 2) << 5) | u16::from(low >> 3);
+                dst[i * 2..i * 2 + 2].copy_from_slice(&packed.to_le_bytes());
+            }
+        }
+        // Unreachable through `canvas_format_for_plane`, which only offers
+        // formats `canvas_output_bpp` accepts. Leaving the row untouched is
+        // the safe answer for a caller that built a canvas by hand.
+        _ => {}
+    }
+}
+
 /// A double-buffered software composition surface.
 ///
 /// Owns two ARGB8888 dumb buffers and alternates between them: the CPU paints
@@ -384,9 +480,15 @@ pub struct CompositeCanvas {
     /// Index of the buffer being painted into.
     back: usize,
     /// Cached-memory paint target, `width * height * 4`.
+    ///
+    /// Always `ARGB8888` whatever the buffers are: blending happens here, and
+    /// blending in 565 would quantize at every layer instead of once at the
+    /// end. [`flush`](Self::flush) is where the conversion happens.
     shadow: Vec<u8>,
     width: u32,
     height: u32,
+    /// What the buffers are, and what `flush` converts the shadow into.
+    fourcc: u32,
 }
 
 impl CompositeCanvas {
@@ -396,11 +498,38 @@ impl CompositeCanvas {
     ///
     /// [`DumbError`] if either allocation or its framebuffer fails.
     pub fn create(device: &Device, width: u32, height: u32) -> Result<Self, DumbError> {
+        Self::create_in(device, width, height, fourcc::ARGB8888)
+    }
+
+    /// Allocate the pair in a format the target plane can scan out.
+    ///
+    /// For the single-plane fallback: pass what
+    /// [`canvas_format_for_plane`] returned, and the canvas emits that
+    /// instead of `ARGB8888`. Blending still happens in `ARGB8888` -- see
+    /// [`shadow`](Self#structfield.shadow) -- so a 565 canvas quantizes once
+    /// at flush rather than at every layer.
+    ///
+    /// # Errors
+    ///
+    /// [`DumbError::InvalidConfig`] if `fourcc` is not one the canvas can
+    /// write, and otherwise as [`CompositeCanvas::create`].
+    pub fn create_in(
+        device: &Device,
+        width: u32,
+        height: u32,
+        fourcc: u32,
+    ) -> Result<Self, DumbError> {
+        let bpp = canvas_output_bpp(fourcc);
+        if bpp == 0 {
+            return Err(DumbError::InvalidConfig {
+                reason: "the canvas cannot write this format",
+            });
+        }
         let config = drmkit_dumb::Config {
             width,
             height,
-            fourcc: fourcc::ARGB8888,
-            bpp: 32,
+            fourcc,
+            bpp: bpp * 8,
             add_fb: true,
         };
         let buffers = [
@@ -413,7 +542,14 @@ impl CompositeCanvas {
             shadow: vec![0; (width as usize) * (height as usize) * 4],
             width,
             height,
+            fourcc,
         })
+    }
+
+    /// What the canvas scans out as.
+    #[must_use]
+    pub const fn fourcc(&self) -> u32 {
+        self.fourcc
     }
 
     /// Swap back and front before painting.
@@ -457,10 +593,28 @@ impl CompositeCanvas {
     /// walk the padding into the next row and shear the image.
     pub fn flush(&mut self) {
         let stride = self.buffers[self.back].stride() as usize;
-        let row_bytes = (self.width as usize) * 4;
+        let pixels = self.width as usize;
         let height = self.height as usize;
+        let fourcc = self.fourcc;
+        let shadow_row = pixels * 4;
         let dst = self.buffers[self.back].data_mut();
-        copy_rows(dst, stride, &self.shadow, row_bytes, height);
+
+        if fourcc == fourcc::ARGB8888 || fourcc == fourcc::XRGB8888 {
+            // The common case, and the one worth keeping as one long linear
+            // copy per row: the kernel usually maps a dumb buffer
+            // write-combined, where a memcpy runs at streaming bandwidth and
+            // scattered writes do not.
+            copy_rows(dst, stride, &self.shadow, shadow_row, height);
+            return;
+        }
+
+        for row in 0..height {
+            let Some(out) = dst.get_mut(row * stride..) else {
+                break;
+            };
+            let src = &self.shadow[row * shadow_row..][..shadow_row];
+            convert_row(out, src, pixels, fourcc);
+        }
     }
 
     /// The framebuffer to arm on the canvas plane — the one just painted.
@@ -883,5 +1037,171 @@ mod stride_tests {
         let before = dst.clone();
         copy_rows(&mut dst, 4, &[9u8; 16], 8, 2);
         assert_eq!(dst, before);
+    }
+
+    // ── Canvas format negotiation ───────────────────────────────────────
+
+    use super::{canvas_format_for_plane, canvas_output_bpp, convert_row};
+    use drmkit_fmt::fourcc;
+    use drmkit_planes::PlaneCapabilities;
+
+    fn plane_with(formats: &[u32]) -> PlaneCapabilities {
+        PlaneCapabilities {
+            formats: formats.to_vec(),
+            ..PlaneCapabilities::default()
+        }
+    }
+
+    #[test]
+    fn tilcdc_picks_xbgr_rather_than_being_stuck() {
+        // The board the fallback exists for: no ARGB8888 or XRGB8888, but
+        // XBGR8888 and RGB565 scan out. A canvas that insisted on ARGB8888
+        // could not be allocated, and every overflow layer would be dropped
+        // rather than composited.
+        let plane = plane_with(&[fourcc::RGB565, fourcc::XBGR8888, fourcc::BGR888]);
+        assert_eq!(canvas_format_for_plane(&plane), Some(fourcc::XBGR8888));
+    }
+
+    #[test]
+    fn argb_wins_where_it_is_offered() {
+        // Byte-identical to the shadow, so flush is a copy with no per-row
+        // conversion at all.
+        let plane = plane_with(&[
+            fourcc::NV12,
+            fourcc::XRGB8888,
+            fourcc::ARGB8888,
+            fourcc::RGB565,
+        ]);
+        assert_eq!(canvas_format_for_plane(&plane), Some(fourcc::ARGB8888));
+    }
+
+    #[test]
+    fn the_plane_s_advertisement_order_does_not_decide() {
+        // Preference is by what the canvas costs to convert, not by what the
+        // driver happened to list first.
+        let plane = plane_with(&[fourcc::XBGR8888, fourcc::ARGB8888]);
+        assert_eq!(canvas_format_for_plane(&plane), Some(fourcc::ARGB8888));
+    }
+
+    #[test]
+    fn a_565_only_panel_still_hosts_a_canvas() {
+        let plane = plane_with(&[fourcc::RGB565]);
+        assert_eq!(canvas_format_for_plane(&plane), Some(fourcc::RGB565));
+    }
+
+    #[test]
+    fn every_format_the_negotiation_offers_is_one_flush_can_write() {
+        // The two lists drifting apart would give a canvas allocated in a
+        // format `flush` writes garbage into, which no error reports.
+        for fourcc in [
+            fourcc::ARGB8888,
+            fourcc::XRGB8888,
+            fourcc::XBGR8888,
+            fourcc::ABGR8888,
+            fourcc::RGB565,
+            fourcc::BGR565,
+        ] {
+            assert_eq!(
+                canvas_format_for_plane(&plane_with(&[fourcc])),
+                Some(fourcc),
+                "{fourcc:#010x} is not selectable"
+            );
+            assert_ne!(
+                canvas_output_bpp(fourcc),
+                0,
+                "{fourcc:#010x} cannot be written"
+            );
+        }
+    }
+
+    #[test]
+    fn a_plane_with_nothing_the_canvas_can_write_hosts_none() {
+        // The scene keeps looking, or drops the overflow -- either beats
+        // arming a buffer nothing can emit into.
+        let plane = plane_with(&[fourcc::NV12, fourcc::YUYV]);
+        assert_eq!(canvas_format_for_plane(&plane), None);
+        assert_eq!(canvas_format_for_plane(&plane_with(&[])), None);
+    }
+
+    #[test]
+    fn the_conversion_leaves_argb_alone() {
+        // 0xAARRGGBB is B, G, R, A in memory on a little-endian host.
+        let src = [0x11_u8, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        for fourcc in [fourcc::ARGB8888, fourcc::XRGB8888] {
+            let mut dst = [0_u8; 8];
+            convert_row(&mut dst, &src, 2, fourcc);
+            assert_eq!(dst, src, "{fourcc:#010x}");
+        }
+    }
+
+    #[test]
+    fn the_conversion_exchanges_red_and_blue() {
+        // Bytes 0 and 2 swap; green and alpha stay where they are. Getting
+        // this backwards is the classic blue-faces bug, and nothing rejects
+        // it -- the picture is simply wrong.
+        let src = [0x11_u8, 0x22, 0x33, 0x44];
+        for fourcc in [fourcc::XBGR8888, fourcc::ABGR8888] {
+            let mut dst = [0_u8; 4];
+            convert_row(&mut dst, &src, 1, fourcc);
+            assert_eq!(dst, [0x33, 0x22, 0x11, 0x44], "{fourcc:#010x}");
+        }
+    }
+
+    #[test]
+    fn the_conversion_packs_565_and_truncates() {
+        // White, black, and a value that exercises each field. Truncating
+        // rather than rounding, which is what the reference does -- rounding
+        // would differ by one step on half the pixels of any gradient.
+        let cases = [
+            // (B, G, R, A) in memory      expected RGB565
+            ([0xFF_u8, 0xFF, 0xFF, 0xFF], 0xFFFF_u16),
+            ([0x00, 0x00, 0x00, 0xFF], 0x0000),
+            ([0x00, 0x00, 0xFF, 0xFF], 0xF800), // pure red
+            ([0x00, 0xFF, 0x00, 0xFF], 0x07E0), // pure green
+            ([0xFF, 0x00, 0x00, 0xFF], 0x001F), // pure blue
+        ];
+        for (src, expected) in cases {
+            let mut dst = [0_u8; 2];
+            convert_row(&mut dst, &src, 1, fourcc::RGB565);
+            assert_eq!(u16::from_le_bytes(dst), expected, "{src:02x?} packed wrong");
+        }
+    }
+
+    #[test]
+    fn the_565_swap_moves_red_and_blue_between_the_fields() {
+        // BGR565 puts blue in the top five bits where RGB565 puts red.
+        let src = [0x00_u8, 0x00, 0xFF, 0xFF]; // pure red
+        let mut dst = [0_u8; 2];
+        convert_row(&mut dst, &src, 1, fourcc::BGR565);
+        assert_eq!(
+            u16::from_le_bytes(dst),
+            0x001F,
+            "red belongs in the low field"
+        );
+    }
+
+    #[test]
+    fn a_format_the_canvas_cannot_write_has_no_depth() {
+        assert_eq!(canvas_output_bpp(fourcc::NV12), 0);
+        assert_eq!(canvas_output_bpp(fourcc::YUYV), 0);
+        assert_eq!(canvas_output_bpp(fourcc::ARGB8888), 4);
+        assert_eq!(canvas_output_bpp(fourcc::RGB565), 2);
+    }
+
+    #[test]
+    fn the_canvas_refuses_a_format_it_cannot_write() {
+        // Device-free: `create_in` checks before it allocates, so this is the
+        // whole of the guard. A canvas built in NV12 would flush nothing into
+        // a buffer the plane happily scans out as garbage.
+        assert_eq!(canvas_output_bpp(fourcc::NV12), 0);
+    }
+
+    #[test]
+    fn a_565_canvas_is_half_the_bytes_per_pixel() {
+        // What `create_in` sizes the allocation from. Getting it wrong gives
+        // a buffer half the size the stride implies, and flush walks off the
+        // end of it.
+        assert_eq!(canvas_output_bpp(fourcc::RGB565) * 8, 16);
+        assert_eq!(canvas_output_bpp(fourcc::ARGB8888) * 8, 32);
     }
 }

@@ -34,7 +34,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_atomic_builder.cpp` | `drmkit-core` `src/tests.rs` | ported |  |
 | `tests/unit/test_buffer_mapping.cpp` | `drmkit-dumb` `src/tests.rs` | partial | 6 |
 | `tests/unit/test_buffer_ring.cpp` | _drmkit-present_ (phase 6+) | pending |  |
-| `tests/unit/test_canvas_format.cpp` | _drmkit-scene_ (phase 3) | pending |  |
+| `tests/unit/test_canvas_format.cpp` | `drmkit-scene` `canvas.rs` | ported | All seven, plus the conversion the negotiation exists to feed: red/blue exchange, 565 packing against five reference values, and the field swap. The port had no format negotiation at all before this -- the canvas was `ARGB8888` unconditionally, so a single-plane controller without it could not composite |
 | `tests/unit/test_capture_jpg.cpp` | _drmkit-capture_ (phase 6+) | pending |  |
 | `tests/unit/test_capture_snapshot.cpp` | `drmkit-capture` `image.rs`, `png.rs`, `snapshot.rs` | ported | The four `Image` cases and both PNG cases, plus the blend arithmetic, the placement arithmetic (clipping, negative offsets, stride padding, scaling) and `RGB565`, none of which the C++ suite reaches. `snapshot` itself gets a device lane the C++ has none of |
 | `tests/unit/test_color_pipeline_curves.cpp` | `drmkit-display` `curves.rs` | ported | All twenty-four: transfer functions, S31.32 sign-magnitude encoding, LUT quantization, the LUT and matrix builders, and the two spec anchor points that say the PQ curve is that curve rather than merely monotonic. Plus a check that the two gamut matrices multiply to the identity, which upstream tests one direction of |

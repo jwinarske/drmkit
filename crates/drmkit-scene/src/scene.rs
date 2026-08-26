@@ -630,6 +630,10 @@ impl LayerScene {
     /// Separate from [`new`](Self::new) because the search itself is
     /// device-free and this is not: the canvas owns two dumb buffers.
     ///
+    /// The canvas is `ARGB8888`, which every plane that matters takes.
+    /// [`enable_composition_on`](Self::enable_composition_on) is for the ones
+    /// that do not.
+    ///
     /// # Errors
     ///
     /// [`DumbError`] if either buffer cannot be allocated.
@@ -641,6 +645,42 @@ impl LayerScene {
     ) -> Result<(), drmkit_dumb::DumbError> {
         self.canvas = Some(CompositeCanvas::create(device, width, height)?);
         Ok(())
+    }
+
+    /// Give the scene a canvas in a format `plane` can scan out.
+    ///
+    /// On a controller with one plane and no `ARGB8888` -- tilcdc on a
+    /// `BeagleBone`, i.MX LCDIF, the small SPI panels -- an `ARGB8888` canvas
+    /// cannot be armed at all, so every layer that overflows the plane count
+    /// is dropped rather than composited. This negotiates instead, and blends
+    /// in `ARGB8888` regardless: the conversion happens once at flush rather
+    /// than quantizing at every layer.
+    ///
+    /// # Errors
+    ///
+    /// [`DumbError::InvalidConfig`] if the plane advertises nothing the canvas
+    /// can write -- a YUV-only overlay, say -- and otherwise as
+    /// [`enable_composition`](Self::enable_composition).
+    pub fn enable_composition_on(
+        &mut self,
+        device: &Device,
+        width: u32,
+        height: u32,
+        plane: &drmkit_planes::PlaneCapabilities,
+    ) -> Result<(), drmkit_dumb::DumbError> {
+        let fourcc = crate::canvas::canvas_format_for_plane(plane).ok_or(
+            drmkit_dumb::DumbError::InvalidConfig {
+                reason: "this plane scans out nothing the canvas can write",
+            },
+        )?;
+        self.canvas = Some(CompositeCanvas::create_in(device, width, height, fourcc)?);
+        Ok(())
+    }
+
+    /// What the composition canvas scans out as, if there is one.
+    #[must_use]
+    pub fn canvas_fourcc(&self) -> Option<u32> {
+        self.canvas.as_ref().map(CompositeCanvas::fourcc)
     }
 
     /// Blend the layers the allocator dropped, and say which plane to put them

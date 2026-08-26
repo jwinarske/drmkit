@@ -358,10 +358,15 @@ impl DumbScanoutSink {
             modeset.as_ref(),
         );
 
+        // A flip is armed only if this commit actually asked for the event.
+        // Saying otherwise leaves the scene waiting for a completion that will
+        // never arrive: it holds every acquisition open, and teardown then
+        // trips invariant 5 over a flip that was never in flight.
+        let arms_flip = flags.contains(AtomicCommitFlags::PAGE_FLIP_EVENT);
         let mut build = self.scene.build_frame(
             &self.registry,
             self.crtc_index,
-            CommitKind::Real { arms_flip: true },
+            CommitKind::Real { arms_flip },
             &mut committer,
         )?;
 

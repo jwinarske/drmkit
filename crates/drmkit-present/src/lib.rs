@@ -24,6 +24,8 @@
 //! `ScanoutBackend`, `DumbScanoutSink` and `DumbRingSource` follow, and the
 //! GBM, GL and Vulkan producers are separate crates after that.
 
+#[cfg(feature = "device")]
+mod backend;
 mod buffer_ring;
 #[cfg(feature = "device")]
 mod dumb_ring;
@@ -38,6 +40,8 @@ mod producer;
 #[cfg(feature = "device")]
 mod scanout_format;
 
+#[cfg(feature = "device")]
+pub use backend::{Config as BackendConfig, RestorePolicy, ScanoutBackend, VrrPolicy};
 pub use buffer_ring::{BufferRing, Lease, Rect, Repaint};
 #[cfg(feature = "device")]
 pub use dumb_ring::{DumbRingSource, PaintError};

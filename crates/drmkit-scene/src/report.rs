@@ -177,11 +177,40 @@ pub struct CommitReport {
     /// alone cannot. Raise it with `Allocator::set_max_test_commits`.
     pub budget_exhausted: bool,
 
+    /// Whether the frame was suppressed as idle -- no commit was issued at all.
+    ///
+    /// Set only by a caller that gates on content changing, such as
+    /// `ScanoutBackend::present_if_changed`. **When it is set every other field
+    /// is zero**, because there was no commit to count: no layers were walked,
+    /// no properties written, no placements decided. A consumer reading
+    /// `layers_assigned == 0` without checking this would conclude the frame
+    /// failed to reach a plane, when in fact the previous frame is still on
+    /// screen and correct.
+    ///
+    /// The first frame is never suppressed, whatever the caller says about
+    /// content: nothing is on screen yet, so "unchanged" describes nothing.
+    pub skipped_idle: bool,
+
     /// Per-layer outcomes.
     pub placements: Vec<LayerPlacement>,
 }
 
 impl CommitReport {
+    /// The report for a frame that was suppressed as idle.
+    ///
+    /// Every count is zero because there was no commit to count, and
+    /// [`skipped_idle`](Self::skipped_idle) says why. A constructor rather
+    /// than a struct literal because this type is `#[non_exhaustive]`: a
+    /// caller outside this crate cannot build one, and the suppressed frame is
+    /// the one shape it legitimately needs to.
+    #[must_use]
+    pub fn suppressed() -> Self {
+        Self {
+            skipped_idle: true,
+            ..Self::default()
+        }
+    }
+
     /// What became of one layer this commit.
     ///
     /// `None` when the layer was not in the frame at all -- it was never

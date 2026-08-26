@@ -29,6 +29,7 @@ device = [
     "drmkit-planes/device",
     "dep:drm",
     "dep:drmkit-modeset",
+    "dep:drmkit-display",
 ]
 # A GBM-backed producer. Separate from `device` because it links libgbm, which
 # a CPU-only consumer of the dumb path has no reason to pull in.
@@ -46,11 +47,16 @@ drmkit-dumb = { workspace = true, optional = true }
 drmkit-scene = { workspace = true, optional = true }
 drmkit-planes = { workspace = true, optional = true }
 drmkit-modeset = { workspace = true, optional = true }
+drmkit-display = { workspace = true, optional = true }
 drmkit-scene-sources = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Device cases report which card they ran on and when they bailed.
 drmkit-testkit = { workspace = true }
+# The backend's restore case drives the CRTC directly to observe teardown.
+drm = { workspace = true }
+drmkit-dumb = { workspace = true }
+drmkit-fmt = { workspace = true }
 
 # The device cases need what the `device` feature pulls in.
 [[test]]
@@ -60,3 +66,7 @@ required-features = ["device"]
 [[test]]
 name = "dumb_sink_device"
 required-features = ["device"]
+
+[[test]]
+name = "backend_device"
+required-features = ["gbm"]

@@ -52,7 +52,7 @@ fn open_card_or_skip() -> Option<Device> {
                 std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
                 "{path}: {error}, but DRMKIT_REQUIRE_MASTER is set"
             );
-            println!("note: skipped -- no DRM device at {path} ({error})");
+            drmkit_testkit::skipped(&format!("no DRM device at {path} ({error})"));
             None
         }
     }
@@ -101,7 +101,7 @@ fn rig() -> Option<Rig> {
             std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
             "not DRM master, but DRMKIT_REQUIRE_MASTER is set"
         );
-        println!("note: skipped -- another client holds DRM master");
+        drmkit_testkit::skipped("another client holds DRM master");
         return None;
     }
 
@@ -445,10 +445,10 @@ fn a_layer_past_the_budget_is_composited_and_says_so_vkms() {
 
     let budget = Allocator::DEFAULT_MAX_TEST_COMMITS;
     if rig.planes <= budget {
-        println!(
-            "note: skipped -- {} candidate plane(s) does not exceed the budget of {budget}",
+        drmkit_testkit::skipped(&format!(
+            "{} candidate plane(s) does not exceed the budget of {budget}",
             rig.planes
-        );
+        ));
         return;
     }
 

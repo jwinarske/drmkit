@@ -28,7 +28,7 @@ fn card_guard() -> std::sync::MutexGuard<'static, ()> {
 fn fixture() -> Option<(Device, PropertyStore, u32)> {
     let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
     let Ok(device) = Device::open(&path) else {
-        println!("note: skipped -- {path} did not open");
+        drmkit_testkit::skipped(&format!("{path} did not open"));
         return None;
     };
     device.enable_universal_planes().expect("universal planes");
@@ -177,7 +177,7 @@ fn the_hotspot_is_left_alone_until_something_is_drawn_vkms() {
         return;
     };
     if props.property_id(plane, "HOTSPOT_X").is_err() {
-        println!("note: skipped -- no HOTSPOT_X (expected: not a virtualized driver)");
+        drmkit_testkit::skipped("no HOTSPOT_X (expected: not a virtualized driver)");
         return;
     }
 
@@ -201,7 +201,7 @@ fn a_rotation_the_plane_cannot_do_is_not_asked_for_vkms() {
         return;
     };
     if props.property_id(plane, "rotation").is_err() {
-        println!("note: skipped -- this plane has no rotation property");
+        drmkit_testkit::skipped("this plane has no rotation property");
         return;
     }
 

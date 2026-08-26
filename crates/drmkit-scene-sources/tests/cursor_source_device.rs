@@ -54,7 +54,7 @@ fn open_card() -> Option<Device> {
                 std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
                 "{path}: {error}, but DRMKIT_REQUIRE_MASTER is set"
             );
-            println!("note: skipped -- no DRM device at {path} ({error})");
+            drmkit_testkit::skipped(&format!("no DRM device at {path} ({error})"));
             return None;
         }
     };
@@ -63,7 +63,7 @@ fn open_card() -> Option<Device> {
     // this on a card the source is actually for.
     let resources = device.resource_handles().ok()?;
     if resources.crtcs().is_empty() {
-        println!("note: skipped -- {path} has no CRTC");
+        drmkit_testkit::skipped(&format!("{path} has no CRTC"));
         return None;
     }
     Some(device)

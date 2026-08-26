@@ -33,6 +33,8 @@ name = "probe_device"
 required-features = ["device"]
 
 [dev-dependencies]
+# Device cases report when they bail without asserting.
+drmkit-testkit = { workspace = true }
 proptest = "1"
 # The probe's device cases read a property through the raw ioctl, so the
 # count they check against is not the one the helper under test produced.

@@ -32,7 +32,7 @@ fn open_card() -> Option<Device> {
                 std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
                 "{path}: {error}, but DRMKIT_REQUIRE_MASTER is set"
             );
-            println!("note: skipped -- no DRM device at {path} ({error})");
+            drmkit_testkit::skipped(&format!("no DRM device at {path} ({error})"));
             return None;
         }
     };
@@ -53,7 +53,7 @@ fn discovery_finds_an_output_that_is_actually_wired_up() {
                 std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
                 "nothing connected, but DRMKIT_REQUIRE_MASTER is set"
             );
-            println!("note: skipped -- no display attached");
+            drmkit_testkit::skipped("no display attached");
             return;
         }
         Err(error) => panic!("{error}"),
@@ -126,7 +126,7 @@ fn discovery_enables_universal_planes_itself() {
     let _guard = card_guard();
     let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
     let Ok(device) = Device::open(&path) else {
-        println!("note: skipped -- no DRM device at {path}");
+        drmkit_testkit::skipped(&format!("no DRM device at {path}"));
         return;
     };
 
@@ -137,7 +137,7 @@ fn discovery_enables_universal_planes_itself() {
                 std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
                 "nothing connected, but DRMKIT_REQUIRE_MASTER is set"
             );
-            println!("note: skipped -- no display attached");
+            drmkit_testkit::skipped("no display attached");
         }
         Err(error) => panic!("{error}"),
     }
@@ -154,7 +154,7 @@ fn the_chosen_crtc_is_one_the_connectors_encoders_allow() {
 
     let resources = device.resource_handles().expect("resources");
     let Ok(Ok(target)) = ScanoutTarget::discover(&device) else {
-        println!("note: skipped -- no display attached");
+        drmkit_testkit::skipped("no display attached");
         return;
     };
 
@@ -190,7 +190,7 @@ fn a_rank_that_matches_nothing_still_finds_the_display() {
     let Some(device) = open_card() else { return };
 
     let Ok(Ok(preferred)) = ScanoutTarget::discover(&device) else {
-        println!("note: skipped -- no display attached");
+        drmkit_testkit::skipped("no display attached");
         return;
     };
 

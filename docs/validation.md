@@ -155,10 +155,50 @@ all, which is the distinction the count alone cannot make.
 It does not change what the harness reports: a skip is still not a failure,
 because a board without a gamma stage is not a board with a bug.
 
+What *is* a failure is that changing without anyone noticing. `cargo xtask
+coverage` records, per device, which cases asserted and which bailed and why:
+
+```sh
+cargo test --workspace --all-features -- --ignored --nocapture 2>&1 \
+  | cargo xtask coverage --device=localhost-amdgpu --record
+```
+
+and thereafter checks a run against it, failing when a case that asserted on
+that device no longer does — or has stopped being reported at all, which is
+what a renamed or deleted case looks like and is coverage lost just the same.
+
+It reads a run on stdin rather than running the suites itself. How tests reach
+a device differs — locally, over ssh to a board, inside the vkms lane — and
+none of that changes what a coverage regression means.
+
+The amdgpu baseline is the worked example: **118 cases, 4 of them skipping**.
+
+```
+a_layer_past_the_budget_is_composited_and_says_so_vkms
+    9 candidate plane(s) does not exceed the budget of 16
+an_ordinary_drm_change_is_read_and_discarded
+    writing /sys/class/drm/card0/uevent needs root (try sudo)
+a_property_that_merely_looks_like_hotplug_is_not_one
+    writing /sys/class/drm/card0/uevent needs root (try sudo)
+the_hotspot_is_left_alone_until_something_is_drawn_vkms
+    no HOTSPOT_X (expected: not a virtualized driver)
+```
+
+The first is [P-17](parity-findings.md) stated as a number: amdgpu has 9
+planes and the budget is 16, so that case has never asserted anything here.
+Two need root. One wants a virtualized driver. None is a defect, and all four
+were previously indistinguishable from a case that ran.
+
 ## What this does not do yet
 
-`crates/drmkit-display/tests/pipeline_device.rs` is converted as the worked
-example. The other fourteen device suites still bail silently, and the runner
-does not yet collect these lines into a per-device record or fail a run whose
-skips are not the ones that device is expected to have. Both want the shape of
-the real device pool to design against.
+All fifteen device suites report their skips, and `cargo xtask coverage`
+gates on them. Two things are still open.
+
+The vkms lane does not yet check a coverage baseline. It is the case that
+wants it most — [P-20](parity-findings.md) was twelve rigs exercising plane
+migration on a CRTC with nowhere to migrate to, for months, which is exactly
+what this catches — but the baseline has to be recorded from a real run on the
+lane's own kernel, not from a workstation.
+
+And baselines exist for the devices reachable today. The rest of the pool
+needs an entry in `validation/devices.toml` and a first recorded run each.

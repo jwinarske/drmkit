@@ -23,6 +23,8 @@ rustix = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+# Device cases report when they bail without asserting.
+drmkit-testkit = { workspace = true }
 rustix = { workspace = true, features = ["std", "event"] }
 drmkit-fmt = { workspace = true }
 drmkit-scene-sources = { workspace = true }

@@ -26,6 +26,8 @@ thiserror = { workspace = true, features = ["std"] }
 png = { workspace = true }
 
 [dev-dependencies]
+# Device cases report when they bail without asserting.
+drmkit-testkit = { workspace = true }
 # The decoder, to read back what the encoder wrote.
 png = { workspace = true }
 drmkit-log = { workspace = true }

@@ -71,7 +71,7 @@ fn can_synthesize(uevent: &str) -> bool {
             std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
             "{uevent} does not exist, but DRMKIT_REQUIRE_MASTER is set"
         );
-        println!("note: skipped -- no {uevent}");
+        drmkit_testkit::skipped(&format!("no {uevent}"));
         return false;
     }
     if rustix::process::geteuid().is_root() {
@@ -81,7 +81,7 @@ fn can_synthesize(uevent: &str) -> bool {
         std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
         "writing {uevent} needs root, but DRMKIT_REQUIRE_MASTER is set"
     );
-    println!("note: skipped -- writing {uevent} needs root (try sudo)");
+    drmkit_testkit::skipped(&format!("writing {uevent} needs root (try sudo)"));
     false
 }
 

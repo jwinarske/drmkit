@@ -15,3 +15,7 @@ publish = false
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# Only to pin that the marker xtask greps for is the one testkit prints.
+drmkit-testkit = { workspace = true }

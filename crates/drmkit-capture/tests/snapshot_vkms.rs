@@ -36,7 +36,7 @@ fn card() -> Option<Device> {
                 std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
                 "{path}: {error}, but DRMKIT_REQUIRE_MASTER is set"
             );
-            println!("note: skipped -- {path}: {error}");
+            drmkit_testkit::skipped(&format!("{path}: {error}"));
             None
         }
     }
@@ -156,7 +156,7 @@ fn ready() -> Option<Device> {
             std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
             "not DRM master, but DRMKIT_REQUIRE_MASTER is set"
         );
-        println!("note: skipped -- another client holds DRM master");
+        drmkit_testkit::skipped("another client holds DRM master");
         return None;
     }
     Some(device)
@@ -168,7 +168,7 @@ fn a_snapshot_is_the_size_of_the_mode_vkms() {
     let _guard = card_guard();
     let Some(device) = ready() else { return };
     let Some(output) = paint(&device) else {
-        println!("note: skipped -- no connected connector with a usable CRTC");
+        drmkit_testkit::skipped("no connected connector with a usable CRTC");
         return;
     };
     println!(
@@ -192,7 +192,7 @@ fn a_snapshot_writes_a_png_that_decodes_back_vkms() {
     let _guard = card_guard();
     let Some(device) = ready() else { return };
     let Some(output) = paint(&device) else {
-        println!("note: skipped -- no connected connector with a usable CRTC");
+        drmkit_testkit::skipped("no connected connector with a usable CRTC");
         return;
     };
 
@@ -235,7 +235,7 @@ fn a_known_pattern_survives_the_round_trip_vkms() {
     let _guard = card_guard();
     let Some(device) = ready() else { return };
     let Some(output) = paint(&device) else {
-        println!("note: skipped -- no connected connector with a usable CRTC");
+        drmkit_testkit::skipped("no connected connector with a usable CRTC");
         return;
     };
     let (w, h) = (output.width, output.height);
@@ -265,7 +265,7 @@ fn without_the_atomic_cap_there_is_nothing_to_read_vkms() {
     let _guard = card_guard();
     let Some(device) = ready() else { return };
     let Some(output) = paint(&device) else {
-        println!("note: skipped -- no connected connector with a usable CRTC");
+        drmkit_testkit::skipped("no connected connector with a usable CRTC");
         return;
     };
     let crtc_id = output.crtc_id;
@@ -280,7 +280,7 @@ fn without_the_atomic_cap_there_is_nothing_to_read_vkms() {
     plain.enable_universal_planes().expect("universal planes");
     // Deliberately no enable_atomic().
     if plain.set_master().is_err() {
-        println!("note: skipped -- could not retake master");
+        drmkit_testkit::skipped("could not retake master");
         return;
     }
     assert!(

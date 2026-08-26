@@ -22,6 +22,7 @@
 
 use std::process::ExitCode;
 
+mod coverage;
 mod invariants;
 mod lanes;
 mod parity;
@@ -39,11 +40,23 @@ COMMANDS:
     parity        Verify TEST_PARITY.md covers every upstream test file
     invariants    Verify INVARIANTS.md matches the upstream contract list
     lanes         Verify the drmdb lane runs on the crates its scanner reads
+    coverage      Compare a device test run against that device's coverage baseline
     validate      Probe the hardware pool and diff against the baselines
     help          Show this message
 
 OPTIONS:
     --ref <PATH>  Path to a drm-cxx checkout. Defaults to $DRMKIT_DRM_CXX.
+
+COVERAGE OPTIONS:
+    --device=<ID>        Which device's baseline this run is measured against
+    --record             Write the baseline from this run instead of checking it
+
+    Reads a test run on stdin. How the suites reach a device is not its
+    business -- locally, over ssh, or in a lane -- only whether a case that
+    asserted there before still does:
+
+        cargo test --workspace -- --ignored --nocapture 2>&1 \\
+          | cargo xtask coverage --device=localhost-amdgpu
 
 VALIDATE OPTIONS:
     --device=<ID>        Only this device; repeatable
@@ -68,6 +81,9 @@ fn main() -> ExitCode {
     // take a reference.
     if command == "validate" {
         return report(validate::run(options));
+    }
+    if command == "coverage" {
+        return report(coverage::run(options));
     }
 
     let reference = match refs::parse_ref_option(options) {

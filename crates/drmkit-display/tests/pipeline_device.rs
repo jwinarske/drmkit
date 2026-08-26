@@ -30,7 +30,7 @@ fn open_card() -> Option<Device> {
                 std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
                 "{path}: {error}, but DRMKIT_REQUIRE_MASTER is set"
             );
-            println!("note: skipped -- no DRM device at {path} ({error})");
+            drmkit_testkit::skipped(&format!("no DRM device at {path} ({error})"));
             return None;
         }
     };
@@ -81,10 +81,7 @@ fn no_pipeline_anywhere(device: &Device) -> bool {
 #[ignore = "needs a DRM device"]
 fn a_stage_the_crtc_has_takes_a_blob() {
     let _guard = card_guard();
-    let Some(device) = open_card() else {
-        drmkit_testkit::skipped("no DRM device could be opened");
-        return;
-    };
+    let Some(device) = open_card() else { return };
     let Some(crtc_id) = any_pipeline(&device) else {
         assert!(no_pipeline_anywhere(&device));
         drmkit_testkit::skipped("no CRTC on this device has a colour pipeline");
@@ -126,10 +123,7 @@ fn a_stage_the_crtc_lacks_refuses_rather_than_committing_nothing() {
     // vkms has gamma and neither of the others. Silently doing nothing there
     // would leave a caller believing it had programmed a degamma curve.
     let _guard = card_guard();
-    let Some(device) = open_card() else {
-        drmkit_testkit::skipped("no DRM device could be opened");
-        return;
-    };
+    let Some(device) = open_card() else { return };
     let Some(crtc_id) = any_pipeline(&device) else {
         assert!(no_pipeline_anywhere(&device));
         drmkit_testkit::skipped("no CRTC on this device has a colour pipeline");
@@ -169,10 +163,7 @@ fn a_lut_of_the_wrong_length_is_refused_before_the_kernel_sees_it() {
     // commit -- every plane in the frame with it. Catching it here turns a
     // blank screen into an error naming the stage.
     let _guard = card_guard();
-    let Some(device) = open_card() else {
-        drmkit_testkit::skipped("no DRM device could be opened");
-        return;
-    };
+    let Some(device) = open_card() else { return };
     let Some(crtc_id) = any_pipeline(&device) else {
         assert!(no_pipeline_anywhere(&device));
         drmkit_testkit::skipped("no CRTC on this device has a colour pipeline");
@@ -214,10 +205,7 @@ fn restaging_a_stage_replaces_its_blob() {
     // that re-programs the pipeline on every mode change runs the kernel out
     // of blob ids eventually.
     let _guard = card_guard();
-    let Some(device) = open_card() else {
-        drmkit_testkit::skipped("no DRM device could be opened");
-        return;
-    };
+    let Some(device) = open_card() else { return };
     let Some(crtc_id) = any_pipeline(&device) else {
         assert!(no_pipeline_anywhere(&device));
         drmkit_testkit::skipped("no CRTC on this device has a colour pipeline");
@@ -242,10 +230,7 @@ fn restaging_a_stage_replaces_its_blob() {
 #[ignore = "needs a DRM device"]
 fn an_apply_writes_only_what_was_staged() {
     let _guard = card_guard();
-    let Some(device) = open_card() else {
-        drmkit_testkit::skipped("no DRM device could be opened");
-        return;
-    };
+    let Some(device) = open_card() else { return };
     let Some(crtc_id) = any_pipeline(&device) else {
         assert!(no_pipeline_anywhere(&device));
         drmkit_testkit::skipped("no CRTC on this device has a colour pipeline");

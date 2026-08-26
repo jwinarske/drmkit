@@ -25,7 +25,7 @@ fn card_guard() -> std::sync::MutexGuard<'static, ()> {
 fn fixture() -> Option<(Device, PlaneRegistry, u32, u32)> {
     let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
     let Ok(device) = Device::open(&path) else {
-        println!("note: skipped -- {path} did not open");
+        drmkit_testkit::skipped(&format!("{path} did not open"));
         return None;
     };
     device.enable_universal_planes().expect("universal planes");
@@ -35,7 +35,7 @@ fn fixture() -> Option<(Device, PlaneRegistry, u32, u32)> {
             std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
             "not DRM master, but DRMKIT_REQUIRE_MASTER is set"
         );
-        println!("note: skipped -- another client holds DRM master");
+        drmkit_testkit::skipped("another client holds DRM master");
         return None;
     }
 
@@ -117,7 +117,7 @@ fn a_renderer_settles_on_a_plane_and_a_size_vkms() {
     let renderer = match Renderer::create(&device, &registry, &config(crtc_id, crtc_index)) {
         Ok(renderer) => renderer,
         Err(error) => {
-            println!("note: skipped -- no usable cursor path here: {error}");
+            drmkit_testkit::skipped(&format!("no usable cursor path here: {error}"));
             return;
         }
     };
@@ -151,7 +151,7 @@ fn a_cursor_is_drawn_and_staged_vkms() {
     };
     let Ok(mut renderer) = Renderer::create(&device, &registry, &config(crtc_id, crtc_index))
     else {
-        println!("note: skipped -- no usable cursor path here");
+        drmkit_testkit::skipped("no usable cursor path here");
         return;
     };
 
@@ -208,7 +208,7 @@ fn hiding_disarms_the_plane_vkms() {
     };
     let Ok(mut renderer) = Renderer::create(&device, &registry, &config(crtc_id, crtc_index))
     else {
-        println!("note: skipped -- no usable cursor path here");
+        drmkit_testkit::skipped("no usable cursor path here");
         return;
     };
     renderer.set_cursor(square()).expect("set cursor");
@@ -245,7 +245,7 @@ fn an_animation_redraws_only_when_the_frame_changes_vkms() {
     };
     let Ok(mut renderer) = Renderer::create(&device, &registry, &config(crtc_id, crtc_index))
     else {
-        println!("note: skipped -- no usable cursor path here");
+        drmkit_testkit::skipped("no usable cursor path here");
         return;
     };
 
@@ -296,7 +296,7 @@ fn a_static_cursor_never_redraws_vkms() {
     };
     let Ok(mut renderer) = Renderer::create(&device, &registry, &config(crtc_id, crtc_index))
     else {
-        println!("note: skipped -- no usable cursor path here");
+        drmkit_testkit::skipped("no usable cursor path here");
         return;
     };
     renderer.set_cursor(square()).expect("set cursor");
@@ -319,7 +319,7 @@ fn rotation_is_asked_of_the_hardware_only_when_it_can_do_it_vkms() {
     };
     let Ok(mut renderer) = Renderer::create(&device, &registry, &config(crtc_id, crtc_index))
     else {
-        println!("note: skipped -- no usable cursor path here");
+        drmkit_testkit::skipped("no usable cursor path here");
         return;
     };
     renderer.set_cursor(square()).expect("set cursor");
@@ -452,7 +452,7 @@ fn a_legacy_cursor_installs_once_and_then_moves_vkms() {
     let legacy_only = primary_only(&registry, crtc_index);
     let Ok(mut renderer) = Renderer::create(&device, &legacy_only, &config(crtc_id, crtc_index))
     else {
-        println!("note: skipped -- this driver has no legacy cursor");
+        drmkit_testkit::skipped("this driver has no legacy cursor");
         return;
     };
 
@@ -484,7 +484,7 @@ fn a_paused_renderer_comes_back_with_its_cursor_vkms() {
     };
     let Ok(mut renderer) = Renderer::create(&device, &registry, &config(crtc_id, crtc_index))
     else {
-        println!("note: skipped -- no usable cursor path here");
+        drmkit_testkit::skipped("no usable cursor path here");
         return;
     };
 
@@ -545,7 +545,7 @@ fn pausing_without_a_cursor_is_fine_vkms() {
         return;
     };
     let Ok(renderer) = Renderer::create(&device, &registry, &config(crtc_id, crtc_index)) else {
-        println!("note: skipped -- no usable cursor path here");
+        drmkit_testkit::skipped("no usable cursor path here");
         return;
     };
 
@@ -578,7 +578,7 @@ fn repeated_pauses_do_not_leak_mappings_vkms() {
     };
     let Ok(mut renderer) = Renderer::create(&device, &registry, &config(crtc_id, crtc_index))
     else {
-        println!("note: skipped -- no usable cursor path here");
+        drmkit_testkit::skipped("no usable cursor path here");
         return;
     };
     renderer.set_cursor(square()).expect("set cursor");

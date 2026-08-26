@@ -41,7 +41,7 @@ fn open_card_or_skip() -> Option<Device> {
                 std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
                 "{path}: {error}, but DRMKIT_REQUIRE_MASTER is set"
             );
-            println!("note: skipped -- no DRM device at {path} ({error})");
+            drmkit_testkit::skipped(&format!("no DRM device at {path} ({error})"));
             None
         }
     }
@@ -116,7 +116,7 @@ fn fixture() -> Option<Fixture> {
             std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
             "not DRM master, but DRMKIT_REQUIRE_MASTER is set"
         );
-        println!("note: skipped -- another client holds DRM master");
+        drmkit_testkit::skipped("another client holds DRM master");
         return None;
     }
 
@@ -520,7 +520,7 @@ fn a_frame_never_arms_more_planes_than_the_kernel_will_take_vkms() {
     let _guard = card_guard();
     let Some(mut fx) = fixture() else { return };
     if fx.planes < 3 {
-        println!("note: skipped -- needs at least 3 candidate planes to squeeze");
+        drmkit_testkit::skipped("needs at least 3 candidate planes to squeeze");
         return;
     }
 

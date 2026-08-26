@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: (c) 2026 Joel Winarske
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "drmkit-present"
+description = "The present spine for drmkit: scanout slot pools, damage accumulation, and frame pacing."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

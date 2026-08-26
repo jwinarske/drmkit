@@ -392,3 +392,7 @@ jobs:
       # covered on the normal test lane; what is wanted here is the
       # deterministic cases under the interpreter. 79 of them, ~17s.
       - run: cargo +nightly miri test -p drmkit-planes --lib --test allocator
+      # drmkit-present is core-only by design -- the GPU producers are
+      # separate crates -- so the whole thing is pure logic and belongs here
+      # for the same reason the matcher does.
+      - run: cargo +nightly miri test -p drmkit-present

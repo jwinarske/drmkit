@@ -99,6 +99,7 @@ struct Fixture {
 /// master. Everything past this point still asserts.
 fn open_card_or_skip() -> Option<Device> {
     let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
+    drmkit_testkit::announce_card(&path);
     match Device::open(&path) {
         Ok(device) => Some(device),
         Err(error) => {

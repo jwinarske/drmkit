@@ -213,26 +213,33 @@ One device cannot answer whether an assertion runs anywhere. `cargo xtask
 coverage --audit` reads every recorded baseline and answers it:
 
 ```
-1 device(s): rpi5-vc4 (97 cases)
+2 device(s): ci-vkms (804 cases), rpi5-vc4 (97 cases)
+
+Asserted on one device and skipped on the others -- lose it and these stop running:
+  a_layer_past_the_budget_is_composited_and_says_so_vkms   only on rpi5-vc4
+  a_stage_the_crtc_has_takes_a_blob                        only on ci-vkms
+  ... and the other four colour-pipeline cases
+
 error: assertions that run on no device in the pool
 
-  a_stage_the_crtc_has_takes_a_blob
-      rpi5-vc4: no CRTC on this device has a colour pipeline
-  ... and the other four colour-pipeline cases
   the_hotspot_is_left_alone_until_something_is_drawn_vkms
+      ci-vkms:  no HOTSPOT_X (expected: not a virtualized driver)
       rpi5-vc4: no HOTSPOT_X (expected: not a virtualized driver)
 ```
 
-Six assertions that have never checked anything — because the pool is
-currently one board, and that board has no colour pipeline. This is the shape
-[P-13](parity-findings.md) and P-14 already had, found by accident months
-apart. Here it is a command, and it says plainly that one device is not a
-pool.
+Two useful answers. The six single-device cases are the split doing its job:
+vc4 has 17 planes against a budget of 16 and no colour pipeline at all, vkms
+has 9 planes and a gamma stage. Each covers what the other cannot, and a green
+run on either alone looks complete.
 
-It is also why the guard above matters. Had the contaminated amdgpu baseline
-been recorded, those five colour-pipeline cases would read as covered — amdgpu
-has all three stages and asserted them — while 43 others quietly became
-expected skips.
+The one that asserts nowhere is a real gap. `HOTSPOT_X` is a property of
+virtualized *guest* drivers — virtio-gpu, qxl, vmwgfx — and vkms is a virtual
+display, not a guest driver. The case is named `..._vkms` and vkms cannot run
+it. Either the pool needs a guest VM, or the case's name is claiming a home it
+does not have.
+
+That is the shape [P-13](parity-findings.md) and P-14 already had, found by
+accident months apart. Here it is a command.
 
 It distinguishes *skipped elsewhere* from *not run elsewhere*. A crate that
 does not cross-build for a target never reports there, and counting that as a

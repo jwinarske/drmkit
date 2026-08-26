@@ -27,6 +27,7 @@ fn card_guard() -> std::sync::MutexGuard<'static, ()> {
 /// A device with the atomic cap, and one plane's properties cached.
 fn fixture() -> Option<(Device, PropertyStore, u32)> {
     let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
+    drmkit_testkit::announce_card(&path);
     let Ok(device) = Device::open(&path) else {
         drmkit_testkit::skipped(&format!("{path} did not open"));
         return None;

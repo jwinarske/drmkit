@@ -13,6 +13,9 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+# For the DRM version ioctl: the driver's own name, which sysfs does not
+# give for a device bound through the faux bus.
+drm = { workspace = true }
 
 [lints]
 workspace = true

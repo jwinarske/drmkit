@@ -25,6 +25,7 @@ fn card_guard() -> std::sync::MutexGuard<'static, ()> {
 
 fn open_card() -> Option<Device> {
     let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
+    drmkit_testkit::announce_card(&path);
     let device = match Device::open(&path) {
         Ok(device) => device,
         Err(error) => {
@@ -125,6 +126,7 @@ fn discovery_enables_universal_planes_itself() {
     // perfectly good device.
     let _guard = card_guard();
     let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
+    drmkit_testkit::announce_card(&path);
     let Ok(device) = Device::open(&path) else {
         drmkit_testkit::skipped(&format!("no DRM device at {path}"));
         return;

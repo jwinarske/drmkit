@@ -24,6 +24,7 @@ fn card_guard() -> std::sync::MutexGuard<'static, ()> {
 /// A device holding DRM master, plus a registry built from its real planes.
 fn fixture() -> Option<(Device, PlaneRegistry, u32, u32)> {
     let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
+    drmkit_testkit::announce_card(&path);
     let Ok(device) = Device::open(&path) else {
         drmkit_testkit::skipped(&format!("{path} did not open"));
         return None;

@@ -33,7 +33,7 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 /// What one case did on one device.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Case {
     /// Reached its assertions.
     Ran,
@@ -65,7 +65,8 @@ pub(crate) fn run(options: &[String]) -> Result<(), String> {
         .read_to_string(&mut input)
         .map_err(|error| format!("reading test output from stdin: {error}"))?;
 
-    let observed = parse(&input);
+    let mut observed = parse(&input);
+    let announced = announced_driver(&input);
     if observed.is_empty() {
         return Err("no `test <name> ... ok` lines on stdin; run the suites \
                     without --quiet, and remember --ignored for device cases"
@@ -79,16 +80,25 @@ pub(crate) fn run(options: &[String]) -> Result<(), String> {
 
     if record {
         environment_is_fit_to_record(&observed)?;
+        if let Some(driver) = &announced {
+            observed.insert(DEVICE_KEY.to_owned(), Case::Skipped(driver.clone()));
+        }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|error| format!("{}: {error}", parent.display()))?;
         }
         std::fs::write(&path, render(&observed))
             .map_err(|error| format!("{}: {error}", path.display()))?;
-        let skipped = observed.values().filter(|c| **c != Case::Ran).count();
+        // The device key rides in the same map so it round-trips with the
+        // baseline, but it is metadata: counting it as a skipped case
+        // overstates both numbers by one.
+        let cases = observed
+            .iter()
+            .filter(|(name, _)| name.as_str() != DEVICE_KEY);
+        let total = cases.clone().count();
+        let skipped = cases.filter(|(_, case)| **case != Case::Ran).count();
         println!(
-            "recorded {} case(s) for {device}, {skipped} of them skipping ({})",
-            observed.len(),
+            "recorded {total} case(s) for {device}, {skipped} of them skipping ({})",
             path.display()
         );
         return Ok(());
@@ -104,7 +114,37 @@ pub(crate) fn run(options: &[String]) -> Result<(), String> {
     })?;
     let baseline = parse_baseline(&text)?;
 
+    // The mistake this prevents: a run against the wrong card compared against
+    // a baseline recorded from the right one. Both are green, and the label is
+    // the only thing that was ever wrong.
+    if let (Some(Case::Skipped(was)), Some(now)) = (baseline.get(DEVICE_KEY), &announced)
+        && was != now
+    {
+        return Err(format!(
+            "{device}: this run is from a different device than the baseline\n\n  \
+             baseline: {was}\n  this run: {now}\n\n\
+             Set DRMKIT_TEST_CARD to the card this device's baseline was taken \
+             from, or\nrecord a new baseline for the card you meant."
+        ));
+    }
+
     compare(device, &baseline, &observed)
+}
+
+/// The card and driver a run announced, if it announced one.
+///
+/// Recorded in the baseline under a key no case name can collide with, since
+/// a case name is a Rust identifier and cannot contain a space.
+const DEVICE_KEY: &str = "the driver this was recorded from";
+
+fn announced_driver(input: &str) -> Option<String> {
+    input.lines().find_map(|line| {
+        let at = line.find("DRMKIT-DEVICE")?;
+        let mut fields = line[at..].splitn(3, '\t').skip(1);
+        let path = fields.next()?.trim();
+        let driver = fields.next()?.trim();
+        Some(format!("{driver} at {path}"))
+    })
 }
 
 /// Read a harness run: which cases reported, and which of them bailed.
@@ -224,6 +264,17 @@ fn compare(
     baseline: &BTreeMap<String, Case>,
     observed: &BTreeMap<String, Case>,
 ) -> Result<(), String> {
+    let baseline: BTreeMap<String, Case> = baseline
+        .iter()
+        .filter(|(name, _)| name.as_str() != DEVICE_KEY)
+        .map(|(name, case)| (name.clone(), case.clone()))
+        .collect();
+    let observed: BTreeMap<String, Case> = observed
+        .iter()
+        .filter(|(name, _)| name.as_str() != DEVICE_KEY)
+        .map(|(name, case)| (name.clone(), case.clone()))
+        .collect();
+    let (baseline, observed) = (&baseline, &observed);
     let mut lost = Vec::new();
     let mut vanished = Vec::new();
     let mut regained = Vec::new();
@@ -391,7 +442,7 @@ fn classify(devices: &[DeviceCoverage]) -> Classified<'_> {
     let mut ran_somewhere: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     let mut known: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new();
     for (device, cases) in devices {
-        for (name, case) in cases {
+        for (name, case) in cases.iter().filter(|(name, _)| name.as_str() != DEVICE_KEY) {
             known
                 .entry(name.as_str())
                 .or_default()
@@ -457,7 +508,10 @@ fn audit() -> Result<(), String> {
         devices.len(),
         devices
             .iter()
-            .map(|(name, cases): &DeviceCoverage| { format!("{name} ({} cases)", cases.len()) })
+            .map(|(name, cases): &DeviceCoverage| {
+                let n = cases.keys().filter(|k| k.as_str() != DEVICE_KEY).count();
+                format!("{name} ({n} cases)")
+            })
             .collect::<Vec<_>>()
             .join(", ")
     );
@@ -602,6 +656,41 @@ test a_second_case ... ok
         );
         let back = parse_baseline(&render(&cases)).expect("round trip");
         assert_eq!(back["a_case"].reason(), "no \"HOTSPOT_X\" here");
+    }
+
+    /// The card a run used is not in its name, and used not to be anywhere.
+    #[test]
+    fn a_run_says_which_card_and_driver_it_used() {
+        let announced =
+            super::announced_driver("DRMKIT-DEVICE\t/dev/dri/card0\tvkms\ntest a_case ... ok\n");
+        assert_eq!(announced.as_deref(), Some("vkms at /dev/dri/card0"));
+    }
+
+    /// The announcement can sit behind a progress dot like the skip lines do.
+    #[test]
+    fn the_announcement_is_found_behind_a_progress_dot() {
+        let announced = super::announced_driver(".DRMKIT-DEVICE\t/dev/dri/card1\tamdgpu\n");
+        assert_eq!(announced.as_deref(), Some("amdgpu at /dev/dri/card1"));
+    }
+
+    /// A run against a different card must not be compared against this
+    /// baseline. Both are green; the label is the only thing that is wrong,
+    /// which is exactly how a vkms run got reported as amdgpu.
+    #[test]
+    fn a_run_from_another_driver_is_refused_before_it_is_compared() {
+        let baseline = parse_baseline(&format!(
+            "{{\n  \"{}\": \"vkms at /dev/dri/card0\",\n  \"a_case\": \"ran\"\n}}\n",
+            super::DEVICE_KEY
+        ))
+        .expect("baseline");
+        assert_eq!(
+            baseline[super::DEVICE_KEY].reason(),
+            "vkms at /dev/dri/card0"
+        );
+
+        // The metadata key is not a case, so it never shows up as one.
+        let observed = parse("test a_case ... ok\n");
+        compare("board", &baseline, &observed).expect("the key is not a missing case");
     }
 
     /// A skip caused by whatever else was running is not a fact about the

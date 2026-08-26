@@ -31,6 +31,7 @@ fn card_path() -> String {
 
 fn open_card() -> Option<Device> {
     let path = card_path();
+    drmkit_testkit::announce_card(&path);
     let device = match Device::open(&path) {
         Ok(device) => device,
         Err(error) => {

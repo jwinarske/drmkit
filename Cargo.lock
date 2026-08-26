@@ -382,6 +382,9 @@ dependencies = [
 [[package]]
 name = "drmkit-testkit"
 version = "0.0.0"
+dependencies = [
+ "drm 0.15.0",
+]
 
 [[package]]
 name = "drmkit-time"

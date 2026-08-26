@@ -1646,3 +1646,433 @@ fn a_ring_describes_the_slot_it_just_handed_out_vkms() {
     );
     assert_eq!(second_pitch, first_pitch, "the fixture allocated two alike");
 }
+
+// --- ExternalDmaBufRing, against a card ---------------------------------------
+//
+// Parity port of `tests/integration/test_external_dma_buf_ring_vkms.cpp`.
+
+/// A ring with a fence deadline, plus the descriptors keeping its slots alive.
+#[cfg(test)]
+fn deadline_ring_of(
+    device: &Device,
+    slots: usize,
+    deadline: Option<std::time::Duration>,
+) -> Option<(ExternalDmaBufRing, Vec<OwnedFd>)> {
+    let mut fds = Vec::new();
+    let mut pitches = Vec::new();
+    for _ in 0..slots {
+        let (fd, pitch) = real_dma_buf(device, 64, 64)?;
+        fds.push(fd);
+        pitches.push(pitch);
+    }
+    let planes: Vec<Vec<ExternalPlane<'_>>> = fds
+        .iter()
+        .zip(&pitches)
+        .map(|(fd, pitch)| {
+            vec![ExternalPlane {
+                fd: fd.as_fd(),
+                offset: 0,
+                pitch: *pitch,
+            }]
+        })
+        .collect();
+    let slots: Vec<&[ExternalPlane<'_>]> = planes.iter().map(Vec::as_slice).collect();
+
+    let ring = ExternalDmaBufRing::create(
+        device,
+        SourceFormat {
+            fourcc: XRGB8888,
+            modifier: 0,
+            width: 64,
+            height: 64,
+        },
+        &slots,
+        deadline,
+    )
+    .expect("import the ring");
+    Some((ring, fds))
+}
+
+/// A pipe standing in for a fence, signalled or not.
+///
+/// A `sync_file` is waited on with `poll`, and so is a pipe: the read end is
+/// unreadable until something is written, which is exactly an unsignalled
+/// fence, and writing a byte signals it. Upstream uses the same trick, because
+/// producing a genuinely unsignalled GPU fence needs a GPU.
+///
+/// The writer comes back so the caller can signal a fence it made unsignalled
+/// -- and because dropping it would close the pipe, which `poll` reports as
+/// readable and the wait would read as "signalled".
+#[cfg(test)]
+fn pipe_fence(signalled: bool) -> Option<(SyncFence, std::io::PipeWriter)> {
+    let (read, write) = std::io::pipe().ok()?;
+    if signalled {
+        std::io::Write::write_all(&mut { &write }, b"x").ok()?;
+    }
+    let fence = SyncFence::import(std::os::fd::AsFd::as_fd(&read)).ok()?;
+    Some((fence, write))
+}
+
+/// Slots rotate, a release fires once for the slot that left, and an idle
+/// acquire re-presents the last frame without releasing it.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_ring_rotates_its_slots_and_holds_the_last_when_idle_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((mut ring, _fds)) = ring_of(&device, 2) else {
+        println!("note: skipped -- no importable dma-buf on this card");
+        return;
+    };
+
+    // Arc, not Rc: the release callback is `Send` by contract, because a
+    // producer may hand buffers back from its own thread.
+    let released: std::sync::Arc<std::sync::Mutex<Vec<usize>>> = std::sync::Arc::default();
+    let recorder = std::sync::Arc::clone(&released);
+    ring.set_on_release(Box::new(move |slot, fence| {
+        assert!(
+            fence.is_none(),
+            "the callback edge carries no fence until the scene wires OUT_FENCE"
+        );
+        recorder.lock().expect("record the release").push(slot);
+    }));
+
+    assert!(
+        matches!(ring.acquire(), Err(SourceError::WouldBlock)),
+        "a ring nothing has been submitted to has no frame, which is flow \
+         control rather than failure"
+    );
+
+    ring.submit(0, None, &[]);
+    let first = ring.acquire().expect("slot 0");
+    let fb0 = first.fb_id;
+    assert_ne!(fb0, 0);
+
+    ring.submit(1, None, &[]);
+    let second = ring.acquire().expect("slot 1");
+    let fb1 = second.fb_id;
+    assert_ne!(fb1, 0);
+    assert_ne!(
+        fb1, fb0,
+        "two slots sharing a framebuffer id would make the rotation change \
+         nothing on screen"
+    );
+
+    ring.release(first);
+    assert_eq!(
+        *released.lock().expect("read the releases"),
+        vec![0],
+        "releasing the displaced frame returns exactly its slot to the producer"
+    );
+
+    // Nothing new submitted: the ring re-presents what is up rather than
+    // reporting no frame, and holding does not release it.
+    let held = ring.acquire().expect("hold the last frame");
+    assert_eq!(held.fb_id, fb1);
+    assert!(held.acquire_fence.is_none());
+    ring.release(held);
+    assert_eq!(
+        released.lock().expect("read the releases").len(),
+        1,
+        "releasing a held frame must not hand its slot back -- it is still on screen"
+    );
+
+    ring.submit(0, None, &[]);
+    let third = ring.acquire().expect("slot 0 again");
+    assert_eq!(
+        third.fb_id, fb0,
+        "the ring came back round to the first slot"
+    );
+
+    ring.release(second);
+    assert_eq!(*released.lock().expect("read the releases"), vec![0, 1]);
+    ring.release(third);
+}
+
+/// Damage rides with the frame it was submitted for, and only that frame.
+///
+/// A held frame reports none: nothing changed since it went up, so repeating
+/// the previous frame's damage would make the driver repaint a region that is
+/// already correct.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn damage_rides_with_its_own_frame_and_no_other_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((mut ring, _fds)) = ring_of(&device, 2) else {
+        println!("note: skipped -- no importable dma-buf on this card");
+        return;
+    };
+
+    let two = [
+        DamageRect {
+            x: 1,
+            y: 2,
+            w: 3,
+            h: 4,
+        },
+        DamageRect {
+            x: 10,
+            y: 20,
+            w: 30,
+            h: 40,
+        },
+    ];
+    ring.submit(0, None, &two);
+    let first = ring.acquire().expect("slot 0");
+    assert_eq!(first.damage, two, "both rects, in the order submitted");
+
+    let held = ring.acquire().expect("hold");
+    assert!(
+        held.damage.is_empty(),
+        "a held frame changed nothing, so it damages nothing"
+    );
+    ring.release(held);
+
+    let one = [DamageRect {
+        x: 5,
+        y: 6,
+        w: 7,
+        h: 8,
+    }];
+    ring.submit(1, None, &one);
+    let second = ring.acquire().expect("slot 1");
+    assert_eq!(
+        second.damage, one,
+        "this frame's damage, not the last one's"
+    );
+
+    ring.release(first);
+    ring.release(second);
+
+    ring.submit(0, None, &[]);
+    let third = ring.acquire().expect("slot 0");
+    assert!(
+        third.damage.is_empty(),
+        "submitting no damage means no damage, not the previous set"
+    );
+    ring.release(third);
+}
+
+/// With a deadline configured, a frame submitted without a fence still
+/// advances, and no fence is ever handed to the kernel.
+///
+/// The deadline turns the producer's fence into a CPU pre-wait. A ring that
+/// also passed it on as `IN_FENCE_FD` would make the kernel wait a second time
+/// on a fence already known to have signalled.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_deadline_ring_advances_on_a_frame_with_no_fence_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((mut ring, _fds)) =
+        deadline_ring_of(&device, 2, Some(std::time::Duration::from_millis(5)))
+    else {
+        println!("note: skipped -- no importable dma-buf on this card");
+        return;
+    };
+
+    ring.submit(0, None, &[]);
+    let first = ring.acquire().expect("slot 0");
+    let fb0 = first.fb_id;
+    assert_ne!(fb0, 0);
+    assert!(
+        first.acquire_fence.is_none(),
+        "under a deadline the fence is pre-waited here, never wired to KMS"
+    );
+
+    ring.submit(1, None, &[]);
+    let second = ring.acquire().expect("slot 1");
+    assert_ne!(second.fb_id, fb0, "the ring advanced");
+    assert!(second.acquire_fence.is_none());
+
+    ring.release(first);
+    ring.release(second);
+}
+
+/// A fence that misses its deadline holds the last good frame, and the ring
+/// recovers when a signalled one arrives.
+///
+/// Holding is the point: advancing to a slot whose producer has not finished
+/// writing puts a half-rendered frame on screen. Missing the deadline is a
+/// late frame, which is a dropped frame -- not a torn one.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_missed_fence_deadline_holds_the_last_frame_then_recovers_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((mut ring, _fds)) =
+        deadline_ring_of(&device, 2, Some(std::time::Duration::from_millis(30)))
+    else {
+        println!("note: skipped -- no importable dma-buf on this card");
+        return;
+    };
+
+    ring.submit(0, None, &[]);
+    let first = ring.acquire().expect("slot 0");
+    let fb0 = first.fb_id;
+    assert_ne!(fb0, 0);
+
+    let Some((unsignalled, _writer)) = pipe_fence(false) else {
+        println!("note: skipped -- no pipe to stand in for a fence");
+        return;
+    };
+    ring.submit(1, Some(unsignalled), &[]);
+
+    let held = ring.acquire().expect("a deadline miss is not an error");
+    assert_eq!(
+        held.fb_id, fb0,
+        "a missed deadline holds the last good slot rather than advancing to \
+         one the producer has not finished"
+    );
+    assert!(
+        held.acquire_fence.is_none(),
+        "the fence was pre-waited, so it is never handed to the kernel"
+    );
+    ring.release(held);
+
+    // Resubmit the same slot behind a fence that has already signalled.
+    let (signalled, _writer) = pipe_fence(true).expect("a signalled fence");
+    ring.submit(1, Some(signalled), &[]);
+
+    let recovered = ring.acquire().expect("recover");
+    assert_ne!(
+        recovered.fb_id, fb0,
+        "with the fence signalled the ring advances to the frame it held back"
+    );
+    ring.release(first);
+    ring.release(recovered);
+}
+
+/// A dropped frame's damage is unioned into the next one, and only the next.
+///
+/// The dropped frame's pixels were never scanned out, so the region it
+/// declared is still stale on screen. If the next frame reported only its own
+/// damage, the driver would repaint that region and leave the dropped one
+/// showing the frame before it. Carrying it forever would be the other error:
+/// it would over-report every frame from here on.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_dropped_frames_damage_is_carried_into_the_next_one_only_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((mut ring, _fds)) =
+        deadline_ring_of(&device, 2, Some(std::time::Duration::from_millis(30)))
+    else {
+        println!("note: skipped -- no importable dma-buf on this card");
+        return;
+    };
+
+    ring.submit(0, None, &[]);
+    let first = ring.acquire().expect("slot 0");
+
+    let dropped = [
+        DamageRect {
+            x: 1,
+            y: 1,
+            w: 2,
+            h: 2,
+        },
+        DamageRect {
+            x: 3,
+            y: 3,
+            w: 4,
+            h: 4,
+        },
+    ];
+    let Some((unsignalled, _writer)) = pipe_fence(false) else {
+        println!("note: skipped -- no pipe to stand in for a fence");
+        return;
+    };
+    ring.submit(1, Some(unsignalled), &dropped);
+
+    let held = ring.acquire().expect("the deadline miss holds");
+    assert!(
+        held.damage.is_empty(),
+        "a held frame changed nothing since it went up"
+    );
+    ring.release(held);
+
+    let arriving = [DamageRect {
+        x: 5,
+        y: 5,
+        w: 6,
+        h: 6,
+    }];
+    let (signalled, _writer) = pipe_fence(true).expect("a signalled fence");
+    ring.submit(1, Some(signalled), &arriving);
+
+    let advanced = ring.acquire().expect("advance");
+    assert_eq!(
+        advanced.damage,
+        [dropped[0], dropped[1], arriving[0]],
+        "the dropped frame's regions are still stale on screen, so they have \
+         to be repainted alongside this frame's"
+    );
+
+    // One frame only: the carry was consumed above.
+    ring.submit(0, None, &arriving);
+    let plain = ring.acquire().expect("the frame after");
+    assert_eq!(
+        plain.damage, arriving,
+        "carrying past one frame would over-report every frame from here on"
+    );
+
+    ring.release(first);
+    ring.release(advanced);
+    ring.release(plain);
+}
+
+/// Dropping a whole-frame update forces the next frame to whole-frame.
+///
+/// Empty damage means *everything changed*. There is no rect list that says
+/// that, so a dropped whole-frame update cannot be unioned into the next
+/// frame's rects -- carrying nothing would silently downgrade it to "only what
+/// the next frame touched", leaving the rest of the screen stale.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_dropped_whole_frame_forces_the_next_to_whole_frame_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((mut ring, _fds)) =
+        deadline_ring_of(&device, 2, Some(std::time::Duration::from_millis(30)))
+    else {
+        println!("note: skipped -- no importable dma-buf on this card");
+        return;
+    };
+
+    ring.submit(0, None, &[]);
+    let first = ring.acquire().expect("slot 0");
+
+    // Whole-frame, and dropped.
+    let Some((unsignalled, _writer)) = pipe_fence(false) else {
+        println!("note: skipped -- no pipe to stand in for a fence");
+        return;
+    };
+    ring.submit(1, Some(unsignalled), &[]);
+    let held = ring.acquire().expect("the deadline miss holds");
+    ring.release(held);
+
+    // The next frame declares a small region; the drop must override it.
+    let (signalled, _writer) = pipe_fence(true).expect("a signalled fence");
+    ring.submit(
+        1,
+        Some(signalled),
+        &[DamageRect {
+            x: 5,
+            y: 5,
+            w: 6,
+            h: 6,
+        }],
+    );
+
+    let advanced = ring.acquire().expect("advance");
+    assert!(
+        advanced.damage.is_empty(),
+        "a dropped whole-frame update cannot be expressed as rects, so the \
+         next frame must repaint everything"
+    );
+
+    ring.release(first);
+    ring.release(advanced);
+}

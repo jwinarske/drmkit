@@ -82,6 +82,13 @@ pub struct RingPresenter {
     /// Damage from frames dropped on a deadline miss, owed to the next frame
     /// that is actually presented.
     carried_damage: Vec<DamageRect>,
+    /// Whether what was dropped was a *whole-frame* update.
+    ///
+    /// Separate from `carried_damage` being empty, which is ambiguous: an
+    /// empty list means both "nothing was dropped" and "everything was". Only
+    /// the second forces the next frame to whole-frame, and without this flag
+    /// the two are indistinguishable by the time that frame arrives.
+    carried_whole_frame: bool,
 }
 
 impl RingPresenter {
@@ -100,6 +107,7 @@ impl RingPresenter {
             outstanding: Vec::new(),
             fence_deadline,
             carried_damage: Vec::new(),
+            carried_whole_frame: false,
         }
     }
 
@@ -201,12 +209,12 @@ impl RingPresenter {
             self.outstanding.push((self.scanning_token, key));
 
             let mut out = std::mem::take(&mut self.carried_damage);
-            if out.is_empty() && damage.is_empty() {
-                // Both empty means whole-frame, which is what an empty list
-                // already says.
-            } else if damage.is_empty() || out.len() + damage.len() > MAX_DAMAGE {
-                // A carried whole-frame, or too many rectangles between them,
-                // degrades to whole-frame rather than under-reporting.
+            let dropped_whole_frame = std::mem::take(&mut self.carried_whole_frame);
+            if dropped_whole_frame || damage.is_empty() || out.len() + damage.len() > MAX_DAMAGE {
+                // A dropped whole-frame, this frame's own whole-frame, or too
+                // many rectangles between them: all three degrade to
+                // whole-frame rather than under-reporting, which would leave
+                // stale pixels on screen.
                 out.clear();
             } else {
                 out.extend_from_slice(&damage);
@@ -278,6 +286,7 @@ impl RingPresenter {
         self.scanning_token = 0;
         self.outstanding.clear();
         self.carried_damage.clear();
+        self.carried_whole_frame = false;
     }
 
     /// Accumulate damage owed by a dropped frame.
@@ -286,8 +295,14 @@ impl RingPresenter {
             // A dropped whole-frame stays whole-frame, and an overflowing
             // accumulation degrades to one: reporting less than was dirtied
             // leaves stale pixels on screen.
+            //
+            // The flag is what carries that across to the next frame. Clearing
+            // the list alone loses it -- an empty carry is indistinguishable
+            // from nothing having been dropped, and the next frame would go out
+            // with only its own rects while the rest of the screen stayed stale.
             self.carried_damage.clear();
             self.carried_damage.shrink_to_fit();
+            self.carried_whole_frame = true;
             return;
         }
         self.carried_damage.extend_from_slice(damage);
@@ -312,6 +327,80 @@ mod tests {
 
     fn rect(x: i32, y: i32) -> DamageRect {
         DamageRect { x, y, w: 8, h: 8 }
+    }
+
+    /// A dropped whole-frame update forces the next frame to whole-frame.
+    ///
+    /// Empty damage means *everything changed*, and no rect list can say that.
+    /// So a dropped whole-frame cannot be unioned into the next frame's rects
+    /// -- carrying nothing would silently downgrade it to "only what the next
+    /// frame touched", leaving the rest of the screen showing the frame before
+    /// the one that was dropped.
+    ///
+    /// Found by the vkms parity port of upstream's
+    /// `DroppedWholeFrameForcesWholeFrameCarry`. Pinned here too because it is
+    /// pure logic: it needs a missed deadline, not a card.
+    #[test]
+    fn a_dropped_whole_frame_forces_the_next_frame_to_whole_frame() {
+        let mut p = RingPresenter::new(Some(Duration::from_millis(1)));
+        p.submit(0, None, &[]);
+        let first = p.acquire();
+        assert_eq!(first.kind, Present::Fresh);
+        p.release(first.token);
+
+        // A frame behind a fence that never signals, declaring whole-frame.
+        let (read, _write) = std::io::pipe().expect("a pipe stands in for a fence");
+        let fence = SyncFence::import(std::os::fd::AsFd::as_fd(&read)).expect("import");
+        p.submit(1, Some(fence), &[]);
+        let held = p.acquire();
+        assert_eq!(held.kind, Present::Hold, "the deadline miss holds");
+        p.release(held.token);
+
+        // The next frame declares a small region; the drop must override it.
+        p.submit(1, None, &[rect(5, 5)]);
+        let advanced = p.acquire();
+        assert_eq!(advanced.kind, Present::Fresh);
+        assert!(
+            advanced.damage.is_empty(),
+            "a rect list here leaves everything outside it stale"
+        );
+    }
+
+    /// A dropped *partial* frame is unioned in, and cleared afterwards.
+    ///
+    /// The counterpart to the above: a dropped frame that named its regions
+    /// still has them stale on screen, so they ride along with the next frame
+    /// -- once. Carrying them further would over-report every frame after.
+    #[test]
+    fn a_dropped_partial_frame_is_carried_into_the_next_frame_only() {
+        let mut p = RingPresenter::new(Some(Duration::from_millis(1)));
+        p.submit(0, None, &[]);
+        let token = p.acquire().token;
+        p.release(token);
+
+        let (read, _write) = std::io::pipe().expect("a pipe stands in for a fence");
+        let fence = SyncFence::import(std::os::fd::AsFd::as_fd(&read)).expect("import");
+        p.submit(1, Some(fence), &[rect(1, 1)]);
+        let held = p.acquire();
+        assert_eq!(held.kind, Present::Hold);
+        p.release(held.token);
+
+        p.submit(1, None, &[rect(5, 5)]);
+        let advanced = p.acquire();
+        assert_eq!(
+            advanced.damage,
+            vec![rect(1, 1), rect(5, 5)],
+            "the dropped region is still stale, so it repaints with this frame"
+        );
+        p.release(advanced.token);
+
+        p.submit(0, None, &[rect(5, 5)]);
+        let after = p.acquire();
+        assert_eq!(
+            after.damage,
+            vec![rect(5, 5)],
+            "the carry is spent; repeating it would over-report from here on"
+        );
     }
 
     /// Nothing submitted, nothing to present.

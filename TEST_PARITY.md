@@ -30,7 +30,7 @@ and runs in the vkms lane (plan §6, §13).
 
 | C++ test | Rust test(s) | Status | Inv. |
 |---|---|---|---|
-| `tests/unit/test_acquire_fence.cpp` | _drmkit-scene-sources_ (phase 3) | pending |  |
+| `tests/unit/test_acquire_fence.cpp` | `drmkit-sync` `tests.rs` + `drmkit-scene` `tests.rs` | ported | The fence half was already covered -- `import` dupping, a move carrying the descriptor, repeated import and drop leaking nothing. What is added is the composition the file is really about: an `AcquiredBuffer` carrying a fence through a move and a drop, once per layer per frame. `OwnedFd` makes the double-close half of the C++ hazard unrepresentable; the leak half is still reachable and is what the count measures |
 | `tests/unit/test_atomic_builder.cpp` | `drmkit-core` `src/tests.rs` | ported |  |
 | `tests/unit/test_buffer_mapping.cpp` | `drmkit-dumb` `src/tests.rs` | partial | 6 |
 | `tests/unit/test_buffer_ring.cpp` | _drmkit-present_ (phase 6+) | pending |  |

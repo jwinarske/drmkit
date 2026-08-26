@@ -1227,3 +1227,94 @@ fn a_canvas_zpos_above_the_plane_range_is_clamped_not_sent() {
         "no known range means no clamping"
     );
 }
+
+/// The acquire-fence close discipline, at the level the scene works at.
+///
+/// `drmkit-sync` covers the fence itself -- that `import` dups, that a move
+/// carries the descriptor, that repeated import and drop leaks nothing. What
+/// is left is the composition: an `AcquiredBuffer` carrying one, moved into a
+/// release ring and dropped, once per layer per frame.
+mod acquire_fence {
+    use std::os::fd::{AsFd as _, OwnedFd};
+
+    use drmkit_sync::SyncFence;
+
+    use crate::AcquiredBuffer;
+
+    /// An eventfd with a count already written: readable, so `poll` reports it
+    /// immediately. The same stand-in for a signalled `sync_file` that
+    /// `drmkit-sync` uses, and cheaper than a pipe -- one descriptor rather
+    /// than two.
+    fn signalled() -> OwnedFd {
+        rustix::event::eventfd(1, rustix::event::EventfdFlags::CLOEXEC).expect("eventfd")
+    }
+
+    fn open_fd_count() -> usize {
+        std::fs::read_dir("/proc/self/fd")
+            .expect("/proc/self/fd")
+            .count()
+    }
+
+    #[test]
+    fn a_buffer_with_no_fence_says_so() {
+        // The common case: a source that produces ready buffers synchronously
+        // leaves this unset, and the scene must not wait on nothing.
+        let acquired = AcquiredBuffer::default();
+        assert!(acquired.acquire_fence.is_none());
+    }
+
+    #[test]
+    fn churning_fenced_buffers_does_not_leak_descriptors() {
+        // Once per layer per frame, so a leak of one descriptor per acquire
+        // reaches EMFILE in seconds at 60 Hz. `OwnedFd` makes the double-close
+        // half of this unrepresentable; the leak half is still reachable
+        // through a `forget` or a descriptor stashed somewhere and never
+        // dropped, which is what this measures.
+        let source = signalled();
+
+        let churn = |times: usize| {
+            for _ in 0..times {
+                let fence = SyncFence::import(source.as_fd()).expect("import");
+                let acquired = AcquiredBuffer {
+                    fb_id: 1,
+                    acquire_fence: Some(fence),
+                    ..AcquiredBuffer::default()
+                };
+                // Moved as the scene moves it into its release ring, then
+                // dropped at the end of the frame.
+                let moved = acquired;
+                assert!(moved.acquire_fence.is_some());
+                drop(moved);
+            }
+        };
+
+        churn(16);
+        let after_few = open_fd_count();
+        churn(240);
+        let growth = open_fd_count().saturating_sub(after_few);
+
+        assert!(
+            growth < 16,
+            "240 further acquire/drop cycles grew the fd table by {growth}; \
+             a per-acquire leak would grow it by 240"
+        );
+    }
+
+    #[test]
+    fn a_fence_carried_through_a_move_is_still_waitable() {
+        // The move must carry the descriptor rather than a copy of a number
+        // that something else has since closed.
+        let source = signalled();
+        let acquired = AcquiredBuffer {
+            fb_id: 1,
+            acquire_fence: Some(SyncFence::import(source.as_fd()).expect("import")),
+            ..AcquiredBuffer::default()
+        };
+        let moved = acquired;
+
+        let fence = moved.acquire_fence.expect("the move kept it");
+        fence
+            .wait(std::time::Duration::from_millis(200))
+            .expect("an already-signalled fence waits successfully");
+    }
+}

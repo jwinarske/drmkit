@@ -2409,3 +2409,127 @@ fn a_submit_the_pool_cannot_import_holds_the_last_frame_vkms() {
     pool.release_with_fence(held, None);
     pool.release_with_fence(good, None);
 }
+
+// --- DmaBufSourceCache, against a card ----------------------------------------
+//
+// Parity port of `tests/integration/test_dma_buf_source_cache_vkms.cpp`.
+
+/// A key hits, a changed shape under the same key replaces it, and evicting
+/// or clearing empties the cache.
+///
+/// The staleness rule is the one worth having on a card. A producer that
+/// reallocates at a new resolution keeps its buffer keys -- a V4L2 index, a
+/// slot number -- so a cache that only ever hit would hand back a framebuffer
+/// describing the previous geometry, and the kernel would scan out the new
+/// buffer through the old shape.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_cached_key_hits_until_its_shape_changes_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((fd, pitch)) = real_dma_buf(&device, 64, 64) else {
+        println!("note: skipped -- no importable dma-buf on this card");
+        return;
+    };
+    let planes = [ExternalPlane {
+        fd: fd.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+
+    let mut cache = DmaBufSourceCache::new();
+    assert!(cache.is_empty(), "a cache starts empty");
+
+    let first = cache
+        .get_or_create(7, &device, pool_format(), &planes)
+        .expect("import")
+        .fb_id();
+    assert_eq!(cache.len(), 1);
+    assert!(cache.find(7).is_some());
+
+    let again = cache
+        .get_or_create(7, &device, pool_format(), &planes)
+        .expect("hit")
+        .fb_id();
+    assert_eq!(first, again, "the same key and shape must reuse the import");
+    assert_eq!(cache.len(), 1, "and not import a second time");
+
+    // Same key, new shape: the entry is stale and must be replaced.
+    let smaller = SourceFormat {
+        fourcc: XRGB8888,
+        modifier: 0,
+        width: 32,
+        height: 32,
+    };
+    let replaced = cache
+        .get_or_create(7, &device, smaller, &planes)
+        .expect("re-import at the new shape");
+    assert_eq!(
+        LayerBufferSource::format(replaced),
+        smaller,
+        "a hit here would describe the new buffer with the old geometry"
+    );
+    assert_eq!(cache.len(), 1, "replaced, not accumulated");
+
+    assert!(cache.evict(7));
+    assert!(cache.is_empty());
+    assert!(cache.find(7).is_none());
+
+    cache.clear();
+    assert!(cache.is_empty(), "clearing an empty cache is not an error");
+}
+
+/// An explicit modifier reaches the kernel, and so does its absence.
+///
+/// The two take different paths: a non-trivial modifier sets the `MODIFIERS`
+/// flag and is declared per plane, while `LINEAR` and the `INVALID` sentinel
+/// are passed as "no modifier" so the driver takes its default. Both have to
+/// produce a framebuffer, and a cache that conflated them would send one down
+/// the other's path.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn an_explicit_modifier_and_its_absence_both_import_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((fd, pitch)) = real_dma_buf(&device, 64, 64) else {
+        println!("note: skipped -- no importable dma-buf on this card");
+        return;
+    };
+    let planes = [ExternalPlane {
+        fd: fd.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+
+    let mut cache = DmaBufSourceCache::new();
+
+    // LINEAR is passed as "no modifier": the kernel takes its default path.
+    let implicit = cache
+        .get_or_create(1, &device, pool_format(), &planes)
+        .expect("import with no declared modifier");
+    let implicit_fb = implicit.acquire().expect("acquire").fb_id;
+    assert_ne!(implicit_fb, 0);
+
+    // The INVALID sentinel means "the producer is not saying", and takes the
+    // same default path rather than being declared as a real layout.
+    let unstated = SourceFormat {
+        fourcc: XRGB8888,
+        modifier: drmkit_fmt::Modifier::INVALID.0,
+        width: 64,
+        height: 64,
+    };
+    let sentinel = cache
+        .get_or_create(2, &device, unstated, &planes)
+        .expect("import with the INVALID sentinel");
+    let sentinel_fb = sentinel.acquire().expect("acquire").fb_id;
+    assert_ne!(
+        sentinel_fb, 0,
+        "declaring INVALID to the kernel as a layout would be refused"
+    );
+
+    assert_ne!(
+        implicit_fb, sentinel_fb,
+        "two keys are two imports, whatever they say about modifiers"
+    );
+    assert_eq!(cache.len(), 2);
+}

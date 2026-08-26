@@ -115,7 +115,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/integration/test_gl_compositor_readback.cpp` | _drmkit-gl_ (phase 6+) | pending |  |
 | `tests/integration/test_gst_appsink_source_vkms.cpp` | _drmkit-scene-gst_ (phase 6+) | pending |  |
 | `tests/integration/test_layer_scene_app_priority_vkms.cpp` | _drmkit-scene_ (phase 3) | pending |  |
-| `tests/integration/test_layer_scene_census_vkms.cpp` | _drmkit-scene_ (phase 3) | pending | 4 |
+| `tests/integration/test_layer_scene_census_vkms.cpp` | `drmkit-scene` `tests/emission_census_vkms.rs` | ported | All four, plus two the reference has no equivalent of: colorimetry written once rather than per frame, and a fenced buffer arming its plane. The damage-clip branch is gated on the driver and asserted exactly either way -- measured per plane, amdgpu 6 of 10 and vkms, vc4 and rp1-dsi none, so the arms-a-clip side runs on amdgpu alone here |
 | `tests/integration/test_layer_scene_composition_vkms.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/integration/test_layer_scene_content_type_vkms.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/integration/test_layer_scene_minimization_vkms.cpp` | _drmkit-scene_ (phase 3) | pending | 4 |

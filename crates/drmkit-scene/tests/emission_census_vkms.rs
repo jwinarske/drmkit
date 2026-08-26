@@ -25,6 +25,7 @@ mod common;
 use drmkit_core::{AtomicCommitFlags, AtomicRequest, Device, ObjectType, PropertyStore};
 use drmkit_fmt::fourcc;
 use drmkit_planes::{PlaneCapabilities, PlaneRegistry, PlaneType};
+use drmkit_scene::DamageRect;
 use drmkit_scene::{
     AcquiredBuffer, CommitKind, DeviceCommitter, DisplayParams, KernelResult, LayerBufferSource,
     LayerScene, PlanePropertyMap, Rect, SourceError, SourceFormat, arm_acquire_fences, emit_frame,
@@ -44,6 +45,9 @@ fn card_guard() -> std::sync::MutexGuard<'static, ()> {
 struct DumbSource {
     inner: drmkit_scene_sources::DumbBufferSource,
     live: Rc<RefCell<usize>>,
+    /// Reported on the next acquire, the way a producer that repainted part of
+    /// its buffer would say so.
+    next_damage: Rc<RefCell<Vec<DamageRect>>>,
     /// Handed to the next acquired buffer, the way an asynchronous producer
     /// would stamp its render fence on the frame it just submitted.
     next_fence: Rc<RefCell<Option<SyncFence>>>,
@@ -54,6 +58,7 @@ impl LayerBufferSource for DumbSource {
         let mut acquired = self.inner.acquire()?;
         *self.live.borrow_mut() += 1;
         acquired.acquire_fence = self.next_fence.borrow_mut().take();
+        acquired.damage = std::mem::take(&mut *self.next_damage.borrow_mut());
         Ok(acquired)
     }
 
@@ -76,6 +81,8 @@ struct Fixture {
     map: PlanePropertyMap,
     scene: LayerScene,
     live: Rc<RefCell<usize>>,
+    damage_slot: Rc<RefCell<Vec<DamageRect>>>,
+    handle: drmkit_scene::LayerHandle,
 }
 
 /// Returns `None` only when another client holds DRM master.
@@ -162,6 +169,7 @@ fn fixture() -> Option<Fixture> {
 
     let live = Rc::new(RefCell::new(0));
     let fence_slot = Rc::new(RefCell::new(None));
+    let damage_slot: Rc<RefCell<Vec<DamageRect>>> = Rc::new(RefCell::new(Vec::new()));
     let mut scene = LayerScene::new(crtc_id);
     let source = drmkit_scene_sources::DumbBufferSource::create(&device, 64, 64, fourcc::XRGB8888)
         .expect("dumb buffer source");
@@ -169,6 +177,7 @@ fn fixture() -> Option<Fixture> {
         inner: source,
         live: Rc::clone(&live),
         next_fence: Rc::clone(&fence_slot),
+        next_damage: Rc::clone(&damage_slot),
     }));
     scene
         .layer_mut(handle)
@@ -192,6 +201,8 @@ fn fixture() -> Option<Fixture> {
         map,
         scene,
         live,
+        damage_slot,
+        handle,
     })
 }
 
@@ -434,4 +445,197 @@ fn a_fenced_buffer_arms_its_plane_vkms() {
     );
 
     fx.scene.drain();
+}
+
+/// Run `frames` frames, returning the reports.
+fn run(
+    fx: &mut Fixture,
+    frames: usize,
+    mut before_each: impl FnMut(&mut Fixture, usize),
+) -> Vec<drmkit_scene::CommitReport> {
+    (0..frames)
+        .map(|i| {
+            before_each(fx, i);
+            let build = build_one(fx);
+            fx.scene.finalize_frame(build, KernelResult::Ok)
+        })
+        .collect()
+}
+
+/// A widget-scale dirty region every frame.
+///
+/// Damage is *content*, not placement: the geometry never changes, so the
+/// FB-only fast path holds after the cold frame and the whole run costs one
+/// `TEST_ONLY`. A scene that treated damage as a placement change would search
+/// every frame.
+///
+/// The clip count is driver-gated, and asserted exactly for whichever
+/// capability the driver has rather than skipped: a driver with
+/// `FB_DAMAGE_CLIPS` must arm one per damaged frame, and one without must arm
+/// none and fall back to full-frame. Both are correct; reporting neither would
+/// be the bug.
+///
+/// Which branch runs where, counted per plane rather than taken on trust:
+/// amdgpu 6 of 10, vkms 0 of 10, vc4 0 of 56, rp1-dsi 0 of 1. So the
+/// arms-a-clip branch runs on amdgpu alone of the hardware here -- the
+/// reference's equivalent names vc4 as capable, which it is not
+/// ([drm-cxx#255](https://github.com/jwinarske/drm-cxx/issues/255)).
+#[test]
+#[ignore = "needs a DRM device"]
+fn a_damaged_frame_stays_on_the_fast_path_vkms() {
+    const FRAMES: usize = 8;
+
+    let _guard = card_guard();
+    let Some(mut fx) = fixture() else { return };
+    let handle = fx.handle;
+
+    let reports = run(&mut fx, FRAMES, |fx, i| {
+        // Moving slightly so the region stays non-empty and non-identical --
+        // a degenerate clip is dropped, which would make this vacuous.
+        *fx.damage_slot.borrow_mut() = vec![DamageRect {
+            x: 10 + i32::try_from(i).expect("small"),
+            y: 10,
+            w: 64,
+            h: 64,
+        }];
+        let _ = handle;
+    });
+
+    let test_commits: usize = reports.iter().map(|r| r.test_commits_issued).sum();
+    assert_eq!(
+        test_commits, 1,
+        "damage is content, not placement -- one cold search and no more"
+    );
+    let fast = reports.iter().filter(|r| r.fb_delta_fast_path).count();
+    assert_eq!(
+        fast,
+        FRAMES - 1,
+        "every frame after the cold one keeps the FB-only fast path"
+    );
+
+    let profile = drmkit_display::DriverProfile::probe(&fx.device).expect("driver profile");
+    let damaged: usize = reports.iter().map(|r| r.damaged_layers).sum();
+    if profile.fb_damage_clips {
+        assert_eq!(
+            damaged, FRAMES,
+            "a damage-capable driver must arm one clip per damaged frame"
+        );
+    } else {
+        assert_eq!(
+            damaged, 0,
+            "a driver without FB_DAMAGE_CLIPS falls back to full-frame"
+        );
+    }
+    println!(
+        "note: {} damage clips over {FRAMES} frames (driver {} FB_DAMAGE_CLIPS)",
+        damaged,
+        if profile.fb_damage_clips {
+            "has"
+        } else {
+            "lacks"
+        }
+    );
+}
+
+/// A layer translated every few frames.
+///
+/// Each move changes `CRTC_X`, which is placement: the fast path is defeated
+/// and the frame re-validates with one `TEST_ONLY`. The frames between are
+/// back on the fast path, which is what says the invalidation is per-change
+/// and not sticky.
+#[test]
+#[ignore = "needs a DRM device"]
+fn a_moving_layer_pays_one_test_commit_per_move_vkms() {
+    const FRAMES: usize = 9;
+    const EVERY: usize = 3;
+
+    let _guard = card_guard();
+    let Some(mut fx) = fixture() else { return };
+    let handle = fx.handle;
+
+    let reports = run(&mut fx, FRAMES, |fx, i| {
+        if i % EVERY == 0 {
+            let layer = fx.scene.layer_mut(handle).expect("live");
+            let mut display = *layer.display();
+            display.dst_rect.x = i32::try_from(i).expect("small") * 4;
+            layer.set_display(display);
+        }
+    });
+
+    let moves = FRAMES.div_ceil(EVERY);
+    let test_commits: usize = reports.iter().map(|r| r.test_commits_issued).sum();
+    assert_eq!(
+        test_commits, moves,
+        "one search per move and none between: {test_commits} over {FRAMES} frames"
+    );
+
+    // The frames that did not move stayed on the fast path.
+    let fast = reports.iter().filter(|r| r.fb_delta_fast_path).count();
+    assert_eq!(
+        fast,
+        FRAMES - moves,
+        "a frame that moved nothing must not re-validate"
+    );
+}
+
+/// Several overlapping layers, steady.
+///
+/// Overlap is what makes the allocator's job non-trivial -- disjoint layers
+/// are placed group by group -- and the point of the case is that it still
+/// settles: one cold search, then nothing.
+#[test]
+#[ignore = "needs a DRM device"]
+fn overlapping_layers_settle_to_no_search_vkms() {
+    const FRAMES: usize = 6;
+
+    let _guard = card_guard();
+    let Some(mut fx) = fixture() else { return };
+
+    // Three more layers on top of the fixture's one, all overlapping it.
+    for i in 0..3 {
+        let source =
+            drmkit_scene_sources::DumbBufferSource::create(&fx.device, 64, 64, fourcc::XRGB8888)
+                .expect("dumb source");
+        let handle = fx.scene.add_layer(Box::new(DumbSource {
+            inner: source,
+            live: Rc::clone(&fx.live),
+            next_fence: Rc::new(RefCell::new(None)),
+            next_damage: Rc::new(RefCell::new(Vec::new())),
+        }));
+        fx.scene
+            .layer_mut(handle)
+            .expect("live")
+            .set_display(DisplayParams {
+                src_rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 64,
+                    h: 64,
+                },
+                dst_rect: Rect {
+                    x: i * 8,
+                    y: i * 8,
+                    w: 64,
+                    h: 64,
+                },
+                ..DisplayParams::default()
+            });
+    }
+
+    let reports = run(&mut fx, FRAMES, |_, _| {});
+
+    let total = reports.last().expect("frames").layers_total;
+    assert_eq!(total, 4, "all four layers were in the frame");
+    for report in &reports {
+        assert!(
+            report.accounting_balances(),
+            "the layer tally stopped adding up: {report:?}"
+        );
+    }
+
+    let test_commits: usize = reports.iter().map(|r| r.test_commits_issued).sum();
+    assert_eq!(
+        test_commits, 1,
+        "an unchanging overlapping scene searches once: {test_commits}"
+    );
 }

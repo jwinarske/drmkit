@@ -21,6 +21,10 @@ pub enum Placement {
 }
 
 /// One layer's outcome.
+///
+/// The default is the safe one: unassigned, on no plane. A placement nothing
+/// filled in describes a layer that did not reach the screen, which is a
+/// smaller claim than naming a plane it does not have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LayerPlacement {
     /// Which layer.
@@ -38,6 +42,23 @@ pub struct LayerPlacement {
     /// Lets a producer decide whether its requested angle can land on the plane
     /// it was given or needs pre-rotation.
     pub plane_rotation_bits: u64,
+}
+
+impl Default for LayerPlacement {
+    /// Unassigned, on no plane, for no layer.
+    ///
+    /// Written by hand rather than derived so `LayerId` does not have to gain
+    /// a `Default` it has no use for elsewhere -- an id is something the scene
+    /// hands out, and one a caller could conjure would be a way to address a
+    /// layer that does not exist.
+    fn default() -> Self {
+        Self {
+            layer: LayerId(0),
+            placement: Placement::Unassigned,
+            plane_id: None,
+            plane_rotation_bits: 0,
+        }
+    }
 }
 
 /// A snapshot of a single commit.

@@ -1318,3 +1318,164 @@ mod acquire_fence {
             .expect("an already-signalled fence waits successfully");
     }
 }
+
+/// The scene's small surfaces, ported from `test_scene.cpp`.
+///
+/// The file is forty-one cases against an API that differs in shape here --
+/// upstream has per-field `set_*_if_changed` setters where this has one
+/// `set_display`, and constructors that take a device where this takes a CRTC
+/// id. What follows is the behaviour that exists on both sides; the parity row
+/// names what does not and why.
+mod scene_surfaces {
+    use std::collections::HashMap;
+
+    use drmkit_planes::{ContentType, Rect};
+
+    use crate::{DisplayParams, LayerHandle, LayerScene, Placement};
+
+    #[test]
+    fn a_default_handle_is_the_invalid_sentinel() {
+        // Slot 0 is reserved for exactly this, so a handle nobody assigned
+        // cannot address the first layer.
+        assert!(!LayerHandle::default().is_valid());
+    }
+
+    #[test]
+    fn a_handle_distinguishes_slot_from_generation() {
+        // Both halves have to participate in equality and in the hash. A
+        // handle comparing on slot alone would let a stale one match the
+        // layer that took its place, which is the whole hazard the generation
+        // exists to close.
+        let mut scene = LayerScene::new(1);
+        let first = scene.add_layer(Box::new(super::MinimalSource));
+        scene.remove_layer(first);
+        let second = scene.add_layer(Box::new(super::MinimalSource));
+
+        assert_ne!(first, second, "the recycled slot is a different handle");
+        assert_ne!(
+            first.layer_id(),
+            second.layer_id(),
+            "and a different identity"
+        );
+
+        // Usable as a map key, and the two do not collide there either.
+        let mut by_handle: HashMap<LayerHandle, &str> = HashMap::new();
+        by_handle.insert(first, "gone");
+        by_handle.insert(second, "live");
+        assert_eq!(by_handle.len(), 2);
+        assert_eq!(by_handle.get(&second), Some(&"live"));
+    }
+
+    #[test]
+    fn a_stale_handle_resolves_to_nothing() {
+        let mut scene = LayerScene::new(1);
+        let first = scene.add_layer(Box::new(super::MinimalSource));
+        scene.remove_layer(first);
+        let second = scene.add_layer(Box::new(super::MinimalSource));
+
+        assert!(scene.layer(first).is_none(), "the removed layer is gone");
+        assert!(scene.layer(second).is_some());
+    }
+
+    #[test]
+    fn geometry_does_not_flag_a_layer_for_reallocation() {
+        // Moving or resizing a layer changes what is written to the plane it
+        // already has. Dropping the warm start for it would cost a search
+        // every frame something moves, which is every frame.
+        let mut scene = LayerScene::new(1);
+        let handle = scene.add_layer(Box::new(super::MinimalSource));
+        let layer = scene.layer_mut(handle).expect("live");
+        assert!(!layer.hints_dirty());
+
+        layer.set_display(DisplayParams {
+            dst_rect: Rect {
+                x: 10,
+                y: 20,
+                w: 64,
+                h: 64,
+            },
+            ..DisplayParams::default()
+        });
+        assert!(
+            !layer.hints_dirty(),
+            "geometry must not drop the warm start"
+        );
+    }
+
+    #[test]
+    fn a_hint_that_changes_scoring_does_flag_it() {
+        // Content type, refresh hint and app priority all feed plane scoring,
+        // so the layer has to be free to move to a plane its new hint
+        // prefers -- which it cannot do from a warm start.
+        let mut scene = LayerScene::new(1);
+        let handle = scene.add_layer(Box::new(super::MinimalSource));
+
+        // A fresh layer per case: the flag is cleared by a commit, and there
+        // is deliberately no public way to clear it otherwise.
+        for set in [
+            &(|l: &mut crate::SceneLayer| l.set_content_type(ContentType::Video))
+                as &dyn Fn(&mut crate::SceneLayer),
+            &|l: &mut crate::SceneLayer| l.set_update_hint(24),
+            &|l: &mut crate::SceneLayer| l.set_app_priority(3),
+        ] {
+            let fresh = scene.add_layer(Box::new(super::MinimalSource));
+            let layer = scene.layer_mut(fresh).expect("live");
+            assert!(!layer.hints_dirty(), "starts clean");
+            set(layer);
+            assert!(layer.hints_dirty());
+        }
+        let _ = handle;
+    }
+
+    #[test]
+    fn the_hint_accessors_read_back_what_was_set() {
+        let mut scene = LayerScene::new(1);
+        let handle = scene.add_layer(Box::new(super::MinimalSource));
+        let layer = scene.layer_mut(handle).expect("live");
+
+        assert_eq!(layer.app_priority(), 0, "defaults to none");
+        assert_eq!(layer.update_hint_hz(), 0);
+        assert_eq!(layer.content_type(), ContentType::default());
+
+        layer.set_app_priority(7);
+        layer.set_update_hint(48);
+        layer.set_content_type(ContentType::Video);
+
+        assert_eq!(layer.app_priority(), 7);
+        assert_eq!(layer.update_hint_hz(), 48);
+        assert_eq!(layer.content_type(), ContentType::Video);
+    }
+
+    #[test]
+    fn a_placement_defaults_to_unassigned_with_no_plane() {
+        // The safe default: a layer nothing recorded an outcome for has not
+        // reached the screen, and claiming a plane it does not have would be
+        // worse than claiming none.
+        let placement = crate::LayerPlacement {
+            layer: drmkit_planes::LayerId(1),
+            ..crate::LayerPlacement::default()
+        };
+        assert_eq!(placement.placement, Placement::Unassigned);
+        assert_eq!(placement.plane_id, None);
+        assert_eq!(placement.plane_rotation_bits, 0);
+    }
+
+    #[test]
+    fn a_fresh_report_counts_nothing() {
+        let report = crate::CommitReport::default();
+        assert_eq!(report.layers_total, 0);
+        assert_eq!(report.layers_assigned, 0);
+        assert_eq!(report.layers_composited, 0);
+        assert_eq!(report.test_commits_issued, 0);
+        assert!(report.placements.is_empty());
+        assert!(
+            report.accounting_balances(),
+            "zero of everything still has to add up"
+        );
+    }
+
+    #[test]
+    fn the_scene_remembers_which_crtc_it_drives() {
+        assert_eq!(LayerScene::new(42).crtc_id(), 42);
+    }
+}

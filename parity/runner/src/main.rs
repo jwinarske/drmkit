@@ -29,7 +29,7 @@ use drmkit_scene::{
     emit_frame,
 };
 
-/// A [`DumbBufferSource`] that can be told to starve.
+/// A `DumbBufferSource` that can be told to starve.
 ///
 /// `WouldBlock` from `acquire` is the documented "no frame yet" signal: the
 /// layer is skipped for this frame and counted, rather than the frame failing.

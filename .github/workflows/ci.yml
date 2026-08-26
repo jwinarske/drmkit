@@ -66,6 +66,16 @@ jobs:
             echo "::endgroup::"
           done
 
+      # Doc warnings are their own lane's worth of rot: RUSTFLAGS carries
+      # -Dwarnings for the compiler, RUSTDOCFLAGS is separate, and nothing was
+      # setting it -- so `missing_docs` was enforced while six broken intra-doc
+      # links and an unclosed `<n>` tag sat in the tree unnoticed. A link that
+      # does not resolve is a doc that lies about where to look next.
+      - name: rustdoc
+        run: cargo doc --workspace --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+
       - name: cargo-deny
         uses: EmbarkStudios/cargo-deny-action@v2
         with:

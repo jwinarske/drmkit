@@ -647,7 +647,7 @@ impl LayerScene {
     ///
     /// # Errors
     ///
-    /// [`DumbError`] if either buffer cannot be allocated.
+    /// `drmkit_dumb::DumbError` if either buffer cannot be allocated.
     pub fn enable_composition(
         &mut self,
         device: &Device,
@@ -669,7 +669,8 @@ impl LayerScene {
     ///
     /// # Errors
     ///
-    /// [`DumbError::InvalidConfig`] if the plane advertises nothing the canvas
+    /// `drmkit_dumb::DumbError::InvalidConfig` if the plane advertises nothing
+    /// the canvas
     /// can write -- a YUV-only overlay, say -- and otherwise as
     /// [`enable_composition`](Self::enable_composition).
     pub fn enable_composition_on(

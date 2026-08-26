@@ -8,7 +8,7 @@
 //! out the descriptor a scanout path needs.
 //!
 //! GBM is how a GPU-rendered surface becomes something KMS can scan out. Where
-//! [`drmkit-dumb`](drmkit_dumb) allocates plain linear memory the CPU writes,
+//! `drmkit-dumb` allocates plain linear memory the CPU writes,
 //! this asks the driver for memory its renderer can target — which on real
 //! hardware means tiled or compressed layouts, and a modifier saying which.
 //!

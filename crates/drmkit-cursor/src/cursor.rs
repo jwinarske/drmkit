@@ -49,7 +49,7 @@ impl Cursor {
     ///
     /// Cursor files are multi-resolution packs, so this picks the nominal size
     /// closest to `requested_size` and takes every frame filed under it. A
-    /// `requested_size` of zero means [`DEFAULT_SIZE`].
+    /// `requested_size` of zero means the default nominal size.
     ///
     /// # Errors
     ///

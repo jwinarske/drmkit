@@ -80,7 +80,8 @@ impl ConnectorModes {
 ///
 /// # Errors
 ///
-/// [`CoreError::Io`] if the device's resources cannot be read at all.
+/// `drmkit_core::CoreError::Io` if the device's resources cannot be read
+/// at all.
 pub fn query_connector_modes(device: &Device, probe: Probe) -> Result<Vec<ConnectorModes>> {
     let resources = device.resource_handles().map_err(|error| errno(&error))?;
 

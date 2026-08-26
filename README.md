@@ -113,7 +113,7 @@ by quietly doing nothing.
 | A validation process for the device pool | done — `cargo xtask validate`, capability baselines, and coverage attribution per device ([`docs/validation.md`](docs/validation.md)) |
 | The drmdb corpus as a standing check | done — five gating rules and ten surveys over ~1,200 devices, run weekly and on the pull requests that touch what it reads |
 | HIL smoke on RK3588 and VisionFive 2 | **not started.** Needs the boards |
-| Docs | partial — the harness, validation and corpus have their own; the public API rustdoc pass the plan asks for has not been done |
+| Docs | partial — the harness, validation and corpus have their own, and rustdoc is now clean under `-Dwarnings` and stays that way in CI; the invariant cross-referencing the plan asks for is there (62 references across seven crates), but no one has read the public API end to end for whether it explains itself |
 
 ### The differential harness
 

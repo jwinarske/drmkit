@@ -12,7 +12,7 @@
 //! descriptor immediately, because the ioctls will start failing. *Resumed*:
 //! here are fresh descriptors, and every per-descriptor kernel object you had
 //! -- framebuffers, property blobs, client caps, GEM handles -- is gone.
-//! [`drmkit_cursor::Paused`] is the shape that pairs with this on the other
+//! `drmkit_cursor::Paused` is the shape that pairs with this on the other
 //! side.
 //!
 //! # Why the backend is a trait

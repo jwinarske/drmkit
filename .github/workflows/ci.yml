@@ -276,3 +276,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # Only the fd-free crates. The fd-bound ones are sanitizer territory (T3).
       - run: cargo +nightly miri test -p drmkit-log -p drmkit-time -p drmkit-fmt
+      # drmkit-planes belongs here and was missing: the unsafe policy in
+      # plan §11 names "`planes` matching" among the crates Miri covers, and
+      # the crate is fd-free by default -- drm, drmkit-core and rustix are all
+      # behind the `device` feature, precisely so the allocator and the matcher
+      # run on caller-supplied capabilities. Hopcroft-Karp is index arithmetic
+      # over adjacency lists, which is what Miri is for.
+      #
+      # Targets named explicitly to leave out matching_properties: proptest
+      # writes its regression file, and `getcwd` is unavailable under Miri's
+      # isolation, so the target aborts rather than running. That suite is
+      # covered on the normal test lane; what is wanted here is the
+      # deterministic cases under the interpreter. 79 of them, ~17s.
+      - run: cargo +nightly miri test -p drmkit-planes --lib --test allocator

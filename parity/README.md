@@ -127,7 +127,7 @@ that came out of defects found on hardware.
 
 | Scenario | What it pins |
 |---|---|
-| `warm-start-stability` | A layer removed mid-stack must not move the survivors (§4.6). |
+| `warm-start-stability` | A layer inserted into, or removed from, a settled stack must not move the survivors (§4.6). Insertion is the half that discriminates — see P-27. |
 | `eagain-skip-accounting` | A starved source holds its plane and its last framebuffer, and the residual arithmetic balances. |
 | `fast-path-classification` | Which frames may skip the `TEST_ONLY` commit, in both directions. |
 | `fence-dup-independence` | One acquire fence arms frame after frame, because each acquire yields its own descriptor. |

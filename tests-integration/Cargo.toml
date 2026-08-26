@@ -11,5 +11,9 @@ publish = false
 
 [dependencies]
 
+[dev-dependencies]
+# The DRM driver name, for telling vkms from any other card.
+drmkit-testkit = { workspace = true }
+
 [lints]
 workspace = true

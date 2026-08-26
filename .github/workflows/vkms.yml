@@ -100,6 +100,10 @@ jobs:
             # Two is the smallest count that makes "put this layer somewhere
             # else" a question with an answer.
             echo 'export DRMKIT_MIN_PLANES=2'
+            # And that it is running on what it booted. The lane-health checks
+            # assert a modeset card is present; without this they pass on any
+            # DRM device, which is not what "the vkms lane" claims.
+            echo 'export DRMKIT_EXPECT_DRIVER=vkms'
             echo 'udevadm settle || true'
             echo 'test -e /dev/dri/card0 || { echo "FATAL: vkms loaded but no card node"; exit 1; }'
             echo 'rc=0'

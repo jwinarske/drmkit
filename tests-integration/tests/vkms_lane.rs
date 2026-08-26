@@ -107,3 +107,36 @@ fn card_is_a_drm_device() {
         None => println!("note: `{}` has no bus driver symlink", card.display()),
     }
 }
+
+/// The lane is running on the driver it thinks it is.
+///
+/// The three checks above pass on any DRM device, so until now this file
+/// asserted a card was present and not which one -- while its own header said
+/// the point was "that it is the VKMS one the lane believes it booted". A
+/// tripwire that cannot tell vkms from amdgpu cannot notice the lane booting
+/// on something else, which is the failure it exists for.
+///
+/// The gap was deliberate once: getting the DRM driver name needs
+/// `DRM_IOCTL_VERSION`, and the note here said it would arrive with
+/// `drmkit-core` in phase 1. It did, four phases ago.
+///
+/// `DRMKIT_EXPECT_DRIVER` is what the lane sets. Unset -- a developer running
+/// this against amdgpu or vc4 -- it reports the driver and asserts nothing,
+/// the same shape `DRMKIT_MIN_PLANES` uses.
+#[test]
+#[ignore = "needs a DRM device"]
+fn the_card_is_the_driver_the_lane_expects() {
+    let card = test_card();
+    let driver = drmkit_testkit::driver_of(&card.to_string_lossy());
+    println!("note: {} is driven by {driver}", card.display());
+
+    if let Ok(expected) = std::env::var("DRMKIT_EXPECT_DRIVER") {
+        assert_eq!(
+            driver,
+            expected,
+            "{} reports driver `{driver}`, but the lane expects `{expected}` \
+             -- it is testing something other than what it booted",
+            card.display()
+        );
+    }
+}

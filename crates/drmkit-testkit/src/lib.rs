@@ -125,12 +125,16 @@ pub fn announce_card(path: &str) {
 
 /// The driver's own name for itself.
 ///
+/// Public because the lane-health checks need it too: telling vkms from any
+/// other DRM device is the whole of what they assert.
+///
 /// From the DRM version ioctl, not from sysfs. sysfs reports the *bus* driver
 /// -- vkms binds through the faux bus and shows up there as `faux_driver`,
 /// which is exactly the sort of near-answer that let a vkms run be labelled
 /// amdgpu in the first place. The ioctl gives the name the driver registers,
 /// and needs neither master nor any capability.
-fn driver_of(path: &str) -> String {
+#[must_use]
+pub fn driver_of(path: &str) -> String {
     use drm::Device as _;
 
     struct Node(std::fs::File);

@@ -300,6 +300,33 @@ jobs:
           -Zbuild-std --target x86_64-unknown-linux-gnu --lib --tests
         env:
           RUSTFLAGS: -Zsanitizer=address
+      # drmkit-input separately, with leak detection off.
+      #
+      # It belongs under a sanitizer more than anything else here:
+      # `libinput_log::install` is a va_list trampoline that renders a
+      # `va_list` into a fixed buffer through vsnprintf, and docs/phase0-spikes.md
+      # committed it to "a `// SAFETY:` block plus an ASan run (T3)" when that
+      # shim was decided on. This is that run.
+      #
+      # Leak detection is off because `input` leaks its boxed
+      # `libinput_interface` once per context: `Box::into_raw` at
+      # context.rs:185 and :219 with no matching `from_raw` in `Drop`, sixteen
+      # bytes a context, reported to Smithay/input.rs#99. The allocation is
+      # attributed to whichever of our functions constructed the context, so a
+      # targeted suppression would have to name our own frames and would hide
+      # our own leaks with it -- which is worse than saying plainly that leak
+      # detection does not run here.
+      #
+      # Everything else the sanitizer does still runs, including the
+      # buffer-overflow detection the trampoline is here for; checked with a
+      # deliberate one-past-the-end read, which is still caught with
+      # detect_leaks=0.
+      - run: >
+          cargo +nightly test -p drmkit-input
+          -Zbuild-std --target x86_64-unknown-linux-gnu --lib --tests
+        env:
+          RUSTFLAGS: -Zsanitizer=address
+          ASAN_OPTIONS: detect_leaks=0
 
   miri:
     name: miri (pure crates)

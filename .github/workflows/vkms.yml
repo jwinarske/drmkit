@@ -121,4 +121,40 @@ jobs:
       # same absolute paths. `--verbose` surfaces boot failures that would
       # otherwise look like a silent test skip.
       - name: run suite under vkms
-        run: vng --run --verbose --cpus 2 --memory 2G --exec "$PWD/run-in-vm.sh"
+        # Captured as well as shown: the coverage check below reads it, and a
+        # run whose log is only in the web UI cannot be checked against
+        # anything.
+        run: |
+          set -o pipefail
+          vng --run --verbose --cpus 2 --memory 2G --exec "$PWD/run-in-vm.sh" \
+            2>&1 | tee vkms-run.txt
+
+      # Which cases actually asserted here, rather than how many reported ok.
+      # vkms is the only target in the pool that is a virtualized driver, so
+      # it is the only one that can run the HOTSPOT_X case at all -- and it is
+      # the lane P-20 hid in, twelve rigs exercising plane migration on a CRTC
+      # with nowhere to migrate to, green throughout.
+      #
+      # Records the baseline when there is none, so the first green run on a
+      # new kernel produces one to commit; checks against it once committed,
+      # and fails when a case that asserted here stops doing so.
+      - name: check what the lane covered
+        run: |
+          if [ -f validation/coverage/ci-vkms.json ]; then
+            cargo xtask coverage --device=ci-vkms < vkms-run.txt
+          else
+            cargo xtask coverage --device=ci-vkms --record < vkms-run.txt
+            echo "::notice::No coverage baseline for ci-vkms yet. The recorded" \
+                 "one is attached to this run; commit it to start gating."
+          fi
+
+      - name: keep what the lane covered
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-vkms-coverage
+          path: |
+            validation/coverage/ci-vkms.json
+            vkms-run.txt
+          retention-days: 30
+          if-no-files-found: warn

@@ -234,11 +234,21 @@ coverage risk would bury the real ones.
 All fifteen device suites report their skips, and `cargo xtask coverage`
 gates on them. Two things are still open.
 
-The vkms lane does not yet check a coverage baseline. It is the case that
-wants it most — [P-20](parity-findings.md) was twelve rigs exercising plane
-migration on a CRTC with nowhere to migrate to, for months, which is exactly
-what this catches — but the baseline has to be recorded from a real run on the
-lane's own kernel, not from a workstation.
+The vkms lane records its coverage and will gate on it, but has no committed
+baseline yet. The step adapts: with no baseline it records one and attaches it
+to the run, and with one it checks. So the first green run after this produces
+the file to commit, and gating starts the moment it lands — no flag day.
+
+That lane matters twice over. It is where [P-20](parity-findings.md) hid,
+twelve rigs exercising plane migration on a CRTC with nowhere to migrate to,
+green throughout. And vkms is the only virtualized driver in the pool, so it
+is the only thing that can run the `HOTSPOT_X` case at all — one of the three
+the audit currently reports as asserting nowhere.
+
+Its baseline will cover a larger set than the boards': the lane runs
+`--include-ignored`, so unit cases are recorded alongside device ones. That is
+harmless — a unit case never skips — but it inflates the audit's *unmeasured*
+count, which counts cases one device ran and another never attempted.
 
 And baselines exist for the devices reachable today. The rest of the pool
 needs an entry in `validation/devices.toml` and a first recorded run each.

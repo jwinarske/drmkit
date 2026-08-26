@@ -493,6 +493,20 @@ test a_second_case ... ok
         );
     }
 
+    /// The skip line can land either side of the case's own `test ... ok`.
+    ///
+    /// With `--nocapture` the case prints while it runs, so its skip reaches
+    /// the log before the harness reports it; across binaries the order can
+    /// go the other way. Whichever arrives second must not undo the first.
+    #[test]
+    fn a_skip_is_recorded_whichever_side_of_its_test_line_it_lands() {
+        let before = parse("DRMKIT-SKIP\ta_case\tno gamma stage\ntest a_case ... ok\n");
+        assert_eq!(before["a_case"].reason(), "no gamma stage", "skip first");
+
+        let after = parse("test a_case ... ok\nDRMKIT-SKIP\ta_case\tno gamma stage\n");
+        assert_eq!(after["a_case"].reason(), "no gamma stage", "skip second");
+    }
+
     #[test]
     fn a_case_with_no_skip_line_counts_as_having_run() {
         let cases = parse("test a_case_that_asserted ... ok\n");

@@ -24,6 +24,10 @@ pub(crate) struct Finding {
 /// A distribution worth knowing, which is not pass or fail.
 pub(crate) struct Survey {
     pub(crate) title: String,
+    /// What the counts count. Surveys here count planes, CRTCs, devices and
+    /// connectors, and a shared renderer that assumed one of them said the
+    /// wrong noun for the rest.
+    pub(crate) unit: &'static str,
     /// Why the shape matters, in the terms of the thing that depends on it.
     pub(crate) note: &'static str,
     /// Label and count, already ordered by whatever the survey ranks on.
@@ -84,7 +88,11 @@ impl Report {
                 && dropped > 0
             {
                 let tail: usize = survey.rows[SURVEY_ROWS..].iter().map(|(_, n)| n).sum();
-                let _ = writeln!(out, "         ... {dropped} more row(s), {tail} plane(s)");
+                let _ = writeln!(
+                    out,
+                    "         ... {dropped} more row(s), {tail} {}",
+                    survey.unit
+                );
             }
         }
         out
@@ -112,6 +120,7 @@ pub(crate) fn check_all(devices: &[Device]) -> Report {
             colour_pipeline_shapes(devices),
             connector_signalling_shapes(devices),
             crtcs_with_more_than_one_primary(devices),
+            primaries_with_a_pinned_zpos(devices),
             in_formats_by_driver(devices),
         ],
     }
@@ -302,6 +311,7 @@ fn degenerate_mutable_zpos(devices: &[Device]) -> Survey {
     rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     Survey {
         title: "degenerate but mutable zpos, by driver (the P-6 shape)".to_owned(),
+        unit: "planes",
         note: "clamp_zpos turns these into a write of the only legal value; \
                without it the frame is refused whole",
         rows,
@@ -381,6 +391,7 @@ fn cursor_paths(devices: &[Device]) -> Survey {
     ));
     Survey {
         title: "cursor path per CRTC, replayed through select_plane".to_owned(),
+        unit: "CRTCs",
         note: "each fallback costs an overlay, or the ability to coalesce the \
                cursor with a frame and to rotate it",
         rows,
@@ -423,6 +434,7 @@ fn colour_pipeline_shapes(devices: &[Device]) -> Survey {
     rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     Survey {
         title: "CRTC colour pipeline shapes".to_owned(),
+        unit: "CRTCs",
         note: "every stage refuses on its own, which is what lets a partial \
                pipeline work rather than being refused whole",
         rows,
@@ -506,6 +518,7 @@ fn in_formats_by_driver(devices: &[Device]) -> Survey {
     rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     Survey {
         title: "planes with no IN_FORMATS, by driver".to_owned(),
+        unit: "planes",
         note: "these get a synthesised FourCC-by-LINEAR table, which offers \
                nothing compressed to a plane that never claimed it",
         rows,
@@ -546,6 +559,7 @@ fn connector_signalling_shapes(devices: &[Device]) -> Survey {
     rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     Survey {
         title: "connector output-signalling shapes".to_owned(),
+        unit: "connectors",
         note: "the two properties are gated separately because the split runs \
                both ways -- neither is a subset of the other",
         rows,
@@ -596,8 +610,51 @@ fn crtcs_with_more_than_one_primary(devices: &[Device]) -> Survey {
     rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     Survey {
         title: "CRTCs fed by more than one primary plane".to_owned(),
+        unit: "CRTCs",
         note: "where the canvas-placement rule here and upstream's can pick \
                different planes -- see P-24",
+        rows,
+    }
+}
+
+/// Devices whose primary advertises a zpos, by driver.
+///
+/// The precondition for the primary anchor (P-26). Where a primary has a zpos
+/// slot and no live layer is eligible for it, nothing assigns the primary, the
+/// disable pass clears it in every test, and a driver enforcing "an active
+/// CRTC has an armed primary" refuses every one -- the whole scene falls
+/// through to software composition while still looking correct.
+///
+/// Printed because it is easy to file that as exotic. It is not: it is over
+/// half the fleet, led by the two commonest desktop drivers. amdgpu pins its
+/// primary at zpos 2 and is documented as rejecting the disable; i915 has a
+/// zpos on its primary too.
+///
+/// The count is a precondition, not an occurrence -- whether the anchor fires
+/// also depends on what the caller's layers ask for, which no dump can say.
+fn primaries_with_a_pinned_zpos(devices: &[Device]) -> Survey {
+    let mut by_driver: BTreeMap<&str, usize> = BTreeMap::new();
+    for device in devices {
+        if !device.atomic {
+            continue;
+        }
+        let has_pinned_primary = device.planes.iter().any(|plane| {
+            plane.caps.plane_type == PlaneType::Primary && plane.caps.zpos_min.is_some()
+        });
+        if has_pinned_primary {
+            *by_driver.entry(device.driver.as_str()).or_default() += 1;
+        }
+    }
+    let mut rows: Vec<(String, usize)> = by_driver
+        .into_iter()
+        .map(|(driver, count)| (driver.to_owned(), count))
+        .collect();
+    rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Survey {
+        title: "devices whose primary advertises a zpos (the P-26 precondition)".to_owned(),
+        unit: "devices",
+        note: "where the canvas reservation has to hold the primary out of the \
+               disable pass, or every test commit is refused",
         rows,
     }
 }
@@ -620,6 +677,7 @@ fn damage_clips_by_driver(devices: &[Device]) -> Survey {
     rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     Survey {
         title: "FB_DAMAGE_CLIPS by driver".to_owned(),
+        unit: "planes",
         note: "a comment in the reference names vc4 as capable; the driver \
                never attaches the property -- this is issue #255",
         rows,
@@ -642,6 +700,7 @@ fn rotation_shapes(devices: &[Device]) -> Survey {
     rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     Survey {
         title: "rotation shapes in the wild".to_owned(),
+        unit: "planes",
         note: "the allocator gates on bits, not on the property's presence, \
                because a rotatable plane that cannot do 90/270 is common",
         rows,
@@ -675,6 +734,7 @@ fn zpos_shapes(devices: &[Device]) -> Survey {
     rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     Survey {
         title: "zpos shapes".to_owned(),
+        unit: "planes",
         note: "a degenerate range that is NOT immutable is the P-6 case; \
                clamp_zpos is what keeps it from refusing the frame",
         rows,

@@ -316,6 +316,33 @@ struct LastCommitted {
 }
 
 /// Assigns layers to display planes.
+///
+/// One allocator belongs to one CRTC and is kept across frames, because most
+/// of what makes it cheap is memory of the last one. A frame goes through at
+/// most four stages, and a steady scene stops at the first:
+///
+/// 1. **The FB-only fast path.** Only framebuffer ids changed, so the kernel
+///    has already accepted this arrangement — no test commit at all. This is
+///    invariant 4, and [`Layer::property_hash`](crate::Layer::property_hash)
+///    is what makes it safe to claim.
+/// 2. **Warm start.** The layer set is unchanged but something else moved, so
+///    last frame's assignment is re-offered and validated with one test.
+/// 3. **A full search.** Bipartite matching seeds it, scored candidates order
+///    it, and backtracking drops the layer with the lowest keep-priority when
+///    the kernel refuses.
+/// 4. **Composition.** Whatever is still unplaced is handed back for the
+///    caller to blend, rather than the frame failing.
+///
+/// The search is budgeted: [`DEFAULT_MAX_TEST_COMMITS`](Self::DEFAULT_MAX_TEST_COMMITS)
+/// test commits per frame, after which it takes the best arrangement it has
+/// proved. Exhausting the budget is reported rather than hidden, because "this
+/// device is out of planes" and "raise the budget" want different answers from
+/// a caller.
+///
+/// A refusal is never treated as a defect. The kernel is the only authority on
+/// what a device can scan out simultaneously, and a `TEST_ONLY` that comes back
+/// `EINVAL` is that authority answering — which is why the allocator asks
+/// rather than predicting.
 #[derive(Debug)]
 pub struct Allocator {
     previous: PlaneAssignment,

@@ -5,6 +5,37 @@
 //!
 //! Port of `src/planes/` from drm-cxx @ `dc2915b`.
 //!
+//! Three pieces, bottom-up:
+//!
+//! - [`PlaneCapabilities`] and [`PlaneRegistry`] — what each plane on a device
+//!   can do: which CRTCs it feeds, which formats and modifiers it scans out,
+//!   whether it rotates, where its zpos may sit. Built from a device behind
+//!   the `device` feature, or from fixtures a caller supplies, which is what
+//!   lets the allocator be tested against hardware nobody has.
+//! - [`Layer`] — one thing to put on screen, as a bag of KMS properties plus
+//!   the hints that inform placement.
+//! - [`Allocator`] — which layer goes on which plane.
+//!
+//! # Why placement is a search
+//!
+//! Nothing in the kernel's uAPI answers "can these layers be scanned out
+//! together". `IN_FORMATS` prunes, `possible_crtcs` prunes, and neither
+//! settles it: bandwidth limits, scaler counts and per-driver rules decide the
+//! rest and are not advertised anywhere. The only oracle is an atomic
+//! `TEST_ONLY` commit, which costs an ioctl.
+//!
+//! So the allocator proposes and the kernel disposes, and the whole design is
+//! about proposing well enough that few proposals are needed. It seeds with a
+//! maximum bipartite matching, orders candidates by a score, backtracks by
+//! dropping the layer it can most afford to composite, and spends at most
+//! [`Allocator::DEFAULT_MAX_TEST_COMMITS`] test commits on a frame before
+//! settling for what it has. Layers that do not overlap are solved
+//! independently, so a busy corner of the screen does not make the rest of it
+//! expensive.
+//!
+//! Two caches keep the steady state near zero ioctls: a warm start that
+//! re-validates last frame's assignment, and the fast path below.
+//!
 //! # Invariant 4
 //!
 //! [`Layer::property_hash`] isolates *content* from *placement*: a frame that

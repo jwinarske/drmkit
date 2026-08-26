@@ -207,13 +207,30 @@ jobs:
           sudo ldconfig
           echo "PKG_CONFIG_PATH=/usr/local/lib/x86_64-linux-gnu/pkgconfig:/usr/local/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=/usr/local/lib/x86_64-linux-gnu:/usr/local/lib" >> "$GITHUB_ENV"
+      # What makes a 60-second run worth anything is that it starts where the
+      # last one finished. Nothing did that: fuzz/corpus is gitignored,
+      # rust-cache carries ~/.cargo and target/ but not this, and the mkdir
+      # below made a fresh empty one every time -- so every run was 60 seconds
+      # from the checked-in seeds and the word "cumulative" below described
+      # something that was not happening.
+      #
+      # Keyed by run id and restored by prefix, so each run saves its own and
+      # picks up the newest previous one. Corpora only ever grow more useful,
+      # so a stale restore is still a better start than nothing.
+      - name: restore the fuzz corpus
+        uses: actions/cache@v4
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: fuzz-corpus-
       # cargo-fuzz creates the managed corpus directory itself only when it
       # is not told which directories to use. The targets below name theirs
       # explicitly -- so that libFuzzer writes there rather than into the
-      # checked-in seeds -- which means creating them here.
+      # checked-in seeds -- which means creating them here. `mkdir -p` leaves
+      # a restored corpus alone.
       - run: mkdir -p corpus/edid_blob corpus/cursor_file
         working-directory: fuzz
-      # Short runs on every PR; the corpus is what makes them cumulative.
+      # Short runs on every PR, cumulative through the cache above.
       - run: cargo +nightly fuzz run in_formats_blob -- -max_total_time=60
         working-directory: fuzz
       # EDID arrives over a wire nobody controls and is malformed in the field

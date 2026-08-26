@@ -118,6 +118,11 @@ dependencies = [
 name = "drmkit-cursor"
 version = "0.0.0"
 dependencies = [
+ "drm",
+ "drmkit-core",
+ "drmkit-dumb",
+ "drmkit-fmt",
+ "drmkit-planes",
  "thiserror",
 ]
 
@@ -127,7 +132,22 @@ version = "0.0.0"
 dependencies = [
  "drm",
  "drmkit-core",
+ "drmkit-fmt",
+ "drmkit-modeset",
+ "drmkit-planes",
  "libdisplay-info",
+ "rustix",
+ "thiserror",
+]
+
+[[package]]
+name = "drmkit-dumb"
+version = "0.0.0"
+dependencies = [
+ "drm",
+ "drm-ffi",
+ "drmkit-core",
+ "drmkit-fmt",
  "rustix",
  "thiserror",
 ]
@@ -149,6 +169,35 @@ dependencies = [
 [[package]]
 name = "drmkit-log"
 version = "0.0.0"
+
+[[package]]
+name = "drmkit-modeset"
+version = "0.0.0"
+dependencies = [
+ "drm",
+ "drmkit-core",
+ "drmkit-time",
+ "rustix",
+ "thiserror",
+]
+
+[[package]]
+name = "drmkit-planes"
+version = "0.0.0"
+dependencies = [
+ "drm",
+ "drmkit-core",
+ "drmkit-fmt",
+ "rustix",
+ "thiserror",
+]
+
+[[package]]
+name = "drmkit-time"
+version = "0.0.0"
+dependencies = [
+ "rustix",
+]
 
 [[package]]
 name = "equivalent"

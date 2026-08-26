@@ -283,7 +283,7 @@ jobs:
   # read in a scratch test is caught as `heap-buffer-overflow` with the frame
   # named. A sanitizer lane that cannot fail is just more green.
   asan:
-    name: asan (fd-bound crates, T3)
+    name: sanitizers (T3)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -345,6 +345,28 @@ jobs:
         env:
           RUSTFLAGS: -Zsanitizer=address
           ASAN_OPTIONS: detect_leaks=0
+      # ThreadSanitizer, on the only crate that has any concurrency to observe.
+      #
+      # The plan calls TSan "interesting only where the C++ used atomics ...
+      # the Rust equivalents should reduce to Mutex/channel and mostly retire
+      # the question". Measured, that is right, and further than it claims: the
+      # three modules the C++ used atomics for are ring (no shared-state
+      # primitive at all), pool (two Mutexes) and seat (Rc/RefCell, which is
+      # not Send). No library code in this tree spawns a thread. The only
+      # atomics left are a log level and a test clock.
+      #
+      # What is left is drmkit-modeset, whose tests spawn waker threads to
+      # drive the EINTR case invariant 3 is about -- real concurrency around a
+      # descriptor, and the one place a race could hide. Seconds to check.
+      #
+      # A race exits 66 without needing halt_on_error, so the lane fails rather
+      # than printing a warning and passing; verified with a deliberate
+      # unsynchronised static.
+      - run: >
+          cargo +nightly test -p drmkit-modeset
+          -Zbuild-std --target x86_64-unknown-linux-gnu --lib
+        env:
+          RUSTFLAGS: -Zsanitizer=thread
 
   miri:
     name: miri (pure crates)

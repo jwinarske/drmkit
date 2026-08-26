@@ -109,7 +109,7 @@ by quietly doing nothing.
 | `INVARIANTS.md` (Rust) | done — six contracts, numbering and titles linted against upstream |
 | T3: Miri on the pure crates | done — and `drmkit-planes` added, which the unsafe policy named and the lane had missed |
 | T3: ASan on the fd-bound crates | done — 389 cases, including the `va_list` trampoline `docs/phase0-spikes.md` promised a run |
-| T3: TSan | **not started.** The plan calls it "interesting only where the C++ used atomics … the Rust equivalents should reduce to `Mutex`/channel and mostly retire the question" |
+| T3: TSan | done, and the plan was right about why it is small. The three modules the C++ used atomics for are `ring` (no shared-state primitive at all), `pool` (two `Mutex`es) and `seat` (`Rc`/`RefCell`, which is not `Send`); no library code here spawns a thread. What remains is `drmkit-modeset`, whose tests spawn waker threads for the `EINTR` case invariant 3 covers — the one place a race could hide, and now checked |
 | A validation process for the device pool | done — `cargo xtask validate`, capability baselines, and coverage attribution per device ([`docs/validation.md`](docs/validation.md)) |
 | The drmdb corpus as a standing check | done — five gating rules and ten surveys over ~1,200 devices, run weekly and on the pull requests that touch what it reads |
 | HIL smoke on RK3588 and VisionFive 2 | **not started.** Needs the boards |

@@ -267,6 +267,7 @@ Each was tested by breaking what it guards and confirming it goes red.
 | `cargo-deny` | Teeth. A wildcard dependency fails `bans` and exits 2. |
 | lane-health checks | **Asserted a card, not which card.** All three passed on amdgpu, while the file's own header said the point was telling vkms apart. `DRMKIT_EXPECT_DRIVER` now does. |
 | rustdoc | **Was not run at all.** `RUSTFLAGS` carries `-Dwarnings`; `RUSTDOCFLAGS` is separate and was unset, so six broken intra-doc links and an unclosed HTML tag sat unnoticed. Fixed, and now a lane. |
+| tsan lane | Teeth. A deliberate unsynchronised static is caught as `data race` with the line named, and the process exits 66 — so a race fails the lane rather than printing a warning under a green tick. |
 | asan lane | Teeth. A one-past-the-end read is caught as `heap-buffer-overflow` with the frame named. 389 cases, ~9s. `drmkit-input` runs with leak detection off — `input` leaks its boxed `libinput_interface` per context ([Smithay/input.rs#99](https://github.com/Smithay/input.rs/issues/99)) — and overflow detection was confirmed still live under that setting. |
 | allocator torture thresholds | Three pin a mechanism; `rapid_churn` pins none — see [P-14](parity-findings.md). |
 

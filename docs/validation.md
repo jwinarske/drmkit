@@ -245,6 +245,39 @@ It distinguishes *skipped elsewhere* from *not run elsewhere*. A crate that
 does not cross-build for a target never reports there, and counting that as a
 coverage risk would bury the real ones.
 
+## Whether the guards themselves have teeth
+
+Every lane here exists because something was once silently not checked. That
+makes the lanes worth the same suspicion: a guard that cannot fail is
+indistinguishable from one that passes.
+
+Each was tested by breaking what it guards and confirming it goes red.
+
+| Guard | Verdict |
+|---|---|
+| `cargo xtask parity` / `invariants` | Teeth. Dropping a mapped test file, or retitling an invariant, names the divergence and exits 1. |
+| `cargo xtask lanes` | Teeth. Removing a path the scanner reads prints the line to paste back. |
+| `cargo xtask coverage` | Teeth, after two parse bugs were fixed — see below. |
+| `DRMKIT_REQUIRE_MASTER` | Teeth. Pointed at a card a compositor holds, the cases fail instead of skipping. |
+| `DRMKIT_MIN_PLANES` | **Was measuring the wrong thing.** It counted planes on the *device*; what collapses is candidates on a *CRTC*. Fixed. |
+| cross lanes | Real. The qemu runner resolves and 1,336 cases execute under it, rather than a build that resembles a test run. |
+| miri lane | Real — 85 cases. **`drmkit-planes` was missing**, though the unsafe policy names it. Added. |
+| fuzz lane | Real, seeded, 60s per target. **The corpus was not cumulative** despite saying so. Fixed. |
+| oracle tables | Match the reference at tip. **Nothing re-ran them when the baseline moved**; `parity/oracles.sh` now does. |
+| `cargo-deny` | Teeth. A wildcard dependency fails `bans` and exits 2. |
+| allocator torture thresholds | Three pin a mechanism; `rapid_churn` pins none — see [P-14](parity-findings.md). |
+
+Two of those were only visible from outside. `DRMKIT_MIN_PLANES` looked correct
+on vkms because vkms has one CRTC with every plane on it, so the device-wide
+count and the per-CRTC count are the same number; they come apart on 859 of the
+1001 atomic devices in the corpus. And the coverage checker reported a passing
+test as coverage lost, because a log line landed mid-report and the parser was
+anchored at the start of the line.
+
+The method that found most of them: disable the mechanism a check claims to
+guard, and see whether the check notices. It is cheap, and it is the only thing
+that separates a green run from a green run that means something.
+
 ## What this does not do yet
 
 All fifteen device suites report their skips, and `cargo xtask coverage`

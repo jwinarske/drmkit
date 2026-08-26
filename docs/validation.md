@@ -189,6 +189,46 @@ planes and the budget is 16, so that case has never asserted anything here.
 Two need root. One wants a virtualized driver. None is a defect, and all four
 were previously indistinguishable from a case that ran.
 
+## What the pool covers, and what it does not
+
+One device cannot answer whether an assertion runs anywhere. `cargo xtask
+coverage --audit` reads every recorded baseline and answers it:
+
+```
+2 device(s): localhost-amdgpu (118 cases), rpi5-vc4 (97 cases)
+
+Asserted on one device and skipped on the others -- lose it and these stop running:
+  a_layer_past_the_budget_is_composited_and_says_so_vkms   only on rpi5-vc4
+  a_stage_the_crtc_has_takes_a_blob                        only on localhost-amdgpu
+  ... and the other three colour-pipeline cases
+```
+
+That is the split doing its job. vc4 has 17 planes against a budget of 16 and
+no colour pipeline at all; amdgpu has 9 planes and all three colour stages.
+Each board covers exactly what the other cannot, and a green run on either
+alone would look complete.
+
+The audit fails on the cases that assert **nowhere**:
+
+```
+  a_property_that_merely_looks_like_hotplug_is_not_one
+      localhost-amdgpu: writing /sys/class/drm/card0/uevent needs root
+  an_ordinary_drm_change_is_read_and_discarded
+      localhost-amdgpu: writing /sys/class/drm/card0/uevent needs root
+  the_hotspot_is_left_alone_until_something_is_drawn_vkms
+      localhost-amdgpu: no HOTSPOT_X (expected: not a virtualized driver)
+      rpi5-vc4:         no HOTSPOT_X (expected: not a virtualized driver)
+```
+
+Three assertions that have never checked anything. Two want a run as root; the
+third wants a virtualized driver, which vkms has and neither of these boards
+does. This is the shape [P-13](parity-findings.md) and P-14 already had —
+found by accident, months apart. Here it is a command.
+
+It distinguishes *skipped elsewhere* from *not run elsewhere*. A crate that
+does not cross-build for a target never reports there, and counting that as a
+coverage risk would bury the real ones.
+
 ## What this does not do yet
 
 All fifteen device suites report their skips, and `cargo xtask coverage`

@@ -50,6 +50,7 @@ OPTIONS:
 COVERAGE OPTIONS:
     --device=<ID>        Which device's baseline this run is measured against
     --record             Write the baseline from this run instead of checking it
+    --audit              Across every recorded baseline, which cases assert nowhere
 
     Reads a test run on stdin. How the suites reach a device is not its
     business -- locally, over ssh, or in a lane -- only whether a case that

@@ -51,6 +51,9 @@ impl Case {
 }
 
 pub(crate) fn run(options: &[String]) -> Result<(), String> {
+    if options.iter().any(|o| o == "--audit") {
+        return audit();
+    }
     let record = options.iter().any(|o| o == "--record");
     let device = options
         .iter()
@@ -287,6 +290,177 @@ fn compare(
     Err(message)
 }
 
+/// One device's recorded coverage: its id, and what each case did on it.
+type DeviceCoverage = (String, BTreeMap<String, Case>);
+
+/// Every recorded baseline, by device.
+fn load_baselines() -> Result<Vec<DeviceCoverage>, String> {
+    let root = repo_root()?;
+    let dir = root.join("validation/coverage");
+    let entries = std::fs::read_dir(&dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+
+    let mut devices: Vec<DeviceCoverage> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "json") {
+            continue;
+        }
+        let name = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        devices.push((name, parse_baseline(&text)?));
+    }
+    if devices.is_empty() {
+        return Err(format!(
+            "no coverage baselines under {}; record one with --record",
+            dir.display()
+        ));
+    }
+    devices.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(devices)
+}
+
+/// What the pool covers, split into the three answers that differ.
+struct Classified<'a> {
+    /// Every case any device reported, and what each said about it.
+    known: BTreeMap<&'a str, Vec<(&'a str, &'a str)>>,
+    /// Asserted on one device and *skipped* on another: real single coverage.
+    narrow: Vec<(&'a str, &'a str)>,
+    /// Asserted on one device and not run at all elsewhere -- the run's scope
+    /// rather than the pool's, so counted and not listed as a risk.
+    unmeasured: usize,
+    /// Skipped everywhere it was tried. These assert nothing, anywhere.
+    nowhere: Vec<&'a str>,
+}
+
+fn classify(devices: &[DeviceCoverage]) -> Classified<'_> {
+    let mut ran_somewhere: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let mut known: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new();
+    for (device, cases) in devices {
+        for (name, case) in cases {
+            known
+                .entry(name.as_str())
+                .or_default()
+                .push((device.as_str(), case.reason()));
+            if *case == Case::Ran {
+                ran_somewhere
+                    .entry(name.as_str())
+                    .or_default()
+                    .push(device.as_str());
+            }
+        }
+    }
+
+    let nowhere: Vec<&str> = known
+        .keys()
+        .copied()
+        .filter(|name| !ran_somewhere.contains_key(name))
+        .collect();
+
+    let mut narrow = Vec::new();
+    let mut unmeasured = 0;
+    for (name, on) in ran_somewhere.iter().filter(|(_, on)| on.len() == 1) {
+        // Skipped elsewhere is a real single point of coverage. Absent
+        // elsewhere -- a crate that does not cross-build for that target --
+        // is a gap in the run, and calling it a risk would cry wolf.
+        if known[name].len() > 1 {
+            narrow.push((*name, on[0]));
+        } else if devices.len() > 1 {
+            unmeasured += 1;
+        }
+    }
+
+    Classified {
+        known,
+        narrow,
+        unmeasured,
+        nowhere,
+    }
+}
+
+/// Which cases assert on no device at all.
+///
+/// The question a single device cannot answer. A case that skips on every
+/// board in the pool is an assertion that never runs anywhere -- the shape
+/// P-13 and P-14 already have, written down rather than discovered by
+/// accident a year later.
+///
+/// It reads the recorded baselines, so it describes the pool as last
+/// measured. A device whose baseline is missing is a device this cannot speak
+/// for, and it says so rather than treating absence as coverage.
+fn audit() -> Result<(), String> {
+    let devices = load_baselines()?;
+
+    let Classified {
+        known,
+        narrow,
+        unmeasured,
+        nowhere,
+    } = classify(&devices);
+
+    println!(
+        "{} device(s): {}",
+        devices.len(),
+        devices
+            .iter()
+            .map(|(name, cases): &DeviceCoverage| { format!("{name} ({} cases)", cases.len()) })
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
+    report_narrow(&narrow, unmeasured);
+
+    if nowhere.is_empty() {
+        println!(
+            "\n{} case(s) known, every one of them asserted on some device",
+            known.len()
+        );
+        return Ok(());
+    }
+
+    let mut message = String::from("assertions that run on no device in the pool\n");
+    for name in &nowhere {
+        let _ = write!(message, "\n  {name}");
+        for (device, why) in &known[name] {
+            let _ = write!(message, "\n      {device}: {why}");
+        }
+    }
+    let _ = write!(
+        &mut message,
+        "\n\nEach of these is a case that has never checked anything. Either the \
+         pool is\nmissing the hardware it needs -- add it to \
+         validation/devices.toml and record a\nrun -- or the case is asserting \
+         something no device does, which is a finding\nabout the case rather \
+         than about the hardware."
+    );
+    Err(message)
+}
+
+/// Say which cases rest on a single device, and how many were simply not run.
+fn report_narrow(narrow: &[(&str, &str)], unmeasured: usize) {
+    if !narrow.is_empty() {
+        println!(
+            "\nAsserted on one device and skipped on the others -- lose it and \
+             these stop running:"
+        );
+        for (name, device) in narrow {
+            println!("  {name}\n      only on {device}");
+        }
+    }
+    if unmeasured > 0 {
+        println!(
+            "\n{unmeasured} case(s) ran on one device and were not run at all \
+             on the others.\nThat is the run's scope, not the pool's: a crate \
+             that does not cross-build\nfor a target never reports there. Run \
+             `--audit` again once every device has\na baseline covering the \
+             same crates."
+        );
+    }
+}
+
 fn repo_root() -> Result<PathBuf, String> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest_dir
@@ -363,6 +537,77 @@ test a_second_case ... ok
         );
         let back = parse_baseline(&render(&cases)).expect("round trip");
         assert_eq!(back["a_case"].reason(), "no \"HOTSPOT_X\" here");
+    }
+
+    fn device(id: &str, cases: &[(&str, &str)]) -> super::DeviceCoverage {
+        let mut map = std::collections::BTreeMap::new();
+        for (name, reason) in cases {
+            let case = if *reason == "ran" {
+                Case::Ran
+            } else {
+                Case::Skipped((*reason).to_owned())
+            };
+            map.insert((*name).to_owned(), case);
+        }
+        (id.to_owned(), map)
+    }
+
+    /// The question a single device cannot answer.
+    #[test]
+    fn a_case_skipped_on_every_device_asserts_nowhere() {
+        let pool = vec![
+            device("board-a", &[("a_case", "no HOTSPOT_X here")]),
+            device("board-b", &[("a_case", "no HOTSPOT_X here")]),
+        ];
+        let found = super::classify(&pool);
+        assert_eq!(found.nowhere, vec!["a_case"]);
+    }
+
+    #[test]
+    fn a_case_that_asserts_on_one_device_asserts_somewhere() {
+        let pool = vec![
+            device("board-a", &[("a_case", "ran")]),
+            device("board-b", &[("a_case", "no gamma stage")]),
+        ];
+        let found = super::classify(&pool);
+        assert!(found.nowhere.is_empty(), "one device is enough");
+        assert_eq!(
+            found.narrow,
+            vec![("a_case", "board-a")],
+            "and it rests on that one device"
+        );
+    }
+
+    /// The distinction that keeps the narrow list from crying wolf: a crate
+    /// that does not cross-build for a target never reports there at all, and
+    /// that is the run's scope rather than a coverage risk.
+    #[test]
+    fn a_case_absent_elsewhere_is_unmeasured_not_narrow() {
+        let pool = vec![
+            device("board-a", &[("a_case", "ran"), ("shared", "ran")]),
+            device("board-b", &[("shared", "ran")]),
+        ];
+        let found = super::classify(&pool);
+        assert!(
+            found.narrow.is_empty(),
+            "board-b never ran it, which is not the same as skipping it"
+        );
+        assert_eq!(found.unmeasured, 1);
+        assert!(found.nowhere.is_empty());
+    }
+
+    /// A case every device asserts is neither at risk nor missing.
+    #[test]
+    fn a_case_asserted_everywhere_raises_nothing() {
+        let pool = vec![
+            device("board-a", &[("a_case", "ran")]),
+            device("board-b", &[("a_case", "ran")]),
+        ];
+        let found = super::classify(&pool);
+        assert!(found.nowhere.is_empty());
+        assert!(found.narrow.is_empty());
+        assert_eq!(found.unmeasured, 0);
+        assert_eq!(found.known.len(), 1);
     }
 
     #[test]

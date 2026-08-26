@@ -1,0 +1,14 @@
+opaque_over_opaque                 FFFF0000 FFFF0000
+transparent_over_opaque            FF0000FF FF0000FF
+half_alpha_over_opaque             FF80007F FF80007F
+alpha_33_over_opaque               FF3300CC FF3300CC
+alpha_cc_over_grey                 FF1AE61A FF1AE61A
+xrgb_padding_ignored               FFFF0000 FFFF0000
+plane_alpha_8000                   80808080 80808080
+plane_alpha_ffff                   FFABCDEF FFABCDEF
+plane_alpha_4000_on_half           20100804 20100804
+negative_dst_x                     FFFF0000 FFFF0000 00000000 00000000
+offscreen_dst                      FF0000FF FF0000FF
+scale_up_2_to_4                    FF112233 FF112233 FF112233 FF112233
+scale_down_4_to_2                  FF445566 FF445566
+src_rect_offset                    FF778899 FF778899

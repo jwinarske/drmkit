@@ -120,6 +120,22 @@ saying it was generated rather than derived. Do not regenerate it to make a
 failing test pass — a changed vector means the two implementations have parted
 company, which is the finding.
 
+A baked table cannot notice the reference changing underneath it, though. The
+Rust tests go on passing against numbers the reference has stopped producing,
+and nothing says so. So the answers are recorded in `oracle-expected/` as well,
+and
+
+```sh
+DRM_CXX=/path/to/drm-cxx parity/oracles.sh
+```
+
+rebuilds all four against that checkout and diffs. Run it when adopting a new
+baseline — that is the moment the reference moves and the tables do not.
+
+A difference is not a thing to regenerate away. It says the reference's maths
+changed: work out whether the Rust tables should follow, and change both
+deliberately or neither.
+
 ## The corpus
 
 The plan names four required scenarios; all four are here, alongside three

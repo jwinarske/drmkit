@@ -1,0 +1,8 @@
+name        Dell Inc. DELL
+make        Dell Inc.
+model       DELL
+serial      FOOBAR
+size_mm     520 x 320
+primaries   has=1 white=1 r=0.639648,0.330078 g=0.299805,0.599609 b=0.150391,0.059570 w=0.313477,0.329102
+hdr         present
+wide_gamut  present

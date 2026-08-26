@@ -328,6 +328,7 @@ dependencies = [
  "drmkit-modeset",
  "drmkit-planes",
  "drmkit-scene",
+ "drmkit-scene-sources",
  "drmkit-testkit",
  "thiserror",
 ]
@@ -371,6 +372,7 @@ dependencies = [
  "drmkit-cursor",
  "drmkit-dumb",
  "drmkit-fmt",
+ "drmkit-gbm",
  "drmkit-scene",
  "drmkit-sync",
  "drmkit-testkit",

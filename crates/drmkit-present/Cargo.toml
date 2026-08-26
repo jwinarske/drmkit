@@ -30,6 +30,9 @@ device = [
     "dep:drm",
     "dep:drmkit-modeset",
 ]
+# A GBM-backed producer. Separate from `device` because it links libgbm, which
+# a CPU-only consumer of the dumb path has no reason to pull in.
+gbm = ["device", "dep:drmkit-scene-sources", "drmkit-scene-sources/gbm"]
 
 [dependencies]
 # Modifier classification and the rotation pre-filter the negotiator applies.
@@ -43,6 +46,7 @@ drmkit-dumb = { workspace = true, optional = true }
 drmkit-scene = { workspace = true, optional = true }
 drmkit-planes = { workspace = true, optional = true }
 drmkit-modeset = { workspace = true, optional = true }
+drmkit-scene-sources = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Device cases report which card they ran on and when they bailed.

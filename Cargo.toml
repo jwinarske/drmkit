@@ -48,6 +48,7 @@ categories = ["graphics", "os::linux-apis", "no-std"]
 [workspace.dependencies]
 drmkit-core = { version = "0.0.0", path = "crates/drmkit-core" }
 drmkit-dumb = { version = "0.0.0", path = "crates/drmkit-dumb" }
+drmkit-gbm = { version = "0.0.0", path = "crates/drmkit-gbm" }
 drmkit-capture = { version = "0.0.0", path = "crates/drmkit-capture" }
 drmkit-cursor = { version = "0.0.0", path = "crates/drmkit-cursor" }
 drmkit-testkit = { version = "0.0.0", path = "crates/drmkit-testkit" }

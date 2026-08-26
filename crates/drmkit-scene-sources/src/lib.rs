@@ -12,6 +12,8 @@ mod cache;
 mod cursor;
 mod dumb;
 mod external;
+#[cfg(feature = "gbm")]
+mod gbm;
 mod pool;
 mod presenter;
 mod ring;
@@ -20,6 +22,8 @@ pub use cache::DmaBufSourceCache;
 pub use cursor::CursorSource;
 pub use dumb::DumbBufferSource;
 pub use external::{ExternalDmaBufSource, ExternalError, ExternalPlane};
+#[cfg(feature = "gbm")]
+pub use gbm::{GbmBufferSource, GbmSourceError};
 pub use pool::ExternalDmaBufPool;
 pub use presenter::{Acquired, MAX_DAMAGE, Present, RingPresenter, SlotKey};
 pub use ring::{ExternalDmaBufRing, OnRelease};

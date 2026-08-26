@@ -1428,3 +1428,105 @@ fn a_paused_pool_forgets_its_imports() {
     );
     assert!(matches!(pool.acquire(), Err(SourceError::WouldBlock)));
 }
+
+// --- GbmBufferSource ---------------------------------------------------------
+
+/// A GBM allocation becomes a framebuffer the scene can submit.
+///
+/// The path this covers is the one that carries the modifier: the buffer goes
+/// to KMS as a DMA-BUF import, so a tiled or compressed allocation arrives at
+/// `add_planar_framebuffer` described as what it is. On vkms everything is
+/// linear, so what is pinned here is that the export-import round trip works
+/// at all and reports the shape it was asked for.
+#[cfg(feature = "gbm")]
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_gbm_allocation_becomes_a_submittable_framebuffer_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+
+    let mut source = match crate::GbmBufferSource::create(&device, 64, 64, XRGB8888, &[0]) {
+        Ok(source) => source,
+        Err(error) => {
+            println!("note: skipped -- no GBM allocation on this card ({error})");
+            return;
+        }
+    };
+
+    let format = LayerBufferSource::format(&source);
+    assert_eq!(format.width, 64);
+    assert_eq!(format.height, 64);
+    assert_eq!(format.fourcc, XRGB8888);
+
+    let fb_id = source.fb_id().expect("the import registered a framebuffer");
+    assert_ne!(fb_id, 0, "a zero fb_id is what the scene skips writing");
+
+    let acquired = source.acquire().expect("acquire");
+    assert_eq!(
+        acquired.fb_id, fb_id,
+        "a single-buffer source hands out the framebuffer it registered"
+    );
+    source.release(acquired);
+}
+
+/// The source reports the modifier the allocation actually has.
+///
+/// Not the one that was requested: a driver with no constrained entry point
+/// falls back to an unconstrained allocation, and a framebuffer registered
+/// with a modifier the buffer does not have is one the kernel either refuses
+/// or -- worse -- accepts and scans out as garbage.
+#[cfg(feature = "gbm")]
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn the_reported_modifier_is_the_one_the_buffer_has_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+
+    let source = match crate::GbmBufferSource::create(&device, 64, 64, XRGB8888, &[0]) {
+        Ok(source) => source,
+        Err(error) => {
+            println!("note: skipped -- no GBM allocation on this card ({error})");
+            return;
+        }
+    };
+
+    assert_eq!(
+        LayerBufferSource::format(&source).modifier,
+        source.buffer().modifier(),
+        "the framebuffer describes the layout the allocation reports"
+    );
+}
+
+/// Composition reaches this source through its DMA-BUF, not a CPU map.
+///
+/// A GBM buffer may be tiled or device-local, so `map` is correctly
+/// unsupported -- and a source that only said that would be uncompositable,
+/// blanking its layer whenever the allocator could not place it. The export is
+/// what keeps it rescuable.
+#[cfg(feature = "gbm")]
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_gbm_source_is_compositable_through_its_dma_buf_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+
+    let mut source = match crate::GbmBufferSource::create(&device, 64, 64, XRGB8888, &[0]) {
+        Ok(source) => source,
+        Err(error) => {
+            println!("note: skipped -- no GBM allocation on this card ({error})");
+            return;
+        }
+    };
+
+    assert!(
+        matches!(
+            source.map(drmkit_dumb::MapAccess::Read),
+            Err(SourceError::Unsupported)
+        ),
+        "a GBM allocation has no meaningful CPU view to hand back"
+    );
+    assert!(
+        source.export_dma_buf().is_ok(),
+        "so the DMA-BUF export is the only thing keeping the layer compositable"
+    );
+}

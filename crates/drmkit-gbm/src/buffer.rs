@@ -66,6 +66,54 @@ impl GbmBuffer {
         Ok(Self { inner })
     }
 
+    /// Allocate a scanout-capable buffer, constrained to `modifiers`.
+    ///
+    /// The driver picks one of them and reports which through
+    /// [`modifier`](Self::modifier). Constraining matters when the display
+    /// engine and the GPU disagree about layouts: left to itself the driver
+    /// picks what renders fastest, which on a tiling GPU is a layout no plane
+    /// can scan out, and the failure then surfaces at commit time as a rejected
+    /// framebuffer rather than here.
+    ///
+    /// An empty list means "no constraint" and falls back to
+    /// [`create`](Self::create). So does a driver with no
+    /// `gbm_bo_create_with_modifiers2`: the caller gets a buffer whose
+    /// `modifier` may be outside the list it asked for, which is why the
+    /// modifier is worth reading back rather than assumed.
+    ///
+    /// # Errors
+    ///
+    /// [`GbmError::Allocation`] if the driver refuses the format, the size, or
+    /// every modifier offered.
+    pub fn create_with_modifiers(
+        device: &GbmDevice,
+        width: u32,
+        height: u32,
+        fourcc: u32,
+        modifiers: &[u64],
+    ) -> Result<Self, GbmError> {
+        if modifiers.is_empty() {
+            return Self::create(device, width, height, fourcc);
+        }
+        let format = gbm::Format::try_from(fourcc)
+            .map_err(|_| GbmError::Allocation(format!("unsupported format {fourcc:#x}")))?;
+        let result = device.raw().create_buffer_object_with_modifiers2::<()>(
+            width,
+            height,
+            format,
+            modifiers.iter().copied().map(gbm::Modifier::from),
+            gbm::BufferObjectFlags::SCANOUT | gbm::BufferObjectFlags::RENDERING,
+        );
+        match result {
+            Ok(inner) => Ok(Self { inner }),
+            // Not every driver implements the modifier entry point, and a
+            // build against an older libgbm has no symbol to call. Falling
+            // back is what keeps this usable there; reading the modifier back
+            // is what keeps it honest.
+            Err(_) => Self::create(device, width, height, fourcc),
+        }
+    }
+
     /// Width in pixels.
     #[must_use]
     pub fn width(&self) -> u32 {

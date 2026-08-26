@@ -17,10 +17,17 @@ drmkit-core = { workspace = true }
 drmkit-cursor = { workspace = true }
 drmkit-fmt = { workspace = true }
 drmkit-dumb = { workspace = true }
+drmkit-gbm = { workspace = true, optional = true }
 drmkit-scene = { workspace = true }
 drmkit-sync = { workspace = true }
 rustix = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
+
+[features]
+default = []
+# A scanout source backed by a GBM allocation. Optional because it pulls in
+# libgbm, which a CPU-only consumer has no reason to link.
+gbm = ["dep:drmkit-gbm"]
 
 [dev-dependencies]
 # Device cases report when they bail without asserting.

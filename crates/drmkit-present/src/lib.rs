@@ -30,7 +30,11 @@ mod dumb_ring;
 #[cfg(feature = "device")]
 mod dumb_sink;
 mod frame_economy;
+#[cfg(feature = "gbm")]
+mod gbm_producer;
 mod negotiate;
+#[cfg(feature = "device")]
+mod producer;
 #[cfg(feature = "device")]
 mod scanout_format;
 
@@ -40,7 +44,11 @@ pub use dumb_ring::{DumbRingSource, PaintError};
 #[cfg(feature = "device")]
 pub use dumb_sink::{Config, DumbScanoutSink, PresentError};
 pub use frame_economy::{FrameAction, FrameEconomy};
+#[cfg(feature = "gbm")]
+pub use gbm_producer::GbmScanoutProducer;
 pub use negotiate::{negotiate, negotiate_for_format};
+#[cfg(feature = "device")]
+pub use producer::{ProducerError, ScanoutProducer};
 #[cfg(feature = "device")]
 pub use scanout_format::{DEFAULT_PREFERENCE, negotiate_scanout_format};
 

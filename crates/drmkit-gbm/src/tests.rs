@@ -152,3 +152,71 @@ fn an_unknown_format_is_refused() {
         "a format no driver knows must be refused at allocation"
     );
 }
+
+/// A constrained allocation comes back in a modifier from the list.
+///
+/// vkms allocates linear, and `LINEAR` is what the list asks for, so this
+/// confirms the constrained path reaches the driver and returns something
+/// usable rather than that the constraint was honoured against an alternative
+/// -- vkms has no second layout to pick.
+#[test]
+fn a_constrained_allocation_comes_back_in_a_listed_modifier() {
+    const LINEAR: u64 = 0;
+
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let gbm = GbmDevice::new(&device).expect("gbm device");
+    let buffer = GbmBuffer::create_with_modifiers(&gbm, 64, 64, fourcc::ARGB8888, &[LINEAR])
+        .expect("allocate LINEAR");
+
+    assert_eq!(
+        buffer.modifier(),
+        LINEAR,
+        "the driver was offered one layout and reported another"
+    );
+    assert_eq!(buffer.width(), 64);
+    assert_eq!(buffer.height(), 64);
+    assert!(buffer.stride() >= 64 * 4);
+}
+
+/// An empty list means "no constraint", not "no modifier is acceptable".
+///
+/// The distinction matters at the call site: `ScanoutBackend` reaches the
+/// empty case whenever no plane exposes `IN_FORMATS`, and refusing there would
+/// turn a driver that simply does not advertise layouts into one that cannot
+/// allocate at all.
+#[test]
+fn an_empty_modifier_list_allocates_rather_than_refusing() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let gbm = GbmDevice::new(&device).expect("gbm device");
+
+    let constrained = GbmBuffer::create_with_modifiers(&gbm, 64, 64, fourcc::ARGB8888, &[])
+        .expect("an empty list is no constraint");
+    let plain = GbmBuffer::create(&gbm, 64, 64, fourcc::ARGB8888).expect("allocate");
+
+    assert_eq!(
+        constrained.modifier(),
+        plain.modifier(),
+        "an empty list must take the same path as an unconstrained allocation"
+    );
+}
+
+/// A format the driver cannot allocate is refused on the constrained path too.
+///
+/// The fallback inside `create_with_modifiers` swallows the modifier attempt's
+/// error by design; it must not swallow this one, or an unsupported format
+/// would surface at commit time instead.
+#[test]
+fn an_unknown_format_is_refused_on_the_constrained_path() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let gbm = GbmDevice::new(&device).expect("gbm device");
+
+    let refused = GbmBuffer::create_with_modifiers(&gbm, 64, 64, 0xDEAD_BEEF, &[0]);
+
+    assert!(
+        matches!(refused, Err(GbmError::Allocation(_))),
+        "the modifier fallback must not turn an unsupported format into a buffer"
+    );
+}

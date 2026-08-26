@@ -401,6 +401,102 @@ fn external_create_rejects_unusable_shapes_vkms() {
     ));
 }
 
+/// More planes than any format has.
+///
+/// The array the handles go into is fixed at four, so a fifth would write past
+/// it if the count were not checked -- and four is the kernel's own limit, so
+/// nothing legitimate is being turned away.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn external_create_rejects_more_planes_than_a_format_can_have_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let fd = placeholder_fd();
+    let five: Vec<ExternalPlane<'_>> = (0..5).map(|_| plane(&fd)).collect();
+
+    assert!(matches!(
+        ExternalDmaBufSource::create(&device, external_format(), &five, None),
+        Err(ExternalError::Invalid { .. })
+    ));
+
+    // Four is accepted by the shape check -- it may still fail later on the
+    // import, which is a different answer and the point of the distinction.
+    let four: Vec<ExternalPlane<'_>> = (0..4).map(|_| plane(&fd)).collect();
+    assert!(
+        !matches!(
+            ExternalDmaBufSource::create(&device, external_format(), &four, None),
+            Err(ExternalError::Invalid { .. })
+        ),
+        "four planes is a shape the kernel allows"
+    );
+}
+
+/// Multi-plane layouts pass validation.
+///
+/// The reference makes this point by handing `create` a device built from fd
+/// -1 and asserting the error is `bad_file_descriptor` rather than
+/// `invalid_argument` -- the layout was accepted, and the failure came from
+/// the device. Here a `&Device` is a live DRM device by construction, so the
+/// same distinction is drawn from the other side: whatever these do, they must
+/// not come back `Invalid`, because that would mean the shape was rejected.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn external_create_accepts_multi_plane_layouts_vkms() {
+    const W: u32 = 64;
+    const H: u32 = 64;
+
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let fd = placeholder_fd();
+
+    let at = |offset: u32, pitch: u32| ExternalPlane {
+        fd: fd.as_fd(),
+        offset,
+        pitch,
+    };
+
+    // NV12: an 8bpp Y plane and an interleaved 8bpp chroma plane after it.
+    let nv12 = [at(0, W), at(W * H, W)];
+    // YUV420: Y, then two half-width chroma planes.
+    let yuv420 = [
+        at(0, W),
+        at(W * H, W / 2),
+        at(W * H + (W / 2) * (H / 2), W / 2),
+    ];
+    // A tiled single-plane layout -- the modifier must not make the shape
+    // check reject it.
+    let tiled = [at(0, W * 4)];
+
+    let cases: [(&str, u32, u64, &[ExternalPlane<'_>]); 3] = [
+        ("NV12", drmkit_fmt::fourcc::NV12, 0, &nv12),
+        ("YUV420", drmkit_fmt::fourcc::YUV420, 0, &yuv420),
+        (
+            "tiled XRGB8888",
+            XRGB8888,
+            // An arbitrary vendor modifier: what matters is that it is not
+            // LINEAR and does not change the shape check's answer.
+            0x0100_0000_0000_0002,
+            &tiled,
+        ),
+    ];
+
+    for (what, fourcc, modifier, planes) in cases {
+        let format = SourceFormat {
+            fourcc,
+            modifier,
+            width: W,
+            height: H,
+        };
+        assert!(
+            !matches!(
+                ExternalDmaBufSource::create(&device, format, planes, None),
+                Err(ExternalError::Invalid { .. })
+            ),
+            "{what} is a valid layout and must not be rejected as malformed"
+        );
+    }
+}
+
 /// A failed create must **not** fire the release callback: the caller still
 /// owns the upstream buffer and will re-queue or drop it themselves. Firing
 /// would re-queue a buffer the caller has not finished with.

@@ -131,6 +131,38 @@ pub(crate) fn run(options: &[String]) -> Result<(), String> {
     compare(device, &baseline, &observed)
 }
 
+/// The case name from a `test <name> ... ` report, wherever it sits.
+///
+/// A name is a Rust path, so it has no spaces; that is what tells a real
+/// report from the words "test " appearing in prose. Scans every candidate
+/// rather than the first, since the line may open with something else
+/// entirely.
+fn test_report(line: &str) -> Option<String> {
+    let mut from = 0;
+    while let Some(at) = line[from..].find("test ") {
+        let start = from + at + "test ".len();
+        from = start;
+        let Some(end) = line[start..].find(" ... ") else {
+            continue;
+        };
+        // The harness annotates a `#[should_panic]` case as
+        // `test <name> - should panic ... ok`. That is the harness talking
+        // about the case, not part of its name, and carrying it into the
+        // baseline makes the identity depend on an attribute.
+        let name = line[start..start + end]
+            .strip_suffix(" - should panic")
+            .unwrap_or(&line[start..start + end]);
+        // A name is a Rust path, so it has no spaces left once the annotation
+        // is off. This is what separates a report from the words "test "
+        // appearing in prose.
+        if name.is_empty() || name.contains(char::is_whitespace) {
+            continue;
+        }
+        return Some(name.rsplit("::").next().unwrap_or(name).to_owned());
+    }
+    None
+}
+
 /// The card and driver a run announced, if it announced one.
 ///
 /// Recorded in the baseline under a key no case name can collide with, since
@@ -152,14 +184,22 @@ fn parse(input: &str) -> BTreeMap<String, Case> {
     let mut cases: BTreeMap<String, Case> = BTreeMap::new();
 
     for line in input.lines() {
-        // `test <name> ... ok`. The name may carry a module path.
-        if let Some(rest) = line.trim_start().strip_prefix("test ")
-            && let Some(name) = rest.split(" ... ").next()
-            && rest.contains(" ... ")
-            && !name.is_empty()
-        {
-            let name = name.rsplit("::").next().unwrap_or(name);
-            cases.entry(name.to_owned()).or_insert(Case::Ran);
+        // `test <name> ... ok`, found anywhere in the line rather than at its
+        // start.
+        //
+        // Under `--nocapture` the harness's own output and the library's log
+        // share a descriptor with no locking between them, so a log line lands
+        // mid-report:
+        //
+        //     [drm:test tests::a_resume_without_a_pause_changes_nothing ... ok
+        //
+        // That is a real line from the vkms lane. Anchored at the start it
+        // parses as nothing, the case vanishes from the run, and the check
+        // calls it coverage lost -- a false failure about a test that ran and
+        // passed. Same lesson as the skip marker, which was already unanchored
+        // for the progress dots.
+        if let Some(name) = test_report(line) {
+            cases.entry(name).or_insert(Case::Ran);
         }
 
         // Not anchored at the line start on purpose: the harness prints its
@@ -656,6 +696,51 @@ test a_second_case ... ok
         );
         let back = parse_baseline(&render(&cases)).expect("round trip");
         assert_eq!(back["a_case"].reason(), "no \"HOTSPOT_X\" here");
+    }
+
+    /// A log line landing mid-report must not lose the case.
+    ///
+    /// Verbatim from the vkms lane, where it made the check report a passing
+    /// test as coverage lost and failed the run.
+    #[test]
+    fn a_test_report_interleaved_with_a_log_line_is_still_read() {
+        let cases = parse("[drm:test tests::a_resume_without_a_pause_changes_nothing ... ok\n");
+        assert!(
+            cases.contains_key("a_resume_without_a_pause_changes_nothing"),
+            "got {:?}",
+            cases.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// The harness's `should panic` annotation is not part of the name.
+    #[test]
+    fn a_should_panic_case_is_named_without_the_annotation() {
+        let cases = parse("test tests::a_case_that_panics - should panic ... ok\n");
+        assert!(
+            cases.contains_key("a_case_that_panics"),
+            "got {:?}",
+            cases.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// The words "test " in ordinary output are not a report.
+    #[test]
+    fn prose_mentioning_a_test_is_not_mistaken_for_one() {
+        let cases = parse("note: this test ... is not a report\n");
+        assert!(
+            cases.is_empty(),
+            "got {:?}",
+            cases.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// A line that opens with junk and then carries a real report yields the
+    /// report, not the junk.
+    #[test]
+    fn a_report_after_unrelated_text_is_found() {
+        let cases = parse("[drm:info] whatever test tests::a_case ... ok\n");
+        assert_eq!(cases.len(), 1);
+        assert!(cases.contains_key("a_case"));
     }
 
     /// The card a run used is not in its name, and used not to be anywhere.

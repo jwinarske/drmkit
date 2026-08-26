@@ -38,7 +38,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_capture_jpg.cpp` | _drmkit-capture_ (phase 6+) | pending |  |
 | `tests/unit/test_capture_snapshot.cpp` | `drmkit-capture` `image.rs`, `png.rs`, `snapshot.rs` | ported | The four `Image` cases and both PNG cases, plus the blend arithmetic, the placement arithmetic (clipping, negative offsets, stride padding, scaling) and `RGB565`, none of which the C++ suite reaches. `snapshot` itself gets a device lane the C++ has none of |
 | `tests/unit/test_color_pipeline_curves.cpp` | `drmkit-display` `curves.rs` | ported | All twenty-four: transfer functions, S31.32 sign-magnitude encoding, LUT quantization, the LUT and matrix builders, and the two spec anchor points that say the PQ curve is that curve rather than merely monotonic. Plus a check that the two gamut matrices multiply to the identity, which upstream tests one direction of |
-| `tests/unit/test_commit_report.cpp` | _drmkit-scene_ (phase 3) | pending |  |
+| `tests/unit/test_commit_report.cpp` | `drmkit-scene` `report.rs` | ported | All three. The stale-handle case is stronger here than upstream's: a recycled slot yields a different `LayerId` because the generation is packed into it, so the miss is structural rather than a comparison that could be forgotten |
 | `tests/unit/test_composite_canvas.cpp` | `drmkit-scene` `canvas.rs`, `tests/canvas_oracle.rs`, `tests/canvas_surface_vkms.rs`, `tests/composition_vkms.rs` | ported | Blend diffed against the reference's own output; surface and scene integration pinned against a device. Multi-canvas and the primary-anchor reservation are not ported |
 | `tests/unit/test_connector_capabilities.cpp` | `drmkit-display` `capabilities.rs` | ported | All six, against a synthetic connector shaped like the amdgpu one this was measured on. Plus device cases upstream has none of: the probe is diffed against a raw read of the same property set, on vkms and on amdgpu |
 | `tests/unit/test_csd_animator.cpp` | _drmkit-csd_ (phase 6+) | pending |  |
@@ -80,7 +80,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_matching.cpp` | `drmkit-planes` | ported |  |
 | `tests/unit/test_mode.cpp` | `drmkit-modeset` `src/tests.rs` | ported |  |
 | `tests/unit/test_mode_list.cpp` | `drmkit-display` `modes.rs` | ported | Both cases, widened from the five connector types upstream checks to all twenty-one, against the names `drmModeGetConnectorTypeName` actually returns -- which is how the `S-Video` drift showed up ([drm-cxx#250](https://github.com/jwinarske/drm-cxx/issues/250)). Plus device cases upstream has none of: the listing diffed against `/sys/class/drm`, on vkms and on amdgpu |
-| `tests/unit/test_negotiate.cpp` | _drmkit-scene_ (phase 3) | pending |  |
+| `tests/unit/test_negotiate.cpp` | _drmkit-present_ (phase 6+) | pending | Filed under `drmkit-scene` until 2026-08-25; it tests `drm::present::negotiate`, which lives in `src/present/`, so it belongs to the present spine and not to the minimal cut |
 | `tests/unit/test_output.cpp` | `drmkit-planes` | ported |  |
 | `tests/unit/test_output_signaling.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/unit/test_page_flip.cpp` | `drmkit-modeset` `src/tests.rs` | ported | 3 |

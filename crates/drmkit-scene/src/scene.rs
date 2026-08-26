@@ -55,6 +55,17 @@ impl LayerHandle {
     }
 }
 
+impl From<LayerHandle> for LayerId {
+    /// The same packing [`LayerHandle::layer_id`] does.
+    ///
+    /// Here as well so anything taking a layer's identity can accept either,
+    /// which is what lets a report be queried with a handle by a caller and
+    /// with a bare id by a test that has no scene to get a handle from.
+    fn from(handle: LayerHandle) -> Self {
+        handle.layer_id()
+    }
+}
+
 /// A layer's live scene state.
 pub struct SceneLayer {
     source: Box<dyn LayerBufferSource>,

@@ -161,6 +161,32 @@ pub struct CommitReport {
 }
 
 impl CommitReport {
+    /// What became of one layer this commit.
+    ///
+    /// `None` when the layer was not in the frame at all -- it was never
+    /// added, it was removed, or the handle is stale. A stale one cannot
+    /// match by accident: [`LayerHandle::layer_id`](crate::LayerHandle::layer_id)
+    /// packs the slot's generation, so a recycled slot yields a different id
+    /// and a handle to the layer that used to live there resolves to nothing.
+    #[must_use]
+    pub fn placement_of(&self, layer: impl Into<LayerId>) -> Option<&LayerPlacement> {
+        let id = layer.into();
+        self.placements.iter().find(|entry| entry.layer == id)
+    }
+
+    /// Whether the layer went into the canvas rather than onto a plane of its
+    /// own.
+    ///
+    /// False for a layer that was dropped as well as for one that got a
+    /// plane: composited means it reached the screen the slow way, and
+    /// unassigned means it did not reach the screen at all. A caller
+    /// throttling its repaints on this distinction wants them separated.
+    #[must_use]
+    pub fn was_composited(&self, layer: impl Into<LayerId>) -> bool {
+        self.placement_of(layer)
+            .is_some_and(|entry| entry.placement == Placement::Composited)
+    }
+
     /// Whether the layer tallies add up to [`layers_total`](Self::layers_total).
     ///
     /// The C++ states this as a comment on the field. Making it checkable means
@@ -180,5 +206,99 @@ impl CommitReport {
     #[must_use]
     pub const fn fast_path_consistent(&self) -> bool {
         !self.fb_delta_fast_path || self.test_commits_issued == 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CommitReport, LayerPlacement, Placement};
+    use drmkit_planes::LayerId;
+
+    /// A report with one layer of each outcome.
+    fn report() -> CommitReport {
+        CommitReport {
+            placements: vec![
+                LayerPlacement {
+                    layer: LayerId(1),
+                    placement: Placement::AssignedToPlane,
+                    plane_id: Some(31),
+                    plane_rotation_bits: 0,
+                },
+                LayerPlacement {
+                    layer: LayerId(2),
+                    placement: Placement::Composited,
+                    plane_id: Some(42),
+                    plane_rotation_bits: 0,
+                },
+                LayerPlacement {
+                    layer: LayerId(3),
+                    placement: Placement::Unassigned,
+                    plane_id: None,
+                    plane_rotation_bits: 0,
+                },
+            ],
+            ..CommitReport::default()
+        }
+    }
+
+    #[test]
+    fn each_outcome_is_found_with_the_plane_it_landed_on() {
+        let report = report();
+
+        let assigned = report.placement_of(LayerId(1)).expect("assigned");
+        assert_eq!(assigned.placement, Placement::AssignedToPlane);
+        assert_eq!(assigned.plane_id, Some(31));
+
+        // A composited layer names the *canvas* plane, not one of its own --
+        // a caller reading this as "the layer got plane 42" would think it had
+        // a plane it does not have.
+        let composited = report.placement_of(LayerId(2)).expect("composited");
+        assert_eq!(composited.placement, Placement::Composited);
+        assert_eq!(composited.plane_id, Some(42));
+
+        let dropped = report.placement_of(LayerId(3)).expect("unassigned");
+        assert_eq!(dropped.placement, Placement::Unassigned);
+        assert_eq!(dropped.plane_id, None, "it reached no plane at all");
+    }
+
+    #[test]
+    fn a_layer_that_was_not_in_the_frame_has_no_placement() {
+        assert!(report().placement_of(LayerId(4)).is_none());
+        assert!(CommitReport::default().placement_of(LayerId(1)).is_none());
+    }
+
+    #[test]
+    fn a_recycled_slot_does_not_answer_for_the_layer_that_left_it() {
+        // The identity a handle resolves to packs the slot's generation, so
+        // the layer that took a freed slot has a different id and a stale
+        // handle finds nothing. Without that, a caller holding a handle to a
+        // removed layer would read the new occupant's outcome as its own.
+        let slot_1_generation_1 = LayerId((1 << 32) | 1);
+        let slot_1_generation_2 = LayerId((1 << 32) | 2);
+        assert_ne!(slot_1_generation_1, slot_1_generation_2);
+
+        let report = CommitReport {
+            placements: vec![LayerPlacement {
+                layer: slot_1_generation_2,
+                placement: Placement::AssignedToPlane,
+                plane_id: Some(31),
+                plane_rotation_bits: 0,
+            }],
+            ..CommitReport::default()
+        };
+        assert!(report.placement_of(slot_1_generation_2).is_some());
+        assert!(report.placement_of(slot_1_generation_1).is_none());
+    }
+
+    #[test]
+    fn only_a_composited_layer_was_composited() {
+        let report = report();
+        assert!(!report.was_composited(LayerId(1)), "it got a plane");
+        assert!(report.was_composited(LayerId(2)));
+        // Dropped is not composited: it never reached the screen, and a
+        // caller treating the two alike would stop repainting a layer nobody
+        // can see.
+        assert!(!report.was_composited(LayerId(3)));
+        assert!(!report.was_composited(LayerId(9)), "absent");
     }
 }

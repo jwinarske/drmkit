@@ -64,7 +64,10 @@ jobs:
           # libudev, which the cross lanes have no sysroot for -- but its
           # cases need a real uevent and root, which is exactly what this
           # lane is. Without it they are built out and never run anywhere.
-          cargo test --workspace --features drmkit-display/hotplug,drmkit-present/device --no-run --message-format=json \
+          # The same goes for the `gbm` features: they link libgbm, and their
+          # cases need a card to allocate against. `drmkit-present/gbm` is
+          # what builds the ScanoutBackend suite at all.
+          cargo test --workspace --features drmkit-display/hotplug,drmkit-present/gbm,drmkit-scene-sources/gbm --no-run --message-format=json \
             | jq -r 'select(.reason == "compiler-artifact" and .executable != null
                             and .profile.test == true) | .executable' \
             > test-binaries.txt

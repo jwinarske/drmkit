@@ -385,6 +385,7 @@ name = "drmkit-testkit"
 version = "0.0.0"
 dependencies = [
  "drm 0.15.0",
+ "drmkit-core",
 ]
 
 [[package]]

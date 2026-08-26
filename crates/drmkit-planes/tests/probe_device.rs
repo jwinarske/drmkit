@@ -54,11 +54,26 @@ fn every_plane_the_kernel_lists_is_read() {
     // needs to do that. Without this the vkms lane silently dropped to one
     // plane per CRTC when the module's overlay default changed, and a dozen
     // rigs went on passing while testing nothing about placement.
+    //
+    // Counted on the CRTC the suites actually drive, not across the device.
+    // The two coincide on vkms -- one CRTC, every plane on it -- which is why
+    // the device-wide count this used to compare looked right. They come apart
+    // everywhere else: 859 of the 1001 atomic devices in the drmdb corpus have
+    // a CRTC whose candidate count is at most half the device total, and
+    // rockchip lists 8 planes across 4 CRTCs with **one** on its thinnest. On
+    // that board the old check passed at `DRMKIT_MIN_PLANES=2` while the CRTC
+    // under test had a single candidate -- which is precisely the condition
+    // P-20 was about, undetected.
     if let Ok(minimum) = std::env::var("DRMKIT_MIN_PLANES") {
         let minimum: usize = minimum.parse().expect("DRMKIT_MIN_PLANES is a number");
+        let resources = device.resource_handles().expect("resources");
+        let (_, crtc_index) = drmkit_testkit::crtc::pick_crtc(&device, &resources);
+        let candidates = registry.for_crtc(crtc_index).count();
         assert!(
-            expected >= minimum,
-            "this device has {expected} plane(s) and DRMKIT_MIN_PLANES asks for {minimum}"
+            candidates >= minimum,
+            "CRTC index {crtc_index} has {candidates} candidate plane(s) and \
+             DRMKIT_MIN_PLANES asks for {minimum} (the device lists {expected} \
+             in total, which is not what the allocator gets to use)"
         );
     }
 

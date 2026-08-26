@@ -16,6 +16,8 @@ publish = false
 # For the DRM version ioctl: the driver's own name, which sysfs does not
 # give for a device bound through the faux bus.
 drm = { workspace = true }
+# `crtc::pick_crtc` takes a drmkit_core::Device.
+drmkit-core = { workspace = true }
 
 [lints]
 workspace = true

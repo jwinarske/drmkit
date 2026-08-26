@@ -121,7 +121,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/integration/test_layer_scene_minimization_vkms.cpp` | _drmkit-scene_ (phase 3) | pending | 4 |
 | `tests/integration/test_layer_scene_pin_vkms.cpp` | _drmkit-scene_ (phase 3) | pending |  |
 | `tests/integration/test_layer_scene_rebind_vkms.cpp` | _drmkit-scene_ (phase 3) | pending |  |
-| `tests/integration/test_layer_scene_release_vkms.cpp` | _drmkit-scene_ (phase 3) | pending | 1, 2, 5 |
+| `tests/integration/test_layer_scene_release_vkms.cpp` | `drmkit-scene` `tests/release_invariants_vkms.rs` | partial | 1, 2, 5 — five of seven, plus two the reference has no equivalent of: losing DRM master suspends the scene, and an armed flip keeps teardown unsafe until it lands. The two `ReplaceSource` cases have no counterpart: the scene has no `replace_source`, so a producer swaps a source by removing the layer and adding it back, which is what the deferred-retirement case covers |
 | `tests/integration/test_scanout_backend_vkms.cpp` | _drmkit-present_ (phase 6+) | pending |  |
 | `tests/integration/test_scene_set_vkms.cpp` | _drmkit-scene-set_ (phase 6+) | pending |  |
 | `tests/integration/test_v4l2_camera_source_vivid.cpp` | _drmkit-scene-v4l2_ (phase 6+) | pending |  |

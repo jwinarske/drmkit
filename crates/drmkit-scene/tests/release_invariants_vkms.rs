@@ -123,6 +123,8 @@ struct Harness {
     scene: LayerScene,
     log: Rc<RefCell<SourceLog>>,
     crtc_index: u32,
+    /// The one layer, for a case that needs to remove it.
+    handle: drmkit_scene::LayerHandle,
 }
 
 fn harness() -> Option<Harness> {
@@ -213,6 +215,7 @@ fn harness() -> Option<Harness> {
         scene,
         log,
         crtc_index,
+        handle,
     })
 }
 
@@ -385,4 +388,101 @@ fn an_armed_flip_keeps_teardown_unsafe_until_landed_vkms() {
 
     h.scene.flip_landed();
     assert!(!h.scene.has_pending_flip());
+}
+
+/// A `TEST_ONLY` commit releases its acquisitions at once.
+///
+/// Nothing scans out from a test commit, so there is no in-flight flip to gate
+/// the release on. Holding the buffers across one would stall the source's
+/// ring for no reason -- visible on a pull-mode source, a V4L2 capture say, as
+/// an `EAGAIN` loop where the producer has nothing free to fill.
+///
+/// The allocator issues these during a search, so a hold here would cost one
+/// buffer per candidate assignment tried.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn test_commits_release_immediately_vkms() {
+    let _guard = card_guard();
+    let Some(mut h) = harness() else { return };
+
+    let before = h.log.borrow().released.len();
+
+    let mut committer = DeviceCommitter::new(
+        &h.device,
+        &h.map,
+        &h.registry,
+        h.crtc_index,
+        AtomicCommitFlags::empty(),
+        None,
+    );
+    let build = h
+        .scene
+        .build_frame(&h.registry, h.crtc_index, CommitKind::Test, &mut committer)
+        .expect("build");
+    h.scene.finalize_frame(build, KernelResult::Ok);
+
+    let released = h.log.borrow().released.len() - before;
+    assert_eq!(
+        released, 1,
+        "a test commit acquired a buffer and did not give it back"
+    );
+
+    // And again, to show it is not a one-off that happens to drain on the
+    // second: a search issues several of these back to back.
+    let before = h.log.borrow().released.len();
+    let mut committer = DeviceCommitter::new(
+        &h.device,
+        &h.map,
+        &h.registry,
+        h.crtc_index,
+        AtomicCommitFlags::empty(),
+        None,
+    );
+    let build = h
+        .scene
+        .build_frame(&h.registry, h.crtc_index, CommitKind::Test, &mut committer)
+        .expect("build");
+    h.scene.finalize_frame(build, KernelResult::Ok);
+    assert_eq!(h.log.borrow().released.len() - before, 1);
+}
+
+/// Removing a layer whose buffer is still being scanned out defers retiring
+/// its source.
+///
+/// The kernel is reading that framebuffer until the next flip lands. Dropping
+/// the source -- and with it the buffer -- at `remove_layer` would free memory
+/// the display engine is mid-scanout of, which is a tear at best and a fault
+/// at worst.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn removing_a_layer_defers_retiring_its_source_vkms() {
+    let _guard = card_guard();
+    let Some(mut h) = harness() else { return };
+
+    // One real commit, so there is a buffer in flight to defer against.
+    let report = cycle(&mut h, KernelResult::Ok);
+    assert!(report.layers_assigned > 0, "the layer reached a plane");
+
+    let handle = h.handle;
+    assert!(h.scene.remove_layer(handle), "the layer was there");
+    assert!(
+        h.scene.layer(handle).is_none(),
+        "and is gone from the scene immediately"
+    );
+
+    // The source has not been given its buffer back yet: the flip that stops
+    // scanning it out has not landed.
+    let released_at_removal = h.log.borrow().released.len();
+
+    // Land it and run the frame that follows, which is where the deferred
+    // retirement happens.
+    h.scene.flip_landed();
+    cycle(&mut h, KernelResult::Ok);
+    h.scene.drain();
+
+    assert!(
+        h.log.borrow().released.len() > released_at_removal,
+        "the source was never given its buffer back, so it was dropped while \
+         the kernel still had it or leaked"
+    );
 }

@@ -1255,6 +1255,155 @@ fn a_degenerate_zpos_clamps_to_the_only_value_it_will_take() {
     assert_eq!(map.clamp_zpos(42, 0), 0, "and asking for it is unchanged");
 }
 
+// --- the primary anchor (P-26) ----------------------------------------------
+
+/// A plane for the reservation cases, with a zpos range if it has one.
+fn reservation_plane(
+    id: u32,
+    plane_type: drmkit_planes::PlaneType,
+    zpos: Option<(u64, u64)>,
+) -> drmkit_planes::PlaneCapabilities {
+    drmkit_planes::PlaneCapabilities {
+        id,
+        possible_crtcs: 0b1,
+        plane_type,
+        formats: vec![drmkit_fmt::fourcc::ARGB8888, drmkit_fmt::fourcc::XRGB8888],
+        zpos_min: zpos.map(|(min, _)| min),
+        zpos_max: zpos.map(|(_, max)| max),
+        ..drmkit_planes::PlaneCapabilities::default()
+    }
+}
+
+/// A layer carrying an explicit zpos, or none.
+fn reservation_layer(zpos: Option<u64>) -> drmkit_planes::Layer {
+    let mut layer = drmkit_planes::Layer::default();
+    if let Some(zpos) = zpos {
+        layer.set_property(drmkit_planes::PropTag::Zpos, zpos);
+    }
+    layer
+}
+
+/// **P-26.** A pinned primary nothing can land on is reserved, not left to the
+/// disable pass.
+///
+/// amdgpu pins its primary at zpos 2 and refuses a commit that disables the
+/// primary of an active CRTC. With every layer sitting above the pin -- which
+/// is the layout the reference's own examples use, `zpos >= 3` -- nothing is
+/// eligible for the primary, so nothing assigns it, so the disable pass clears
+/// it in every test and the kernel refuses every one. The allocator places
+/// nothing and the entire scene falls through to software composition, still
+/// correct, still arriving, silently not using the hardware.
+#[test]
+fn a_pinned_primary_with_no_eligible_layer_is_reserved() {
+    let registry = drmkit_planes::PlaneRegistry::from_capabilities(vec![
+        reservation_plane(31, drmkit_planes::PlaneType::Primary, Some((2, 2))),
+        reservation_plane(32, drmkit_planes::PlaneType::Overlay, Some((3, 9))),
+        reservation_plane(33, drmkit_planes::PlaneType::Overlay, Some((3, 9))),
+    ]);
+    let layers = [reservation_layer(Some(3)), reservation_layer(Some(4))];
+    let refs: Vec<drmkit_planes::LayerRef<'_>> = layers
+        .iter()
+        .enumerate()
+        .map(|(i, layer)| drmkit_planes::LayerRef {
+            id: drmkit_planes::LayerId(i as u64 + 1),
+            layer,
+        })
+        .collect();
+
+    assert_eq!(
+        crate::scene::canvas_reservation(true, &refs, &registry, 0),
+        vec![31],
+        "the primary is held out of the disable pass"
+    );
+}
+
+/// A layer that can take the pinned slot needs no anchor: it will be assigned
+/// there, and an assigned plane is not disabled.
+#[test]
+fn a_layer_matching_the_pin_makes_the_anchor_unnecessary() {
+    let registry = drmkit_planes::PlaneRegistry::from_capabilities(vec![
+        reservation_plane(31, drmkit_planes::PlaneType::Primary, Some((2, 2))),
+        reservation_plane(32, drmkit_planes::PlaneType::Overlay, Some((3, 9))),
+    ]);
+    let layers = [reservation_layer(Some(2)), reservation_layer(Some(3))];
+    let refs: Vec<drmkit_planes::LayerRef<'_>> = layers
+        .iter()
+        .enumerate()
+        .map(|(i, layer)| drmkit_planes::LayerRef {
+            id: drmkit_planes::LayerId(i as u64 + 1),
+            layer,
+        })
+        .collect();
+
+    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0).is_empty());
+}
+
+/// So does a layer with no zpos at all: it is free to land on the pin, and
+/// `plane_score`'s primary bonus is what puts it there.
+#[test]
+fn a_layer_with_no_zpos_makes_the_anchor_unnecessary() {
+    let registry = drmkit_planes::PlaneRegistry::from_capabilities(vec![
+        reservation_plane(31, drmkit_planes::PlaneType::Primary, Some((2, 2))),
+        reservation_plane(32, drmkit_planes::PlaneType::Overlay, Some((3, 9))),
+    ]);
+    let layers = [reservation_layer(None)];
+    let refs: Vec<drmkit_planes::LayerRef<'_>> = layers
+        .iter()
+        .enumerate()
+        .map(|(i, layer)| drmkit_planes::LayerRef {
+            id: drmkit_planes::LayerId(i as u64 + 1),
+            layer,
+        })
+        .collect();
+
+    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0).is_empty());
+}
+
+/// A primary with no zpos property is not pinned, so there is nothing to
+/// anchor. This is vkms, which is why no lane can reach the case above.
+#[test]
+fn an_unpinned_primary_is_not_anchored() {
+    let registry = drmkit_planes::PlaneRegistry::from_capabilities(vec![
+        reservation_plane(31, drmkit_planes::PlaneType::Primary, None),
+        reservation_plane(32, drmkit_planes::PlaneType::Overlay, None),
+    ]);
+    let layers = [reservation_layer(Some(3))];
+    let refs: Vec<drmkit_planes::LayerRef<'_>> = layers
+        .iter()
+        .enumerate()
+        .map(|(i, layer)| drmkit_planes::LayerRef {
+            id: drmkit_planes::LayerId(i as u64 + 1),
+            layer,
+        })
+        .collect();
+
+    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0).is_empty());
+}
+
+/// The overflow trigger still works, and still takes the last candidate so the
+/// layers below the canvas keep the lower-indexed planes.
+#[test]
+fn overflow_still_reserves_the_last_candidate() {
+    let registry = drmkit_planes::PlaneRegistry::from_capabilities(vec![
+        reservation_plane(31, drmkit_planes::PlaneType::Primary, None),
+        reservation_plane(32, drmkit_planes::PlaneType::Overlay, None),
+    ]);
+    let layers: Vec<drmkit_planes::Layer> = (0..3).map(|_| reservation_layer(None)).collect();
+    let refs: Vec<drmkit_planes::LayerRef<'_>> = layers
+        .iter()
+        .enumerate()
+        .map(|(i, layer)| drmkit_planes::LayerRef {
+            id: drmkit_planes::LayerId(i as u64 + 1),
+            layer,
+        })
+        .collect();
+
+    assert_eq!(
+        crate::scene::canvas_reservation(true, &refs, &registry, 0),
+        vec![32]
+    );
+}
+
 /// The acquire-fence close discipline, at the level the scene works at.
 ///
 /// `drmkit-sync` covers the fence itself -- that `import` dups, that a move

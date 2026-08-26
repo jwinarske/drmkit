@@ -57,9 +57,19 @@ there is a real finding.
 
 ## Adding a scenario
 
-Scenario grammar is four commands — `add NAME ZPOS DST_X DST_Y W H`, `del NAME`,
-`frame`, and `#` comments. Both runners parse it independently; keep them in
-step. `W H` of `0 0` means the full display.
+Scenario grammar, and `#` comments. Both runners parse it independently; keep
+them in step.
+
+| Command | Meaning |
+|---|---|
+| `add NAME ZPOS DST_X DST_Y W H` | Add a layer. `W H` of `0 0` means the full display. |
+| `del NAME` | Remove it. |
+| `frame` | One real commit, and land its flip. |
+| `move NAME X Y` | Move it, which defeats the FB-only fast path. |
+| `zpos NAME Z` | Restack it. |
+| `starve NAME` / `unstarve NAME` | Make `acquire` return `WouldBlock`, and stop. |
+| `mint` | A `frame` whose out-fence is kept — already signalled once it lands. |
+| `fence NAME` / `unfence NAME` | Give a layer's buffer that fence as its acquire fence, or take it away. |
 
 Write down what the reference actually does in a comment at the top of the
 scenario. The reference is the specification, and a scenario whose expected

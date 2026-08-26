@@ -737,7 +737,7 @@ impl LayerScene {
         crtc_index: u32,
         committer: &mut C,
     ) -> Result<drmkit_planes::Allocation, SceneError> {
-        let reserved = canvas_reservation(self.canvas.is_some(), refs.len(), registry, crtc_index);
+        let reserved = canvas_reservation(self.canvas.is_some(), refs, registry, crtc_index);
         let already_claimed = !reserved.is_empty();
         self.allocator.set_reserved_planes(&reserved);
 
@@ -1072,30 +1072,77 @@ struct Composition {
 
 /// Which planes to hold back from the search, if any.
 ///
-/// The canvas is armed after the search, onto a plane the search did not take
-/// — so with more layers than planes there would be none left, and the
-/// overflow the canvas exists to rescue would be dropped instead. Reserving
-/// costs a plane whether or not it is needed, so it only happens when the
-/// counts say the search will overflow.
+/// Two reasons to reserve, and they are not the same reason.
+///
+/// **Overflow.** The canvas is armed after the search, onto a plane the search
+/// did not take -- so with more layers than planes there would be none left,
+/// and the overflow the canvas exists to rescue would be dropped instead.
 ///
 /// The *last* candidate, so the search keeps the lower-indexed planes for the
-/// layers that stack below the canvas — which matters on hardware where plane
+/// layers that stack below the canvas -- which matters on hardware where plane
 /// index is the stacking order and nothing can reorder it.
-fn canvas_reservation(
+///
+/// **Primary anchor.** A primary whose zpos is pinned, with no live layer
+/// eligible to land on it. Nothing then assigns the primary, so the disable
+/// pass writes `FB_ID = 0` and `CRTC_ID = 0` to it in **every** test -- and a
+/// driver that enforces "an active CRTC has an armed primary" refuses each
+/// one. Every test fails, the allocator places nothing, and the whole scene
+/// falls through to software composition. The frame is still correct and
+/// still arrives; it simply stops using the hardware, and no counter says so.
+///
+/// amdgpu pins its primary at zpos 2 and rejects the disable; ARM Mali display
+/// cores pin similarly. The reference documents both the behaviour and the
+/// remedy, and this is the remedy: reserving the primary takes it out of the
+/// disable pass, so tests validate against whatever it was already showing --
+/// the fbcon framebuffer on a cold start, the previous canvas when warm.
+///
+/// A layer counts as eligible when its zpos matches the pin, or when it has
+/// none at all: an unpinned layer is free to land there and the scoring bonus
+/// in `plane_score` will put it there.
+///
+/// Not reachable on vkms, which exposes no zpos property at all, so nothing
+/// in CI can show this. See P-26.
+pub(crate) fn canvas_reservation(
     has_canvas: bool,
-    layers: usize,
+    refs: &[LayerRef<'_>],
     registry: &PlaneRegistry,
     crtc_index: u32,
 ) -> Vec<u32> {
     if !has_canvas {
         return Vec::new();
     }
-    let candidates: Vec<u32> = registry
-        .force_disable_candidates(crtc_index)
-        .map(|plane| plane.id)
-        .collect();
-    if layers > candidates.len() {
-        candidates.last().copied().into_iter().collect()
+    let candidates: Vec<&drmkit_planes::PlaneCapabilities> =
+        registry.force_disable_candidates(crtc_index).collect();
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+
+    // The anchor comes first: it is about a test commit failing outright,
+    // where overflow is only about a layer being composited that need not be.
+    if !refs.is_empty()
+        && let Some(primary) = candidates
+            .iter()
+            .find(|plane| plane.plane_type == drmkit_planes::PlaneType::Primary)
+        && let Some(pin) = primary.zpos_min
+        && crate::canvas_format_for_plane(primary).is_some()
+    {
+        let anyone_eligible = refs.iter().any(|layer| {
+            layer
+                .layer
+                .property(drmkit_planes::PropTag::Zpos)
+                .is_none_or(|zpos| zpos == pin)
+        });
+        if !anyone_eligible {
+            return vec![primary.id];
+        }
+    }
+
+    if refs.len() > candidates.len() {
+        candidates
+            .last()
+            .map(|plane| plane.id)
+            .into_iter()
+            .collect()
     } else {
         Vec::new()
     }

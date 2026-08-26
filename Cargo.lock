@@ -307,6 +307,7 @@ version = "0.0.0"
 dependencies = [
  "drm 0.15.0",
  "drmkit-core",
+ "drmkit-display",
  "drmkit-dumb",
  "drmkit-fmt",
  "drmkit-log",

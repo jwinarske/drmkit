@@ -13,6 +13,7 @@ keywords = ["drm", "kms", "compositor", "scene", "scanout"]
 
 [dependencies]
 drmkit-core = { workspace = true }
+drmkit-display = { workspace = true }
 drmkit-dumb = { workspace = true }
 drmkit-log = { workspace = true }
 drmkit-fmt = { workspace = true }

@@ -46,6 +46,20 @@ pub struct DisplayParams {
     /// [`lower_layer`](crate::lower_layer) for why writing a default here
     /// rather than leaving it alone is actively harmful.
     pub zpos: Option<u64>,
+
+    /// The container colorimetry this layer's content is in.
+    ///
+    /// Feeds the scene's choice of connector `Colorspace` -- the widest-gamut
+    /// layer wins -- and seeds the mastering primaries when the frame is HDR.
+    /// `None` means the producer did not say, and the scene leaves the
+    /// connector property alone rather than guessing.
+    pub color_primaries: Option<crate::signaling::ColorPrimaries>,
+
+    /// The transfer function the content is encoded with.
+    ///
+    /// `None` is the SDR transfer. When *any* layer in a frame reports PQ or
+    /// HLG the scene declares HDR on the connector.
+    pub source_eotf: Option<drmkit_display::TransferFunction>,
 }
 
 /// Convert whole pixels to the 16.16 fixed point KMS expects for `SRC_*`.

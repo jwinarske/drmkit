@@ -45,6 +45,23 @@ Numbering buffers by first appearance is deliberate: what a trace asserts is
 that the same *distinct* buffer comes back on the same frame, not which handle
 the kernel happened to hand out.
 
+## Which reference answered
+
+The reference is the specification, so which revision of it answered has to be
+known. `run.sh` checks `DRM_CXX` against the baseline recorded in
+`INVARIANTS.md` and warns when the tree is behind it or has uncommitted
+changes, because a drifted checkout produces a diff that looks like a parity
+result and is not one.
+
+That is not hypothetical. The corpus was for a while compared against a tree
+six commits behind the documented baseline, missing among other things the
+warm-start stability bonus that one of its own scenarios exists to test.
+Nothing looked wrong: six scenarios diffed clean either way, which is
+[P-27](../docs/parity-findings.md).
+
+Set `DRMKIT_PARITY_ANY_REF=1` to silence it when comparing against a newer
+upstream on purpose, which is how the next baseline gets adopted.
+
 ## Scenarios that are expected to diverge
 
 A scenario whose header says so is a **reproduction**, not a regression: both

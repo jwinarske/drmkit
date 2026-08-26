@@ -22,9 +22,37 @@ DRMKIT_TRACE="$out/rust.trace" LD_PRELOAD="$out/trace-shim.so" \
   "$root/target/debug/drmkit-parity-runner" "$scenario"
 
 if [[ -n "${DRM_CXX:-}" ]]; then
+  # The reference is the specification, so which revision of it answered has
+  # to be known. A checkout that has drifted from the documented baseline
+  # produces a diff that looks like a parity result and is not one -- the
+  # corpus was for a while being compared against a tree six commits behind,
+  # missing the very stability bonus one of its scenarios exists to test.
+  #
+  # A warning rather than a refusal: comparing against a newer upstream on
+  # purpose is how the next baseline gets adopted. DRMKIT_PARITY_ANY_REF
+  # silences it for that case.
+  baseline="$(grep -oE 'drm-cxx` @ `[0-9a-f]+' "$root/INVARIANTS.md" | head -1 | grep -oE '[0-9a-f]+$')"
+  if [[ -n "$baseline" && -z "${DRMKIT_PARITY_ANY_REF:-}" ]]; then
+    if ! git -C "$DRM_CXX" merge-base --is-ancestor "$baseline" HEAD 2>/dev/null; then
+      echo "warning: $DRM_CXX is not at or past the documented baseline $baseline." >&2
+      echo "         Its HEAD is $(git -C "$DRM_CXX" rev-parse --short HEAD 2>/dev/null || echo unknown)." >&2
+      echo "         Any diff below compares against a different specification." >&2
+    fi
+    dirty="$(git -C "$DRM_CXX" status --porcelain 2>/dev/null | grep -c '^ M' || true)"
+    if [[ "${dirty:-0}" -gt 0 ]]; then
+      echo "warning: $DRM_CXX has $dirty modified file(s) -- the reference is not pristine." >&2
+    fi
+  fi
+
   build="$out/drm-cxx-build"
   [[ -d "$build" ]] || meson setup "$build" "$DRM_CXX" -Dexamples=false >/dev/null
-  ninja -C "$build" >/dev/null
+  # A build that fails leaves the previous runner in place, or none at all, and
+  # either way the diff that follows is meaningless. The README warns about an
+  # empty Rust trace for the same reason; this is the other half.
+  if ! ninja -C "$build" >/dev/null; then
+    echo "error: the reference did not build; there is nothing to compare against." >&2
+    exit 1
+  fi
   includes=(-I"$DRM_CXX/src" -I"$DRM_CXX" -I"$build" -I"$build/src")
   for d in "$DRM_CXX"/third_party/*/include; do includes+=(-I"$d"); done
   g++ -std=c++17 -O1 -o "$out/runner-cxx" "$root/parity/runner.cc" \

@@ -78,6 +78,7 @@ pub(crate) fn run(options: &[String]) -> Result<(), String> {
         .join(format!("{device}.json"));
 
     if record {
+        environment_is_fit_to_record(&observed)?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|error| format!("{}: {error}", parent.display()))?;
@@ -286,6 +287,56 @@ fn compare(
          property, hardware\nswapped out -- re-record with --record. Do that \
          deliberately: it is the same\ngesture as accepting that the case now \
          checks nothing here.",
+    );
+    Err(message)
+}
+
+/// Skips that describe the moment rather than the device.
+///
+/// A baseline is a claim about hardware: this board has no gamma stage, that
+/// one has nine planes. A skip caused by whatever else was running is not
+/// that, and recording one bakes a passing excuse into the baseline -- the
+/// case then reports `ok`, skips forever, and the check agrees it should.
+///
+/// Found by making the mistake. A run against amdgpu with a desktop session
+/// on it skipped 43 of 118 cases for want of DRM master, and every one would
+/// have been recorded as something that device cannot do.
+const ENVIRONMENTAL: [(&str, &str); 2] = [
+    (
+        "holds DRM master",
+        "stop the compositor, or run from a console: the card is in use",
+    ),
+    ("needs root", "re-run as root; these cases write to sysfs"),
+];
+
+/// Refuse to record a baseline that is mostly about the machine's mood.
+fn environment_is_fit_to_record(observed: &BTreeMap<String, Case>) -> Result<(), String> {
+    let mut blocked: BTreeMap<&str, (usize, &str)> = BTreeMap::new();
+    for case in observed.values() {
+        let Case::Skipped(why) = case else { continue };
+        for (needle, remedy) in ENVIRONMENTAL {
+            if why.contains(needle) {
+                let entry = blocked.entry(needle).or_insert((0, remedy));
+                entry.0 += 1;
+            }
+        }
+    }
+    if blocked.is_empty() {
+        return Ok(());
+    }
+
+    let mut message = String::from(
+        "refusing to record: some cases skipped for reasons that are about \
+         this run, not\nthis device\n",
+    );
+    for (needle, (count, remedy)) in &blocked {
+        let _ = write!(message, "\n  {count} case(s): \"{needle}\"\n      {remedy}");
+    }
+    let _ = write!(
+        &mut message,
+        "\n\nRecording these would enshrine them: the case reports ok, skips \
+         forever, and\nthe check agrees that it should. Fix the run and \
+         record again."
     );
     Err(message)
 }
@@ -551,6 +602,35 @@ test a_second_case ... ok
         );
         let back = parse_baseline(&render(&cases)).expect("round trip");
         assert_eq!(back["a_case"].reason(), "no \"HOTSPOT_X\" here");
+    }
+
+    /// A skip caused by whatever else was running is not a fact about the
+    /// device, and recording one turns it into a permanent excuse.
+    #[test]
+    fn a_run_that_lost_drm_master_cannot_be_recorded() {
+        let observed =
+            parse("test a_case ... ok\nDRMKIT-SKIP\ta_case\tanother client holds DRM master\n");
+        let error = super::environment_is_fit_to_record(&observed).expect_err("must refuse");
+        assert!(error.contains("holds DRM master"));
+        assert!(error.contains("stop the compositor"), "and says what to do");
+    }
+
+    #[test]
+    fn a_run_that_needed_root_cannot_be_recorded() {
+        let observed = parse(
+            "test a_case ... ok\nDRMKIT-SKIP\ta_case\twriting /sys/class/drm/card0/uevent needs root (try sudo)\n",
+        );
+        super::environment_is_fit_to_record(&observed).expect_err("must refuse");
+    }
+
+    /// A skip the device genuinely cannot help is exactly what a baseline is
+    /// for, and must not be caught by the guard.
+    #[test]
+    fn a_capability_skip_records_fine() {
+        let observed = parse(
+            "test a_case ... ok\nDRMKIT-SKIP\ta_case\tno CRTC on this device has a colour pipeline\n",
+        );
+        super::environment_is_fit_to_record(&observed).expect("a real capability skip");
     }
 
     fn device(id: &str, cases: &[(&str, &str)]) -> super::DeviceCoverage {

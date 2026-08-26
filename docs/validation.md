@@ -160,7 +160,7 @@ coverage` records, per device, which cases asserted and which bailed and why:
 
 ```sh
 cargo test --workspace --all-features -- --ignored --nocapture 2>&1 \
-  | cargo xtask coverage --device=localhost-amdgpu --record
+  | cargo xtask coverage --device=rpi5-vc4 --record
 ```
 
 and thereafter checks a run against it, failing when a case that asserted on
@@ -171,23 +171,41 @@ It reads a run on stdin rather than running the suites itself. How tests reach
 a device differs — locally, over ssh to a board, inside the vkms lane — and
 none of that changes what a coverage regression means.
 
-The amdgpu baseline is the worked example: **118 cases, 4 of them skipping**.
+The vc4 baseline is the worked example: **97 cases, 6 of them skipping**. Five
+are the colour-pipeline cases, which vc4 cannot run because it has no
+`DEGAMMA_LUT`, `CTM` or `GAMMA_LUT` on any CRTC ([P-21](parity-findings.md)).
+The sixth wants `HOTSPOT_X`, which only a virtualized guest driver has.
+
+## A baseline records the device, not the afternoon
+
+`--record` refuses a run whose skips are about the machine rather than the
+hardware:
 
 ```
-a_layer_past_the_budget_is_composited_and_says_so_vkms
-    9 candidate plane(s) does not exceed the budget of 16
-an_ordinary_drm_change_is_read_and_discarded
-    writing /sys/class/drm/card0/uevent needs root (try sudo)
-a_property_that_merely_looks_like_hotplug_is_not_one
-    writing /sys/class/drm/card0/uevent needs root (try sudo)
-the_hotspot_is_left_alone_until_something_is_drawn_vkms
-    no HOTSPOT_X (expected: not a virtualized driver)
+refusing to record: some cases skipped for reasons that are about this run,
+not this device
+
+  43 case(s): "holds DRM master"
+      stop the compositor, or run from a console: the card is in use
+  2 case(s): "needs root"
+      re-run as root; these cases write to sysfs
 ```
 
-The first is [P-17](parity-findings.md) stated as a number: amdgpu has 9
-planes and the budget is 16, so that case has never asserted anything here.
-Two need root. One wants a virtualized driver. None is a defect, and all four
-were previously indistinguishable from a case that ran.
+This exists because the mistake was made. The device suites default to
+`/dev/dri/card0`; on the workstation here that is **vkms**, and amdgpu is
+card1. A whole session's worth of "verified on amdgpu" was verified on vkms,
+and the run that finally pointed at card1 skipped 43 of 118 cases because the
+desktop holds DRM master on the card driving the display.
+
+Recording that would have been worse than not measuring. Each of those 43
+would have become an expectation: the case reports `ok`, skips forever, and
+the check agrees that it should. A baseline may only contain skips a device
+*cannot* do anything about, which is what makes `--audit` below trustworthy.
+
+There is no override flag, on purpose. The remedy is to run the suite where it
+can assert — from a console for a card a compositor owns, as root for the
+cases that write to sysfs, or in the vkms lane, which is root with no display
+server and holds master by construction.
 
 ## What the pool covers, and what it does not
 
@@ -195,35 +213,26 @@ One device cannot answer whether an assertion runs anywhere. `cargo xtask
 coverage --audit` reads every recorded baseline and answers it:
 
 ```
-2 device(s): localhost-amdgpu (118 cases), rpi5-vc4 (97 cases)
+1 device(s): rpi5-vc4 (97 cases)
+error: assertions that run on no device in the pool
 
-Asserted on one device and skipped on the others -- lose it and these stop running:
-  a_layer_past_the_budget_is_composited_and_says_so_vkms   only on rpi5-vc4
-  a_stage_the_crtc_has_takes_a_blob                        only on localhost-amdgpu
-  ... and the other three colour-pipeline cases
-```
-
-That is the split doing its job. vc4 has 17 planes against a budget of 16 and
-no colour pipeline at all; amdgpu has 9 planes and all three colour stages.
-Each board covers exactly what the other cannot, and a green run on either
-alone would look complete.
-
-The audit fails on the cases that assert **nowhere**:
-
-```
-  a_property_that_merely_looks_like_hotplug_is_not_one
-      localhost-amdgpu: writing /sys/class/drm/card0/uevent needs root
-  an_ordinary_drm_change_is_read_and_discarded
-      localhost-amdgpu: writing /sys/class/drm/card0/uevent needs root
+  a_stage_the_crtc_has_takes_a_blob
+      rpi5-vc4: no CRTC on this device has a colour pipeline
+  ... and the other four colour-pipeline cases
   the_hotspot_is_left_alone_until_something_is_drawn_vkms
-      localhost-amdgpu: no HOTSPOT_X (expected: not a virtualized driver)
-      rpi5-vc4:         no HOTSPOT_X (expected: not a virtualized driver)
+      rpi5-vc4: no HOTSPOT_X (expected: not a virtualized driver)
 ```
 
-Three assertions that have never checked anything. Two want a run as root; the
-third wants a virtualized driver, which vkms has and neither of these boards
-does. This is the shape [P-13](parity-findings.md) and P-14 already had —
-found by accident, months apart. Here it is a command.
+Six assertions that have never checked anything — because the pool is
+currently one board, and that board has no colour pipeline. This is the shape
+[P-13](parity-findings.md) and P-14 already had, found by accident months
+apart. Here it is a command, and it says plainly that one device is not a
+pool.
+
+It is also why the guard above matters. Had the contaminated amdgpu baseline
+been recorded, those five colour-pipeline cases would read as covered — amdgpu
+has all three stages and asserted them — while 43 others quietly became
+expected skips.
 
 It distinguishes *skipped elsewhere* from *not run elsewhere*. A crate that
 does not cross-build for a target never reports there, and counting that as a

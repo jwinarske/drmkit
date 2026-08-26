@@ -29,12 +29,16 @@ mod buffer_ring;
 mod dumb_ring;
 mod frame_economy;
 mod negotiate;
+#[cfg(feature = "device")]
+mod scanout_format;
 
 pub use buffer_ring::{BufferRing, Lease, Rect, Repaint};
 #[cfg(feature = "device")]
 pub use dumb_ring::{DumbRingSource, PaintError};
 pub use frame_economy::{FrameAction, FrameEconomy};
 pub use negotiate::{negotiate, negotiate_for_format};
+#[cfg(feature = "device")]
+pub use scanout_format::{DEFAULT_PREFERENCE, negotiate_scanout_format};
 
 #[cfg(test)]
 mod tests;

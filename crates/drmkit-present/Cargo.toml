@@ -21,16 +21,26 @@ workspace = true
 # no FFI in front of the interpreter, the same arrangement drmkit-planes uses
 # for its probe.
 default = []
-device = ["dep:drmkit-core", "dep:drmkit-dumb", "dep:drmkit-scene"]
+device = [
+    "dep:drmkit-core",
+    "dep:drmkit-dumb",
+    "dep:drmkit-scene",
+    "dep:drmkit-planes",
+    "drmkit-planes/device",
+    "dep:drm",
+]
 
 [dependencies]
 # Modifier classification and the rotation pre-filter the negotiator applies.
 drmkit-fmt = { workspace = true }
+# `resource_handles`, for turning a CRTC id into its index.
+drm = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
 drmkit-core = { workspace = true, optional = true }
 drmkit-dumb = { workspace = true, optional = true }
 drmkit-scene = { workspace = true, optional = true }
+drmkit-planes = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Device cases report which card they ran on and when they bailed.

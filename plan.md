@@ -1,7 +1,7 @@
 # drmkit — drm-cxx → Rust Porting Plan
 
 **Rev 2.0 — 2026-08-22**
-**Target source:** `jwinarske/drm-cxx` @ `main` (`dc2915b`, 2026-07-26, tag-equivalent v2.0.1, PR #231 merged)
+**Target source:** `jwinarske/drm-cxx` @ `main` (`4a0b64a`, tag v2.0.1 plus 6, PR #238 merged)
 **Snapshot:** 42,831 LOC under `src/` across 18 subsystems · 68 unit tests · 29 integration tests · 3 benchmarks · `INVARIANTS.md` (6 pinned contracts)
 **Toolchain target:** Rust **1.94.1** (MSRV, pinned), **edition 2024**
 **Supersedes:** `drmkit-porting-plan.md` rev 2026-07-04 (@ `9fe80df`, ~38.9K LOC). This revision carries the full v2.0.0/v2.0.1 surface and re-bases the toolchain policy on 1.94.

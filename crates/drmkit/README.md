@@ -12,7 +12,7 @@ scene composition, and scanout. A behavioral-parity Rust port of
 Follow <https://github.com/jwinarske/drmkit> for progress. Once the member
 crates publish, this becomes their feature-gated re-export surface.
 
-Upstream baseline: `jwinarske/drm-cxx` @ `dc2915b` (v2.0.1).
+Upstream baseline: `jwinarske/drm-cxx` @ `4a0b64a` (v2.0.1+6).
 
 ## License
 

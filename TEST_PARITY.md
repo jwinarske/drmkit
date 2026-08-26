@@ -2,7 +2,7 @@
 
 Machine-checked mapping from every drm-cxx test file to its drmkit counterpart.
 
-**Upstream baseline:** `jwinarske/drm-cxx` @ `dc2915b` (v2.0.1, PR #231, 2026-07-26)
+**Upstream baseline:** `jwinarske/drm-cxx` @ `4a0b64a` (v2.0.1+6, PR #238)
 **Coverage:** 97 test files (68 unit + 29 integration)
 
 `cargo xtask parity --ref <drm-cxx>` fails when this table and the upstream

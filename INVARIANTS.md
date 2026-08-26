@@ -11,7 +11,12 @@ a latent runtime hazard into a compile error, that is noted — but the timing
 contracts still need their vkms pins, because ownership cannot express "two
 commits deep".
 
-**Upstream baseline:** `jwinarske/drm-cxx` @ `dc2915b` (v2.0.1, PR #231).
+**Upstream baseline:** `jwinarske/drm-cxx` @ `4a0b64a` (v2.0.1+6, PR #238).
+
+The per-crate `Port of ... @ dc2915b` notes are provenance, not this: they
+record the revision each crate was ported from, which does not change when the
+baseline moves. `parity/run.sh` reads the hash above to check that whatever
+`DRM_CXX` points at is at or past it.
 
 Tests suffixed `_vkms` need the VKMS virtual driver (or any modeset card via
 `DRMKIT_TEST_CARD`). Unlike the C++ CI, which self-skips them on hosted

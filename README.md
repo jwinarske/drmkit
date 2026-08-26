@@ -128,7 +128,7 @@ that sat open for want of hardware (P-6, on two Allwinner boards) and found a
 live defect on hardware nobody here owns (P-23, Tegra's cursor plane). See
 [`docs/validation.md`](docs/validation.md).
 
-**Upstream baseline:** `jwinarske/drm-cxx` @ `dc2915b` (v2.0.1, PR #231).
+**Upstream baseline:** `jwinarske/drm-cxx` @ `4a0b64a` (v2.0.1+6, PR #238).
 
 ## What this is
 

@@ -1,6 +1,6 @@
 # drmkit — Rust port of drm-cxx (behavioral-parity port; see plan.md).
 #
-# Baseline: jwinarske/drm-cxx @ dc2915b (v2.0.1, PR #231).
+# Baseline: jwinarske/drm-cxx @ 4a0b64a (v2.0.1+6, PR #238).
 # Phase 0 carries only the leaf crates plus xtask; the crate map in plan.md §5
 # lists the full set and the phase that lands each one.
 

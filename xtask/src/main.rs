@@ -14,6 +14,7 @@
 //! cargo xtask check                       # both linters
 //! cargo xtask parity --ref /path/to/drm-cxx
 //! cargo xtask invariants
+//! cargo xtask lanes
 //! ```
 //!
 //! The reference tree is located, in order, from `--ref`, then the
@@ -22,6 +23,7 @@
 use std::process::ExitCode;
 
 mod invariants;
+mod lanes;
 mod parity;
 mod refs;
 mod validate;
@@ -36,6 +38,7 @@ COMMANDS:
     check         Run every linter (parity + invariants)
     parity        Verify TEST_PARITY.md covers every upstream test file
     invariants    Verify INVARIANTS.md matches the upstream contract list
+    lanes         Verify the drmdb lane runs on the crates its scanner reads
     validate      Probe the hardware pool and diff against the baselines
     help          Show this message
 
@@ -79,6 +82,7 @@ fn main() -> ExitCode {
         "check" => run_check(reference.as_deref()),
         "parity" => parity::run(reference.as_deref()),
         "invariants" => invariants::run(reference.as_deref()),
+        "lanes" => lanes::run(),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -109,6 +113,9 @@ fn run_check(reference: Option<&str>) -> Result<(), String> {
         failures.push(message);
     }
     if let Err(message) = invariants::run(reference) {
+        failures.push(message);
+    }
+    if let Err(message) = lanes::run() {
         failures.push(message);
     }
 

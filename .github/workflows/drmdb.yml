@@ -24,6 +24,7 @@ on:
   pull_request:
     paths:
       - 'validation/drmdb/**'
+      - 'crates/drmkit-cursor/**'
       - 'crates/drmkit-planes/**'
       - 'crates/drmkit-scene/**'
       - 'crates/drmkit-fmt/**'

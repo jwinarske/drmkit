@@ -195,6 +195,7 @@ dependencies = [
  "drmkit-fmt",
  "drmkit-modeset",
  "drmkit-planes",
+ "drmkit-testkit",
  "libdisplay-info",
  "rustix 1.1.4",
  "thiserror",
@@ -372,6 +373,10 @@ dependencies = [
  "rustix 1.1.4",
  "thiserror",
 ]
+
+[[package]]
+name = "drmkit-testkit"
+version = "0.0.0"
 
 [[package]]
 name = "drmkit-time"

@@ -129,8 +129,36 @@ for a reason that had nothing to do with the guard -- but that is a thing
 worth knowing rather than assuming, and no lane, lab or otherwise, was going
 to say so.
 
+## Which assertions actually ran
+
+A device case that cannot reach what it is named for returns early, and the
+harness reports it as `ok`. That is right — the case is about hardware this
+board does not have — but it means a green run carries no information about
+how much of it ran. There are **114 such bail-outs across 118 device cases**,
+so on any board an unknown fraction of a passing run asserted nothing.
+
+`drmkit_testkit::skipped` prints a line naming the case and the reason, taking
+the case's name from the harness's own thread so it cannot drift out of sync
+with the function it labels. Pointing the colour-pipeline suite at a card that
+does not exist shows what the count was hiding:
+
+```
+DRMKIT-SKIP  a_stage_the_crtc_has_takes_a_blob             no DRM device could be opened
+DRMKIT-SKIP  an_apply_writes_only_what_was_staged          no DRM device could be opened
+...
+test result: ok. 5 passed; 0 failed
+```
+
+Five passed, nothing asserted. On amdgpu the same suite reports no skips at
+all, which is the distinction the count alone cannot make.
+
+It does not change what the harness reports: a skip is still not a failure,
+because a board without a gamma stage is not a board with a bug.
+
 ## What this does not do yet
 
-It does not yet record which assertions actually executed on which device.
-That is the other half of the problem — a branch asserted on every board and
-executed on none reads as coverage — and it is the next piece.
+`crates/drmkit-display/tests/pipeline_device.rs` is converted as the worked
+example. The other fourteen device suites still bail silently, and the runner
+does not yet collect these lines into a per-device record or fail a run whose
+skips are not the ones that device is expected to have. Both want the shape of
+the real device pool to design against.

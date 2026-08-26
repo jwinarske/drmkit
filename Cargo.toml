@@ -23,6 +23,7 @@ members = [
     "crates/drmkit-session",
     "crates/drmkit-scene-sources",
     "crates/drmkit-sync",
+    "crates/drmkit-testkit",
     "crates/drmkit-time",
     "tests-integration",
     "benches/plane-stress",
@@ -48,6 +49,7 @@ drmkit-core = { version = "0.0.0", path = "crates/drmkit-core" }
 drmkit-dumb = { version = "0.0.0", path = "crates/drmkit-dumb" }
 drmkit-capture = { version = "0.0.0", path = "crates/drmkit-capture" }
 drmkit-cursor = { version = "0.0.0", path = "crates/drmkit-cursor" }
+drmkit-testkit = { version = "0.0.0", path = "crates/drmkit-testkit" }
 drmkit-display = { version = "0.0.0", path = "crates/drmkit-display" }
 drmkit-fmt = { version = "0.0.0", path = "crates/drmkit-fmt" }
 drmkit-input = { version = "0.0.0", path = "crates/drmkit-input" }

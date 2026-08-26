@@ -47,6 +47,9 @@ name = "hotplug_device"
 required-features = ["hotplug"]
 
 [dev-dependencies]
+# Device cases say out loud when they bail without asserting, so a green run
+# on a board is distinguishable from a green run that did nothing.
+drmkit-testkit = { workspace = true }
 # The device tests poll the hotplug socket and ask whether they can write a
 # uevent, neither of which the library itself needs.
 rustix = { workspace = true, features = ["std", "event", "process"] }

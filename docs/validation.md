@@ -111,6 +111,11 @@ A rule is an assumption this tree acts on. It gates: hardware that breaks one
 is a defect here, not an observation about that hardware. The reference's
 equivalent scan is intelligence-only; this one fails the job.
 
+That gating is verified rather than asserted: a dump with `SRC_W` stripped
+from one atomic plane makes the rule fail and the scanner exit non-zero, and
+an empty corpus directory exits non-zero rather than reporting that every rule
+passed with nothing to check.
+
 A survey is a distribution, printed and never gated -- but printed *whole*.
 An early version truncated each survey at fourteen rows, and the two planes
 that closed [P-6](parity-findings.md) were in the tail: every visible row

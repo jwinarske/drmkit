@@ -110,6 +110,7 @@ pub(crate) fn check_all(devices: &[Device]) -> Report {
             degenerate_mutable_zpos(devices),
             cursor_paths(devices),
             colour_pipeline_shapes(devices),
+            connector_signalling_shapes(devices),
             in_formats_by_driver(devices),
         ],
     }
@@ -506,6 +507,46 @@ fn in_formats_by_driver(devices: &[Device]) -> Survey {
         title: "planes with no IN_FORMATS, by driver".to_owned(),
         note: "these get a synthesised FourCC-by-LINEAR table, which offers \
                nothing compressed to a plane that never claimed it",
+        rows,
+    }
+}
+
+/// Which output-signalling properties each connector actually carries.
+///
+/// `ConnectorCapabilities` keeps `Colorspace` and `HDR_OUTPUT_METADATA`
+/// independent -- the first as a per-entry table, the second as its own flag
+/// -- so a connector with one and not the other signals what it can and
+/// leaves the rest alone.
+///
+/// That independence is not a defensive flourish. Nearly a third of the
+/// connectors in the corpus carry exactly one of the two, and the split runs
+/// both ways rather than one being a subset of the other. Collapsing them
+/// onto a single "supports signalling" flag would either drop HDR metadata on
+/// 691 connectors or write a `Colorspace` that 696 do not have.
+fn connector_signalling_shapes(devices: &[Device]) -> Survey {
+    let mut shapes: BTreeMap<&'static str, usize> = BTreeMap::new();
+    for device in devices {
+        for connector in &device.connectors {
+            let colorspace = connector.has("Colorspace");
+            let hdr = connector.has("HDR_OUTPUT_METADATA");
+            let key = match (colorspace, hdr) {
+                (true, true) => "Colorspace and HDR_OUTPUT_METADATA",
+                (true, false) => "Colorspace only",
+                (false, true) => "HDR_OUTPUT_METADATA only",
+                (false, false) => "neither -- nothing to signal",
+            };
+            *shapes.entry(key).or_default() += 1;
+        }
+    }
+    let mut rows: Vec<(String, usize)> = shapes
+        .into_iter()
+        .map(|(label, count)| (label.to_owned(), count))
+        .collect();
+    rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Survey {
+        title: "connector output-signalling shapes".to_owned(),
+        note: "the two properties are gated separately because the split runs \
+               both ways -- neither is a subset of the other",
         rows,
     }
 }

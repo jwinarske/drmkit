@@ -24,6 +24,7 @@ pub(crate) struct Device {
     /// worth asking about.
     pub(crate) crtcs: Vec<Crtc>,
     pub(crate) planes: Vec<Plane>,
+    pub(crate) connectors: Vec<Connector>,
 }
 
 /// One CRTC, as much of it as the rules ask about.
@@ -33,6 +34,18 @@ pub(crate) struct Crtc {
 }
 
 impl Crtc {
+    pub(crate) fn has(&self, name: &str) -> bool {
+        self.properties.iter().any(|p| p == name)
+    }
+}
+
+/// One connector, as much of it as the rules ask about.
+pub(crate) struct Connector {
+    /// Property names the dump lists.
+    pub(crate) properties: Vec<String>,
+}
+
+impl Connector {
     pub(crate) fn has(&self, name: &str) -> bool {
         self.properties.iter().any(|p| p == name)
     }
@@ -94,12 +107,29 @@ impl Device {
             })
             .unwrap_or_default();
 
+        let connectors: Vec<Connector> = value
+            .get("connectors")
+            .and_then(Value::as_array)
+            .map(|list| {
+                list.iter()
+                    .map(|connector| Connector {
+                        properties: connector
+                            .get("properties")
+                            .and_then(Value::as_object)
+                            .map(|map| map.keys().cloned().collect())
+                            .unwrap_or_default(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Self {
             name: name.to_owned(),
             driver,
             atomic,
             crtcs,
             planes,
+            connectors,
         }
     }
 }

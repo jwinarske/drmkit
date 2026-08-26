@@ -88,7 +88,7 @@ by quietly doing nothing.
 | `drmkit-display`: tone mapper and colour curves | done — diffed pixel-for-pixel against the reference |
 | `drmkit-display`: EDID via libdisplay-info | done — behind the `edid` feature |
 | Fuzz target for EDID | done — seeded, closing phase 1's carry-over |
-| `allocator_torture` thresholds asserted on vkms | done — four of five cases discriminate there; one cannot ([P-14](docs/parity-findings.md)) |
+| `allocator_torture` thresholds asserted on vkms | done, and measured: three of the six pin a caching mechanism and between them cover both; one is about placement rather than caching; one skips here; `rapid_churn` pins nothing at all ([P-14](docs/parity-findings.md)) |
 | `plane_stress` measurement tool | done — `benches/plane-stress`, CSV per frame |
 | `drmkit-display`: `DriverProfile` | done — capability probe, never the driver name |
 | `drmkit-display`: HDR metadata and cache | done — byte-identical to the reference's serializer over twelve vectors |
@@ -100,6 +100,20 @@ by quietly doing nothing.
 | `drmkit-display`: mode lists, hotplug watch, colour pipeline, scanout discovery | done |
 | `drmkit-planes`: reading planes off a device | done — behind a feature, so the crate stays device-free without it |
 | `drmkit-scene-sources`: cursor as an ordinary layer | done — for hardware with no cursor plane |
+
+**Phase 5 — under way.** The v0.1.0-minimal ship gate.
+
+| Item | State |
+|---|---|
+| T7 scenario corpus, including the §4.6 stability scenario | done — all four the plan requires; §4.6 only began discriminating its own feature once insertion was added ([P-27](docs/parity-findings.md)) |
+| `INVARIANTS.md` (Rust) | done — six contracts, numbering and titles linted against upstream |
+| T3: Miri on the pure crates | done — and `drmkit-planes` added, which the unsafe policy named and the lane had missed |
+| T3: ASan on the fd-bound crates | done — 389 cases, including the `va_list` trampoline `docs/phase0-spikes.md` promised a run |
+| T3: TSan | **not started.** The plan calls it "interesting only where the C++ used atomics … the Rust equivalents should reduce to `Mutex`/channel and mostly retire the question" |
+| A validation process for the device pool | done — `cargo xtask validate`, capability baselines, and coverage attribution per device ([`docs/validation.md`](docs/validation.md)) |
+| The drmdb corpus as a standing check | done — five gating rules and ten surveys over ~1,200 devices, run weekly and on the pull requests that touch what it reads |
+| HIL smoke on RK3588 and VisionFive 2 | **not started.** Needs the boards |
+| Docs | partial — the harness, validation and corpus have their own; the public API rustdoc pass the plan asks for has not been done |
 
 ### The differential harness
 

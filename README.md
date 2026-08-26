@@ -113,7 +113,7 @@ by quietly doing nothing.
 | A validation process for the device pool | done — `cargo xtask validate`, capability baselines, and coverage attribution per device ([`docs/validation.md`](docs/validation.md)) |
 | The drmdb corpus as a standing check | done — five gating rules and ten surveys over ~1,200 devices, run weekly and on the pull requests that touch what it reads |
 | HIL smoke on RK3588 and VisionFive 2 | **not started.** Needs the boards |
-| Docs | partial — the harness, validation and corpus have their own, and rustdoc is now clean under `-Dwarnings` and stays that way in CI; the invariant cross-referencing the plan asks for is there (62 references across seven crates), but no one has read the public API end to end for whether it explains itself |
+| Docs | mostly. Rustdoc is clean under `-Dwarnings` and stays that way in CI; all 940 public items are documented, `missing_docs` having been enforced throughout; and each of the six invariants is cross-referenced from the crates that carry it. The crate front pages a consumer lands on have been read and rewritten where they described an earlier version of the library or omitted how to use it. What is left is the long tail — the individual item prose, which no one has read end to end |
 
 ### The differential harness
 

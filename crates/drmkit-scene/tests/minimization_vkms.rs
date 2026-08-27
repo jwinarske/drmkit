@@ -21,7 +21,7 @@ use drmkit_fmt::fourcc;
 use drmkit_planes::PlaneRegistry;
 use drmkit_scene::{
     CommitKind, CommitReport, DeviceCommitter, DisplayParams, KernelResult, LayerHandle,
-    LayerScene, Modeset, PlanePropertyMap, Rect, arm_acquire_fences, emit_frame,
+    LayerScene, Modeset, PlanePropertyMap, Rect, arm_acquire_fences, emit_frame_damaged,
 };
 
 mod common;
@@ -179,8 +179,14 @@ impl Fixture {
             .map_err(|error| format!("building: {error}"))?;
 
         let mut request = AtomicRequest::with_capacity(64);
-        emit_frame(&mut request, &self.map, &mut build, modeset.as_ref())
-            .map_err(|error| format!("emitting: {error}"))?;
+        let (_, _damage_blobs) = emit_frame_damaged(
+            &mut request,
+            &self.map,
+            &mut build,
+            modeset.as_ref(),
+            Some(&self.device),
+        )
+        .map_err(|error| format!("emitting: {error}"))?;
         arm_acquire_fences(&mut build, &mut request, &self.map, true)
             .map_err(|error| format!("fences: {error}"))?;
 
@@ -445,4 +451,40 @@ fn moving_a_layer_defeats_the_fast_path_and_the_next_frame_recovers_it_vkms() {
     assert_eq!(resteady.test_commits_issued, 0);
 
     fx.teardown();
+}
+
+/// The kernel accepts a damage blob in the layout drmkit builds.
+///
+/// vkms exposes `FB_DAMAGE_CLIPS` on no plane, so nothing here can commit one
+/// — recorded as P-33 and P-34. What *is* reachable is the half that does not
+/// need a plane: whether `create_property_blob` takes the `drm_mode_rect`
+/// array as laid out. A blob the kernel refuses would fail every damaged
+/// frame on the hardware that does expose the property, and finding that out
+/// on a board rather than here would be a waste of the board.
+#[test]
+#[ignore = "needs a DRM device"]
+fn the_kernel_takes_a_damage_blob_in_the_layout_we_build_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+
+    // Two rectangles, as `x1, y1, x2, y2` corner pairs.
+    let rects: [[i32; 4]; 2] = [[0, 0, 8, 8], [100, 200, 116, 216]];
+    let blob = device
+        .create_property_blob(rects.as_slice())
+        .expect("the kernel must take a drm_mode_rect array");
+    assert_ne!(blob.id(), 0, "a zero blob id names nothing");
+
+    // A single rectangle is the common case and must work too: a length the
+    // kernel rounds or rejects would show up here rather than on a board.
+    let one: [[i32; 4]; 1] = [[4, 4, 12, 12]];
+    let single = device
+        .create_property_blob(one.as_slice())
+        .expect("one rectangle is a valid blob");
+    assert_ne!(single.id(), 0);
+    assert_ne!(
+        single.id(),
+        blob.id(),
+        "two live blobs must be distinguishable, or a frame would point at \
+         the previous frame's damage"
+    );
 }

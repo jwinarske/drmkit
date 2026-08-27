@@ -12,7 +12,7 @@ use drmkit_planes::PlaneRegistry;
 use drmkit_scene::{
     AcquiredBuffer, BindingModel, CommitKind, CommitReport, DamageRect, DeviceCommitter,
     DisplayParams, KernelResult, LayerBufferSource, LayerHandle, LayerScene, Modeset,
-    PlanePropertyMap, SourceError, SourceFormat, arm_acquire_fences, emit_frame,
+    PlanePropertyMap, SourceError, SourceFormat, arm_acquire_fences, emit_frame_damaged,
 };
 
 use crate::{DumbRingSource, PaintError, Rect};
@@ -371,7 +371,16 @@ impl DumbScanoutSink {
         )?;
 
         let mut request = AtomicRequest::with_capacity(64);
-        emit_frame(&mut request, &self.map, &mut build, modeset.as_ref())?;
+        // The blobs are bound to a local that outlives the commit: the
+        // request holds only their ids, and dropping them first would leave it
+        // pointing at kernel objects that no longer exist.
+        let (_, _damage_blobs) = emit_frame_damaged(
+            &mut request,
+            &self.map,
+            &mut build,
+            modeset.as_ref(),
+            Some(device),
+        )?;
         arm_acquire_fences(&mut build, &mut request, &self.map, true)?;
 
         let programmed: Vec<u32> = build.plan().iter().map(|entry| entry.plane_id).collect();

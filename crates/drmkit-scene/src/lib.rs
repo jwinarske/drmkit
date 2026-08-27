@@ -86,7 +86,7 @@ pub use canvas::{
 };
 pub use commit::{
     DeviceCommitter, FenceAction, LayerWrites, Modeset, PlanePropertyMap, arm_acquire_fences,
-    classify, emit_disable, emit_frame, emit_layer, fence_action,
+    classify, emit_disable, emit_frame, emit_frame_damaged, emit_layer, fence_action,
 };
 pub use display::{DisplayParams, Rect, to_16_16};
 pub use frame::{AcquireTally, CommitKind, FrameLifecycle, FrameOutcome, KernelResult};

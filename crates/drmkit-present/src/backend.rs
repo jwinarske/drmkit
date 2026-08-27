@@ -17,7 +17,7 @@ use drmkit_modeset::ModeInfo as _;
 use drmkit_planes::PlaneRegistry;
 use drmkit_scene::{
     CommitKind, CommitReport, DeviceCommitter, DisplayParams, KernelResult, LayerHandle,
-    LayerScene, Modeset, PlanePropertyMap, arm_acquire_fences, emit_frame,
+    LayerScene, Modeset, PlanePropertyMap, arm_acquire_fences, emit_frame_damaged,
 };
 use drmkit_sync::SyncFence;
 
@@ -402,7 +402,15 @@ impl ScanoutBackend {
         let programmed: Vec<u32> = build.plan().iter().map(|entry| entry.plane_id).collect();
 
         let emit = |request: &mut AtomicRequest, slot: u64| -> Result<(), drmkit_core::CoreError> {
-            emit_frame(request, &self.map, &mut build, modeset.as_ref())?;
+            // The blobs live to the end of this closure, which is where the
+            // commit happens -- the request holds only their ids.
+            let (_, _damage_blobs) = emit_frame_damaged(
+                request,
+                &self.map,
+                &mut build,
+                modeset.as_ref(),
+                Some(device),
+            )?;
             arm_acquire_fences(&mut build, request, &self.map, true)?;
             if let (Some(property), wanted) = vrr {
                 request.add_property(crtc_id, property, u64::from(wanted))?;

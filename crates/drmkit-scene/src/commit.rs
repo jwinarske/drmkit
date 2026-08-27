@@ -52,6 +52,13 @@ pub struct PlanePropertyMap {
     immutable: HashMap<u32, Vec<PropTag>>,
     /// Colorimetry properties, for the planes that expose them.
     color: HashMap<u32, ColorProps>,
+    /// `FB_DAMAGE_CLIPS`, for the planes that expose it.
+    ///
+    /// Kept apart from `planes` rather than given a `PropTag`, because its
+    /// value does not exist until emission: it is a blob id, created from the
+    /// rectangles a source reported for *this* frame. A tag would put it in
+    /// the layer's property bag, which is built before any of that is known.
+    damage: HashMap<u32, u32>,
     /// The inclusive zpos range each plane advertises, where it has one.
     ///
     /// zpos is the one plane property drmkit *derives* rather than echoes: the
@@ -120,6 +127,10 @@ impl PlanePropertyMap {
 
         if let Ok(Some(range)) = store.range(plane_id, PropTag::Zpos.name()) {
             self.zpos_range.insert(plane_id, range);
+        }
+
+        if let Ok(id) = store.property_id(plane_id, "FB_DAMAGE_CLIPS") {
+            self.damage.insert(plane_id, id);
         }
 
         let mut ids = HashMap::new();
@@ -555,8 +566,42 @@ pub fn emit_frame(
     build: &mut crate::FrameBuild,
     modeset: Option<&Modeset<'_>>,
 ) -> Result<usize, CoreError> {
+    emit_frame_damaged(request, map, build, modeset, None).map(|(written, _)| written)
+}
+
+/// [`emit_frame`], plus the `FB_DAMAGE_CLIPS` blobs partial repaint needs.
+///
+/// `device` is what creates the blobs, and is separate from everything else
+/// because it is the only part of emission that allocates kernel objects.
+/// Pass `None` to emit no damage at all — every frame then repaints whole,
+/// which is correct, just more bandwidth than the sources asked for.
+///
+/// # The returned blobs must outlive the commit
+///
+/// Each is a kernel object destroyed when it drops, and the request holds only
+/// its id. Dropping them before `commit` leaves the request pointing at blobs
+/// the kernel has already freed. Bind them to a local that lives across the
+/// commit:
+///
+/// ```ignore
+/// let (_, _blobs) = emit_frame_damaged(&mut request, &map, &mut build, None, Some(device))?;
+/// request.commit(device, flags)?;
+/// ```
+///
+/// # Errors
+///
+/// [`CoreError`] if a property write is rejected or a blob cannot be created.
+pub fn emit_frame_damaged<'a>(
+    request: &mut drmkit_core::AtomicRequest,
+    map: &PlanePropertyMap,
+    build: &mut crate::FrameBuild,
+    modeset: Option<&Modeset<'_>>,
+    device: Option<&'a Device>,
+) -> Result<(usize, Vec<drmkit_core::PropertyBlob<'a>>), CoreError> {
     let mut written = 0;
     let mut fbs = 0;
+    let mut damaged = 0;
+    let mut blobs = Vec::new();
     if let Some(modeset) = modeset {
         written += modeset.emit(request)?;
     }
@@ -574,12 +619,76 @@ pub fn emit_frame(
         written += layer.properties;
         fbs += layer.framebuffers;
         written += emit_color_props(request, map, entry.plane_id)?;
+
+        if let Some(device) = device
+            && let Some(blob) = emit_damage(request, map, device, entry.plane_id, &entry.damage)?
+        {
+            blobs.push(blob);
+            written += 1;
+            damaged += 1;
+        }
     }
     // Recorded rather than only returned: the caller has no way to put these
     // back into the report, and a discarded return is how `properties_written`
     // and `fbs_attached` came to be documented counters that were always zero.
-    build.record_emission(written, fbs);
-    Ok(written)
+    build.record_emission(written, fbs, damaged);
+    Ok((written, blobs))
+}
+
+/// Convert damage rectangles into the `struct drm_mode_rect` array the kernel
+/// reads out of an `FB_DAMAGE_CLIPS` blob.
+///
+/// `drm_mode_rect` is four `__s32`: `x1, y1, x2, y2` — **corners, not
+/// origin-and-size**, and the second corner is exclusive. Writing a width
+/// where `x2` belongs describes a rectangle in the wrong place *and* the wrong
+/// size, and the driver repaints that instead — leaving the region that
+/// actually changed stale, which looks exactly like a producer that failed to
+/// draw.
+///
+/// The addition saturates rather than wrapping. A rectangle whose far corner
+/// does not fit an `i32` is nothing a real framebuffer contains, and clamping
+/// over-reports where wrapping would describe a rectangle with its corners the
+/// wrong way round.
+pub(crate) fn damage_rects(damage: &[crate::DamageRect]) -> Vec<[i32; 4]> {
+    damage
+        .iter()
+        .map(|rect| {
+            [
+                rect.x,
+                rect.y,
+                rect.x.saturating_add(rect.w.cast_signed()),
+                rect.y.saturating_add(rect.h.cast_signed()),
+            ]
+        })
+        .collect()
+}
+
+/// Stage one layer's damage as a `FB_DAMAGE_CLIPS` blob and point the plane at
+/// it.
+///
+/// `None` when there is nothing to say: the plane has no such property, or the
+/// layer reported no damage. **An empty list is not an empty blob.** Empty
+/// damage means *the whole frame changed*, and the way to say that is to write
+/// nothing -- a zero-rectangle blob tells the driver nothing changed, and the
+/// frame is never repainted.
+fn emit_damage<'a>(
+    request: &mut drmkit_core::AtomicRequest,
+    map: &PlanePropertyMap,
+    device: &'a Device,
+    plane_id: u32,
+    damage: &[crate::DamageRect],
+) -> Result<Option<drmkit_core::PropertyBlob<'a>>, CoreError> {
+    let Some(property_id) = map.damage.get(&plane_id).copied() else {
+        return Ok(None);
+    };
+    if damage.is_empty() {
+        return Ok(None);
+    }
+
+    let rects = damage_rects(damage);
+    let blob = device.create_property_blob(rects.as_slice())?;
+    request.add_property(plane_id, property_id, blob.id())?;
+    Ok(Some(blob))
 }
 
 /// Emit a plane's colorimetry, if it has any.

@@ -9,6 +9,7 @@ use drmkit_planes::{Allocator, LayerRef};
 use drmkit_planes::{
     Layer as PlaneLayer, LayerId, PlaneRegistry, Rect, TestCommitter, TestFailure,
 };
+use std::collections::HashMap;
 
 use drmkit_core::Device;
 use drmkit_sync::SyncFence;
@@ -204,6 +205,13 @@ pub struct PlanePlan {
     /// frame is finalized, so reading it afterwards would diff this frame
     /// against itself and suppress every property.
     pub baseline: Option<drmkit_planes::PropertySnapshot>,
+    /// What this frame's source said changed, in destination pixels.
+    ///
+    /// Empty means whole-frame, which is what an absent `FB_DAMAGE_CLIPS`
+    /// already says -- so an empty list writes nothing rather than an empty
+    /// blob, which the kernel reads as *nothing changed* and would leave the
+    /// frame unrepainted.
+    pub damage: Vec<crate::DamageRect>,
 }
 
 /// leaks them** — the same contract the C++ states, and the reason this type
@@ -230,9 +238,15 @@ impl FrameBuild {
     /// Called by [`emit_frame`](crate::emit_frame), which is the only thing
     /// that knows: the counts are decided by the diff against what the kernel
     /// last took, and that happens at emission rather than at build time.
-    pub(crate) const fn record_emission(&mut self, properties: usize, framebuffers: usize) {
+    pub(crate) const fn record_emission(
+        &mut self,
+        properties: usize,
+        framebuffers: usize,
+        damaged: usize,
+    ) {
         self.report.properties_written = properties;
         self.report.fbs_attached = framebuffers;
+        self.report.damaged_layers = damaged;
     }
 
     /// How many buffers this frame is holding.
@@ -574,6 +588,7 @@ impl LayerScene {
         let mut starved: Vec<LayerId> = Vec::new();
         let mut acquisitions = Vec::new();
         let mut plane_layers: Vec<(LayerId, PlaneLayer)> = Vec::new();
+        let mut frame_damage: HashMap<LayerId, Vec<crate::DamageRect>> = HashMap::new();
 
         for handle in self.handles().collect::<Vec<_>>() {
             let layer_id = handle.layer_id();
@@ -619,6 +634,12 @@ impl LayerScene {
 
             layer.last_fb_id = Some(acquired.fb_id);
             plane_layers.push((layer_id, plane_layer));
+            // Taken before the acquisition owns it: the damage describes this
+            // frame and is consumed at emission, whereas the acquisition
+            // outlives the commit by two generations.
+            if !acquired.damage.is_empty() {
+                frame_damage.insert(layer_id, acquired.damage.clone());
+            }
             acquisitions.push(Acquisition::new(layer_id, acquired));
         }
 
@@ -664,6 +685,7 @@ impl LayerScene {
             &plane_layers,
             registry,
             crtc_index,
+            &frame_damage,
         );
         let disables = if let Some(composition) = canvas_plane {
             let plane_id = composition.plane_id;
@@ -675,6 +697,10 @@ impl LayerScene {
                 layer_id: LayerId(0),
                 layer: composition.layer,
                 baseline: None,
+                // The canvas is composited fresh each frame it is armed, and
+                // its content is the union of what it rescued -- there is no
+                // one source's damage to report, so it repaints whole.
+                damage: Vec::new(),
             });
             disables.into_iter().filter(|id| *id != plane_id).collect()
         } else {
@@ -1438,6 +1464,7 @@ fn build_plan(
     plane_layers: &[(LayerId, drmkit_planes::Layer)],
     registry: &PlaneRegistry,
     crtc_index: u32,
+    damage: &HashMap<LayerId, Vec<crate::DamageRect>>,
 ) -> (Vec<PlanePlan>, Vec<u32>) {
     let plan: Vec<PlanePlan> = plane_layers
         .iter()
@@ -1450,6 +1477,7 @@ fn build_plan(
                     layer_id: *id,
                     layer: layer.clone(),
                     baseline: allocator.committed_baseline(plane_id, *id).copied(),
+                    damage: damage.get(id).cloned().unwrap_or_default(),
                 })
         })
         .collect();

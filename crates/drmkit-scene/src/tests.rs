@@ -1655,3 +1655,104 @@ mod scene_surfaces {
         assert_eq!(LayerScene::new(42).crtc_id(), 42);
     }
 }
+
+// --- FB_DAMAGE_CLIPS rectangles ----------------------------------------------
+
+/// Damage is converted to corners, not to origin-and-size.
+///
+/// `struct drm_mode_rect` is `x1, y1, x2, y2`. A `DamageRect` is `x, y, w, h`.
+/// The two have the same shape and different meanings, which is exactly the
+/// kind of mismatch that produces a plausible-looking blob describing the
+/// wrong region — and the symptom is a stale area on screen, indistinguishable
+/// from a producer that did not draw.
+#[test]
+fn damage_becomes_corner_pairs_not_widths() {
+    let rects = crate::commit::damage_rects(&[DamageRect {
+        x: 10,
+        y: 20,
+        w: 30,
+        h: 40,
+    }]);
+
+    assert_eq!(
+        rects,
+        vec![[10, 20, 40, 60]],
+        "x2 is x + w and y2 is y + h; [10, 20, 30, 40] would be the width \
+         written where the far corner belongs"
+    );
+}
+
+/// Every rectangle is converted, in the order given.
+///
+/// The kernel takes the union, so order does not change what is repainted --
+/// but dropping one does, and a conversion that returned only the first would
+/// leave the rest of the damage unreported.
+#[test]
+fn every_damage_rectangle_is_converted_in_order() {
+    let rects = crate::commit::damage_rects(&[
+        DamageRect {
+            x: 0,
+            y: 0,
+            w: 8,
+            h: 8,
+        },
+        DamageRect {
+            x: 100,
+            y: 200,
+            w: 1,
+            h: 1,
+        },
+    ]);
+
+    assert_eq!(rects, vec![[0, 0, 8, 8], [100, 200, 101, 201]]);
+}
+
+/// A negative origin converts unchanged.
+///
+/// `DamageRect` is signed because a layer can be positioned partly off-screen,
+/// and the driver clips. Coercing a negative origin to zero here would move
+/// the damage rather than clip it, repainting a region the producer did not
+/// touch and leaving the one it did.
+#[test]
+fn a_negative_origin_is_carried_through_rather_than_clamped() {
+    let rects = crate::commit::damage_rects(&[DamageRect {
+        x: -4,
+        y: -8,
+        w: 16,
+        h: 16,
+    }]);
+
+    assert_eq!(rects, vec![[-4, -8, 12, 8]]);
+}
+
+/// A far corner that cannot fit an `i32` saturates rather than wrapping.
+///
+/// Nothing real reaches this. What matters is which way it fails: wrapping
+/// produces a rectangle whose corners are the wrong way round, which is a
+/// malformed blob the driver may reject or read as an enormous region.
+/// Saturating over-reports, which is at worst a wasted repaint.
+#[test]
+fn a_far_corner_past_i32_saturates_rather_than_wrapping() {
+    let rects = crate::commit::damage_rects(&[DamageRect {
+        x: i32::MAX - 1,
+        y: 0,
+        w: 64,
+        h: 8,
+    }]);
+
+    assert_eq!(rects[0][2], i32::MAX, "clamped, not wrapped to a negative");
+    assert!(
+        rects[0][2] >= rects[0][0],
+        "the far corner must never end up behind the near one"
+    );
+}
+
+/// Nothing to report converts to nothing.
+///
+/// The caller is expected to write no property at all in this case — an empty
+/// blob says *nothing changed*, which is the opposite of what empty damage
+/// means. This pins that the conversion itself does not invent a rectangle.
+#[test]
+fn no_damage_converts_to_no_rectangles() {
+    assert!(crate::commit::damage_rects(&[]).is_empty());
+}

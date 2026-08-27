@@ -7,7 +7,7 @@
 
 use drmkit_planes::{Allocator, LayerRef};
 use drmkit_planes::{
-    Layer as PlaneLayer, LayerId, PlaneRegistry, Rect, TestCommitter, TestFailure,
+    Layer as PlaneLayer, LayerId, PlaneRegistry, PropTag, Rect, TestCommitter, TestFailure,
 };
 use std::collections::HashMap;
 
@@ -79,6 +79,15 @@ pub struct SceneLayer {
     /// values written to a chosen plane, so the scene drops the allocator's
     /// warm start for that frame and lets the layer move.
     hints_dirty: bool,
+    /// A plane the caller insists this layer scans out on.
+    ///
+    /// A *request*, not a guarantee: the plane has to be on this CRTC, take
+    /// the layer's format, and not already be spoken for. When it is not, the
+    /// layer falls back to normal allocation and the frame reports it through
+    /// [`CommitReport::pin_requests_unhonored`] rather than dropping it — a
+    /// caller's deterministic-plane assumption being violated is worth saying
+    /// out loud, and worth saying more than it is worth blanking a layer over.
+    pinned_plane: Option<u32>,
     /// Whether the geometry changed since the last commit.
     ///
     /// Separate from `hints_dirty`, which drops the warm start: geometry only
@@ -131,6 +140,27 @@ impl SceneLayer {
     pub const fn set_display(&mut self, display: DisplayParams) {
         self.display = display;
         self.display_dirty = true;
+    }
+
+    /// The plane this layer is pinned to, if any.
+    #[must_use]
+    pub const fn pinned_plane(&self) -> Option<u32> {
+        self.pinned_plane
+    }
+
+    /// Pin this layer to a plane, or clear the pin with `None`.
+    ///
+    /// For a caller that needs a specific plane rather than whichever one the
+    /// allocator picks: a driver-bound producer, a plane with hardware the
+    /// others lack, or a layout the caller has already validated. Honoured
+    /// where it can be, reported where it cannot — see
+    /// [`pinned_plane`](Self::pinned_plane).
+    ///
+    /// Flags for re-allocation, because it changes where this layer goes and
+    /// therefore what is left for everything else.
+    pub const fn set_pinned_plane(&mut self, plane_id: Option<u32>) {
+        self.pinned_plane = plane_id;
+        self.hints_dirty = true;
     }
 
     /// The allocator's content-type hint.
@@ -187,9 +217,6 @@ enum Slot {
     Free,
 }
 
-/// A frame that has been built and is awaiting the kernel's answer.
-///
-/// Holding one means holding acquisitions. **Dropping it without finalizing
 /// One plane's share of a built frame.
 #[derive(Debug, Clone)]
 pub struct PlanePlan {
@@ -214,6 +241,25 @@ pub struct PlanePlan {
     pub damage: Vec<crate::DamageRect>,
 }
 
+/// One pass over the sources: what they gave, and what it cost.
+struct Acquired {
+    /// Layers holding their previous frame because the source had none.
+    starved: Vec<LayerId>,
+    /// Buffers taken this frame, owed back after the commit.
+    acquisitions: Vec<Acquisition>,
+    /// Each layer lowered into the property bag the allocator reads.
+    plane_layers: Vec<(LayerId, PlaneLayer)>,
+    /// What each source said changed, for `FB_DAMAGE_CLIPS`.
+    frame_damage: HashMap<LayerId, Vec<crate::DamageRect>>,
+    /// Pin requests the hardware could not honour.
+    pins_unhonored: usize,
+    /// Pins that were honoured, layer to plane.
+    pinned: Vec<(LayerId, u32)>,
+}
+
+/// A frame that has been built and is awaiting the kernel's answer.
+///
+/// Holding one means holding acquisitions. **Dropping it without finalizing
 /// leaks them** — the same contract the C++ states, and the reason this type
 /// warns on drop.
 #[derive(Debug)]
@@ -457,6 +503,7 @@ impl LayerScene {
             update_hint_hz: 0,
             app_priority: 0,
             hints_dirty: false,
+            pinned_plane: None,
             display_dirty: true,
             last_fb_id: None,
         });
@@ -551,6 +598,103 @@ impl LayerScene {
         Some(index)
     }
 
+    /// Acquire every layer's buffer and lower it into a property bag.
+    ///
+    /// Split out of [`build_frame`](Self::build_frame) because it is the one
+    /// pass that touches the sources, and because everything after it works
+    /// only from what this returns.
+    fn acquire_every_layer(
+        &mut self,
+        registry: &PlaneRegistry,
+        crtc_index: u32,
+        tally: &mut AcquireTally,
+    ) -> Result<Acquired, SceneError> {
+        let mut starved: Vec<LayerId> = Vec::new();
+        let mut acquisitions = Vec::new();
+        let mut plane_layers: Vec<(LayerId, PlaneLayer)> = Vec::new();
+        let mut frame_damage: HashMap<LayerId, Vec<crate::DamageRect>> = HashMap::new();
+        let mut pins_unhonored = 0usize;
+        // Honoured pins, layer to plane. The allocator skips these layers by
+        // design -- the scene owns their planes -- so the plan and the report
+        // have to carry them, or a pinned layer is programmed by nobody and
+        // reported by nobody while still being counted as considered.
+        let mut pinned: Vec<(LayerId, u32)> = Vec::new();
+
+        for handle in self.handles().collect::<Vec<_>>() {
+            let layer_id = handle.layer_id();
+            let Some(index) = self.resolve(handle) else {
+                continue;
+            };
+            let Slot::Occupied(layer) = &mut self.slots[index] else {
+                continue;
+            };
+
+            let acquired = match layer.source.acquire() {
+                Ok(buffer) => buffer,
+                Err(SourceError::WouldBlock) => {
+                    // Flow control, not failure: the source has no frame this
+                    // vblank. The layer keeps its plane and its last
+                    // framebuffer, so it goes on showing what it already had.
+                    //
+                    // Dropping it from the frame instead would take its plane
+                    // out of the assignment and the commit would disable it --
+                    // a layer whose source hiccups would blink off, which is
+                    // the visible failure this path exists to avoid.
+                    tally.record(false);
+                    let Some(fb_id) = layer.last_fb_id else {
+                        // Starved before it ever produced anything. There is
+                        // no previous frame to hold, so there is nothing to
+                        // program and the layer really is absent.
+                        continue;
+                    };
+                    starved.push(layer_id);
+                    let (lowered, pin) = lower(layer, fb_id, self.crtc_id, registry, crtc_index);
+                    match pin {
+                        PinOutcome::Refused => pins_unhonored += 1,
+                        PinOutcome::Honoured(plane_id) => pinned.push((layer_id, plane_id)),
+                        PinOutcome::NotRequested => {}
+                    }
+                    plane_layers.push((layer_id, lowered));
+                    continue;
+                }
+                Err(other) => {
+                    // Hand back whatever this pass already took: the commit is
+                    // not happening, so holding them would stall those rings.
+                    self.release_all(acquisitions);
+                    return Err(SceneError::Source(other));
+                }
+            };
+            tally.record(true);
+
+            let (plane_layer, pin) =
+                lower(layer, acquired.fb_id, self.crtc_id, registry, crtc_index);
+            match pin {
+                PinOutcome::Refused => pins_unhonored += 1,
+                PinOutcome::Honoured(plane_id) => pinned.push((layer_id, plane_id)),
+                PinOutcome::NotRequested => {}
+            }
+
+            layer.last_fb_id = Some(acquired.fb_id);
+            plane_layers.push((layer_id, plane_layer));
+            // Taken before the acquisition owns it: the damage describes this
+            // frame and is consumed at emission, whereas the acquisition
+            // outlives the commit by two generations.
+            if !acquired.damage.is_empty() {
+                frame_damage.insert(layer_id, acquired.damage.clone());
+            }
+            acquisitions.push(Acquisition::new(layer_id, acquired));
+        }
+
+        Ok(Acquired {
+            starved,
+            acquisitions,
+            plane_layers,
+            frame_damage,
+            pins_unhonored,
+            pinned,
+        })
+    }
+
     /// Acquire from every layer, lower it, and run the allocator.
     ///
     /// A source with nothing to contribute is **skipped and counted**, never
@@ -585,63 +729,14 @@ impl LayerScene {
         // Layers holding their previous frame. They are programmed but not
         // acquired, so the report must not count them as assigned -- the
         // identity is assigned + composited + unassigned + skipped.
-        let mut starved: Vec<LayerId> = Vec::new();
-        let mut acquisitions = Vec::new();
-        let mut plane_layers: Vec<(LayerId, PlaneLayer)> = Vec::new();
-        let mut frame_damage: HashMap<LayerId, Vec<crate::DamageRect>> = HashMap::new();
-
-        for handle in self.handles().collect::<Vec<_>>() {
-            let layer_id = handle.layer_id();
-            let Some(index) = self.resolve(handle) else {
-                continue;
-            };
-            let Slot::Occupied(layer) = &mut self.slots[index] else {
-                continue;
-            };
-
-            let acquired = match layer.source.acquire() {
-                Ok(buffer) => buffer,
-                Err(SourceError::WouldBlock) => {
-                    // Flow control, not failure: the source has no frame this
-                    // vblank. The layer keeps its plane and its last
-                    // framebuffer, so it goes on showing what it already had.
-                    //
-                    // Dropping it from the frame instead would take its plane
-                    // out of the assignment and the commit would disable it --
-                    // a layer whose source hiccups would blink off, which is
-                    // the visible failure this path exists to avoid.
-                    tally.record(false);
-                    let Some(fb_id) = layer.last_fb_id else {
-                        // Starved before it ever produced anything. There is
-                        // no previous frame to hold, so there is nothing to
-                        // program and the layer really is absent.
-                        continue;
-                    };
-                    starved.push(layer_id);
-                    plane_layers.push((layer_id, lower(layer, fb_id, self.crtc_id)));
-                    continue;
-                }
-                Err(other) => {
-                    // Hand back whatever this pass already took: the commit is
-                    // not happening, so holding them would stall those rings.
-                    self.release_all(acquisitions);
-                    return Err(SceneError::Source(other));
-                }
-            };
-            tally.record(true);
-
-            let plane_layer = lower(layer, acquired.fb_id, self.crtc_id);
-
-            layer.last_fb_id = Some(acquired.fb_id);
-            plane_layers.push((layer_id, plane_layer));
-            // Taken before the acquisition owns it: the damage describes this
-            // frame and is consumed at emission, whereas the acquisition
-            // outlives the commit by two generations.
-            if !acquired.damage.is_empty() {
-                frame_damage.insert(layer_id, acquired.damage.clone());
-            }
-            acquisitions.push(Acquisition::new(layer_id, acquired));
-        }
+        let Acquired {
+            starved,
+            acquisitions,
+            plane_layers,
+            frame_damage,
+            pins_unhonored,
+            pinned,
+        } = self.acquire_every_layer(registry, crtc_index, &mut tally)?;
 
         let refs: Vec<LayerRef<'_>> = plane_layers
             .iter()
@@ -667,7 +762,15 @@ impl LayerScene {
         // either way, so only the split tells them apart.
         let composited = canvas_plane.as_ref().map_or(0, |c| c.blended);
 
-        let report = build_report(&tally, &allocation, registry, &starved, composited);
+        let report = build_report(
+            &tally,
+            &allocation,
+            registry,
+            &starved,
+            composited,
+            &pinned,
+            pins_unhonored,
+        );
 
         // Clear the change flags now the allocation has seen them.
         for handle in self.handles().collect::<Vec<_>>() {
@@ -686,6 +789,7 @@ impl LayerScene {
             registry,
             crtc_index,
             &frame_damage,
+            &pinned,
         );
         let disables = if let Some(composition) = canvas_plane {
             let plane_id = composition.plane_id;
@@ -1194,6 +1298,8 @@ fn build_report(
     registry: &PlaneRegistry,
     starved: &[LayerId],
     composited: usize,
+    pinned: &[(LayerId, u32)],
+    pins_unhonored: usize,
 ) -> CommitReport {
     // A starved layer holds its plane so it keeps showing its last frame, so
     // it is in the assignment -- but it is also counted as skipped, and the
@@ -1225,11 +1331,27 @@ fn build_report(
             plane_id: None,
             plane_rotation_bits: 0,
         }))
+        // A pinned layer never entered the allocation, so it has to be
+        // reported from the pin itself. It reached a plane exactly as surely
+        // as an allocated one did.
+        .chain(pinned.iter().map(|(layer, plane_id)| {
+            LayerPlacement {
+                layer: *layer,
+                placement: Placement::AssignedToPlane,
+                plane_id: Some(*plane_id),
+                plane_rotation_bits: registry
+                    .by_id(*plane_id)
+                    .map_or(0, |plane| plane.rotation_bits),
+            }
+        }))
         .collect();
 
     CommitReport {
         layers_total: tally.considered(),
-        layers_assigned: allocation.assignment.len() - starved_assigned,
+        // Pinned layers are assigned too, and counting them keeps the
+        // accounting identity -- they are in `considered` either way.
+        layers_assigned: allocation.assignment.len() - starved_assigned + pinned.len(),
+        pin_requests_unhonored: pins_unhonored,
         // A layer the allocator dropped is only *unassigned* if composition
         // did not rescue it. One that reached the canvas reached hardware, so
         // reporting it unassigned would tell a caller a frame was lost when it
@@ -1432,7 +1554,13 @@ fn lower_canvas(canvas: &CompositeCanvas, crtc_id: u32, zpos: u64) -> Option<Pla
 /// Shared by the ordinary path and the starved path, which differ only in
 /// which framebuffer they name: a fresh acquisition, or the one the layer
 /// already has on screen.
-fn lower(layer: &SceneLayer, fb_id: u32, crtc_id: u32) -> drmkit_planes::Layer {
+fn lower(
+    layer: &SceneLayer,
+    fb_id: u32,
+    crtc_id: u32,
+    registry: &PlaneRegistry,
+    crtc_index: u32,
+) -> (drmkit_planes::Layer, PinOutcome) {
     let mut plane_layer = PlaneLayer::new();
     lower_layer(
         &LoweringInput {
@@ -1448,7 +1576,64 @@ fn lower(layer: &SceneLayer, fb_id: u32, crtc_id: u32) -> drmkit_planes::Layer {
     plane_layer.set_content_type(layer.content_type);
     plane_layer.set_update_hint(layer.update_hint_hz);
     plane_layer.set_app_priority(layer.app_priority);
-    plane_layer
+
+    // The pin, if it can be honoured. `set_pinned` makes the allocator skip
+    // this layer entirely -- the scene owns the plane from here -- so an
+    // unhonourable pin must not set it, or the layer would be skipped by the
+    // allocator *and* placed on nothing.
+    let pin = match layer.pinned_plane {
+        None => PinOutcome::NotRequested,
+        Some(plane_id) if pin_is_honourable(&plane_layer, plane_id, registry, crtc_index) => {
+            plane_layer.set_pinned(true);
+            plane_layer.set_assigned_plane(Some(plane_id));
+            PinOutcome::Honoured(plane_id)
+        }
+        Some(_) => PinOutcome::Refused,
+    };
+    (plane_layer, pin)
+}
+
+/// What became of a layer's pin request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PinOutcome {
+    /// The caller asked for nothing.
+    NotRequested,
+    /// The layer owns this plane; the allocator will not offer it elsewhere.
+    Honoured(u32),
+    /// The plane cannot take this layer, so it goes through normal allocation.
+    Refused,
+}
+
+/// Whether a plane can actually take the layer pinned to it.
+///
+/// Three ways a pin fails, and all three are the caller describing hardware
+/// that is not there: a plane on another CRTC, a plane that cannot scan the
+/// layer's format out, or a plane the scene has already reserved for something
+/// else. Committing an impossible pin would fail the `TEST_ONLY` and take the
+/// whole frame down -- every correctly placed layer with it -- so the check
+/// happens here, and a refused pin costs the caller determinism rather than a
+/// frame.
+fn pin_is_honourable(
+    layer: &PlaneLayer,
+    plane_id: u32,
+    registry: &PlaneRegistry,
+    crtc_index: u32,
+) -> bool {
+    let Some(plane) = registry.by_id(plane_id) else {
+        return false;
+    };
+    if !plane.compatible_with_crtc(crtc_index) {
+        return false;
+    }
+    // The cursor path owns cursor planes, the same carve-out
+    // `force_disable_candidates` makes.
+    if plane.plane_type == drmkit_planes::PlaneType::Cursor {
+        return false;
+    }
+    layer
+        .property(PropTag::PixelFormat)
+        .and_then(|fourcc| u32::try_from(fourcc).ok())
+        .is_none_or(|fourcc| plane.supports_format(fourcc))
 }
 
 /// Work out what this frame writes: which layer goes on which plane, with what
@@ -1465,13 +1650,24 @@ fn build_plan(
     registry: &PlaneRegistry,
     crtc_index: u32,
     damage: &HashMap<LayerId, Vec<crate::DamageRect>>,
+    pinned: &[(LayerId, u32)],
 ) -> (Vec<PlanePlan>, Vec<u32>) {
     let plan: Vec<PlanePlan> = plane_layers
         .iter()
         .filter_map(|(id, layer)| {
+            // A pinned layer never entered the allocation -- the allocator
+            // skips it by design -- so its plane comes from the pin. Without
+            // this it is reported as assigned and programmed by nobody, and
+            // the plane it claimed stays dark.
             allocation
                 .assignment
                 .get_plane_of(*id)
+                .or_else(|| {
+                    pinned
+                        .iter()
+                        .find(|(layer_id, _)| layer_id == id)
+                        .map(|(_, plane_id)| *plane_id)
+                })
                 .map(|plane_id| PlanePlan {
                     plane_id,
                     layer_id: *id,

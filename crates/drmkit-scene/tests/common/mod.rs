@@ -214,6 +214,37 @@ impl Fixture {
             .count()
     }
 
+    /// A non-primary, non-cursor plane on this CRTC.
+    ///
+    /// What a pin case needs: pinning to the plane the allocator would have
+    /// chosen anyway proves only that the allocator works.
+    pub(crate) fn an_overlay_plane(&self) -> Option<u32> {
+        self.registry
+            .for_crtc(self.crtc_index)
+            .find(|plane| plane.plane_type == drmkit_planes::PlaneType::Overlay)
+            .map(|plane| plane.id)
+    }
+
+    /// What the kernel currently has on a plane's `FB_ID`.
+    ///
+    /// Read back from the device rather than from the report: the report says
+    /// what the scene decided, and the point of asking is whether the decision
+    /// reached hardware.
+    pub(crate) fn plane_framebuffer(&self, plane_id: u32) -> Option<u32> {
+        let handle = drm::control::plane::Handle::from(std::num::NonZeroU32::new(plane_id)?);
+        let props = self.device.get_properties(handle).ok()?;
+        let (handles, values) = props.as_props_and_values();
+        for (property, value) in handles.iter().zip(values.iter()) {
+            let Ok(info) = self.device.get_property(*property) else {
+                continue;
+            };
+            if info.name().to_string_lossy() == "FB_ID" {
+                return u32::try_from(*value).ok();
+            }
+        }
+        None
+    }
+
     pub(crate) fn teardown(&mut self) {
         let _ = self.device.set_crtc(
             drm::control::crtc::Handle::from(

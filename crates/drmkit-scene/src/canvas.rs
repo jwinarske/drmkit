@@ -422,7 +422,11 @@ pub fn canvas_format_for_plane(plane: &PlaneCapabilities) -> Option<u32> {
 /// autovectorization elsewhere; here the loop is written so the compiler can
 /// do the same, and the conversion is one row per frame per canvas rather
 /// than anything on the per-layer path.
-fn convert_row(dst: &mut [u8], src: &[u8], pixels: usize, out_fourcc: u32) {
+///
+/// Public because the decoration tier's framebuffer presenter converts into
+/// an fbdev mapping the same way, and a second copy of a channel-order
+/// conversion is a second place for red and blue to be swapped.
+pub fn convert_row(dst: &mut [u8], src: &[u8], pixels: usize, out_fourcc: u32) {
     match out_fourcc {
         // The shadow is already this. `XRGB8888` differs only in that the
         // high byte is ignored rather than read as alpha, so the bytes are

@@ -82,7 +82,7 @@ mod source;
 
 pub use canvas::{
     CompositeCanvas, CompositeRect, CompositeSrc, blend_into, canvas_format_for_plane,
-    canvas_output_bpp, clear_into, format_supported,
+    canvas_output_bpp, clear_into, convert_row, format_supported,
 };
 pub use commit::{
     DeviceCommitter, FenceAction, LayerWrites, Modeset, PlanePropertyMap, arm_acquire_fences,

@@ -17,6 +17,7 @@ mod damage;
 mod geometry;
 mod load;
 mod presenter;
+mod presenter_fb;
 mod presenter_plane;
 mod renderer;
 mod reservation;
@@ -30,6 +31,7 @@ pub use damage::{DamageRect, DamageSlot, compute_damage, intersect_rect, union_r
 pub use geometry::{DecorationGeometry, decoration_geometry};
 pub use load::{ThemeError, load_theme_file, load_theme_str};
 pub use presenter::{PropertyWrite, SurfaceRef, Tier, choose_presenter_tier};
+pub use presenter_fb::{BlitItem, FbTarget, compose_into_framebuffer, fb_fourcc_for};
 pub use presenter_plane::{PlaneError, PlaneSlot, compute_writes};
 pub use renderer::{Canvas, DrawError, Renderer, RendererConfig};
 pub use reservation::{OverlayReservation, ReserveError};

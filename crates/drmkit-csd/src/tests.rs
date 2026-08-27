@@ -2321,3 +2321,326 @@ fn an_intersection_is_the_overlap() {
         "disjoint rectangles overlap in nothing"
     );
 }
+
+// --- framebuffer presenter ----------------------------------------------------
+//
+// Parity port of `tests/unit/test_csd_presenter_fb.cpp`.
+
+use crate::{BlitItem, FbTarget, compose_into_framebuffer, fb_fourcc_for};
+use drmkit_fmt::fourcc;
+
+/// 32bpp with red above blue is `RGB`-ordered.
+#[test]
+fn thirty_two_bpp_with_red_above_blue_is_rgb_ordered() {
+    assert_eq!(fb_fourcc_for(32, 16, 0, 0), Some(fourcc::XRGB8888));
+    assert_eq!(
+        fb_fourcc_for(32, 16, 0, 8),
+        Some(fourcc::ARGB8888),
+        "a transparency field means the fourth byte is alpha, not padding"
+    );
+}
+
+/// 32bpp with red below blue is `BGR`-ordered.
+///
+/// Getting this backwards swaps red and blue on every pixel, which is the one
+/// thing fbdev reports that cannot be inferred from the byte width.
+#[test]
+fn thirty_two_bpp_with_red_below_blue_is_bgr_ordered() {
+    assert_eq!(fb_fourcc_for(32, 0, 16, 0), Some(fourcc::XBGR8888));
+    assert_eq!(fb_fourcc_for(32, 0, 16, 8), Some(fourcc::ABGR8888));
+}
+
+/// 16bpp is 565, in whichever order.
+#[test]
+fn sixteen_bpp_is_565() {
+    assert_eq!(fb_fourcc_for(16, 11, 0, 0), Some(fourcc::RGB565));
+    assert_eq!(fb_fourcc_for(16, 0, 11, 0), Some(fourcc::BGR565));
+}
+
+/// A depth this cannot describe is refused.
+///
+/// A caller handed a guess would write 32-bit pixels into a 24-bit buffer, and
+/// the result is not a wrong colour but a sheared image — every row lands at
+/// the wrong offset.
+#[test]
+fn a_depth_that_cannot_be_described_is_refused() {
+    assert_eq!(fb_fourcc_for(24, 16, 0, 0), None);
+    assert_eq!(fb_fourcc_for(8, 0, 0, 0), None);
+    assert_eq!(fb_fourcc_for(0, 0, 0, 0), None);
+}
+
+const FB_W: u32 = 8;
+const FB_H: u32 = 4;
+
+/// An opaque `ARGB8888` source pixel, as a one-pixel item.
+fn one_pixel(argb: [u8; 4]) -> Vec<u8> {
+    argb.to_vec()
+}
+
+/// Blit one opaque pixel at an offset.
+#[test]
+fn one_opaque_pixel_lands_at_its_offset() {
+    let pixel = one_pixel([0x10, 0x20, 0x30, 0xFF]); // B, G, R, A
+    let items = [BlitItem {
+        pixels: &pixel,
+        stride: 4,
+        width: 1,
+        height: 1,
+        fourcc: fourcc::ARGB8888,
+        x: 3,
+        y: 2,
+    }];
+    let mut framebuffer = vec![0u8; (FB_W * FB_H * 4) as usize];
+    let mut shadow = vec![0u8; (FB_W * FB_H * 4) as usize];
+    let mut target = FbTarget {
+        pixels: &mut framebuffer,
+        stride: FB_W * 4,
+        width: FB_W,
+        height: FB_H,
+        fourcc: fourcc::XRGB8888,
+    };
+
+    compose_into_framebuffer(
+        &mut target,
+        &mut shadow,
+        &items,
+        DamageRect {
+            x: 0,
+            y: 0,
+            w: FB_W,
+            h: FB_H,
+        },
+    );
+
+    let at = ((2 * FB_W + 3) * 4) as usize;
+    assert_eq!(
+        &framebuffer[at..at + 3],
+        &[0x10, 0x20, 0x30],
+        "the pixel is where it was placed, in the destination's own order"
+    );
+    assert_eq!(&framebuffer[0..4], &[0, 0, 0, 0], "and nowhere else");
+}
+
+/// A `BGR`-ordered destination gets its channels swapped.
+///
+/// The blend happens in `ARGB8888` because it needs a consistent order and an
+/// alpha channel; the conversion is what puts it in the destination's terms.
+/// Skipping it swaps red and blue on every pixel.
+#[test]
+fn a_bgr_destination_has_its_channels_swapped() {
+    let pixel = one_pixel([0x10, 0x20, 0x30, 0xFF]);
+    let items = [BlitItem {
+        pixels: &pixel,
+        stride: 4,
+        width: 1,
+        height: 1,
+        fourcc: fourcc::ARGB8888,
+        x: 0,
+        y: 0,
+    }];
+    let mut framebuffer = vec![0u8; (FB_W * FB_H * 4) as usize];
+    let mut shadow = vec![0u8; (FB_W * FB_H * 4) as usize];
+    let mut target = FbTarget {
+        pixels: &mut framebuffer,
+        stride: FB_W * 4,
+        width: FB_W,
+        height: FB_H,
+        fourcc: fourcc::XBGR8888,
+    };
+
+    compose_into_framebuffer(
+        &mut target,
+        &mut shadow,
+        &items,
+        DamageRect {
+            x: 0,
+            y: 0,
+            w: FB_W,
+            h: FB_H,
+        },
+    );
+
+    assert_eq!(
+        &framebuffer[0..3],
+        &[0x30, 0x20, 0x10],
+        "red and blue exchanged relative to the ARGB source"
+    );
+}
+
+/// A shadow too small for the framebuffer does nothing.
+///
+/// Compositing into it would run off the end. Doing nothing is the only safe
+/// answer, and the caller sized it.
+#[test]
+fn a_shadow_too_small_for_the_framebuffer_does_nothing() {
+    let pixel = one_pixel([0xFF, 0xFF, 0xFF, 0xFF]);
+    let items = [BlitItem {
+        pixels: &pixel,
+        stride: 4,
+        width: 1,
+        height: 1,
+        fourcc: fourcc::ARGB8888,
+        x: 0,
+        y: 0,
+    }];
+    let mut framebuffer = vec![0u8; (FB_W * FB_H * 4) as usize];
+    let mut shadow = vec![0u8; 16];
+    let mut target = FbTarget {
+        pixels: &mut framebuffer,
+        stride: FB_W * 4,
+        width: FB_W,
+        height: FB_H,
+        fourcc: fourcc::XRGB8888,
+    };
+
+    compose_into_framebuffer(
+        &mut target,
+        &mut shadow,
+        &items,
+        DamageRect {
+            x: 0,
+            y: 0,
+            w: FB_W,
+            h: FB_H,
+        },
+    );
+
+    assert!(framebuffer.iter().all(|b| *b == 0), "nothing was written");
+}
+
+/// Only the damaged rows are converted.
+///
+/// The blend is already confined to the damage; converting the whole buffer
+/// afterwards would make the damage tracking pointless, since the conversion
+/// costs about what the blend does per row.
+#[test]
+fn only_the_damaged_rows_are_converted() {
+    let pixels = vec![0xFFu8; (FB_W * FB_H * 4) as usize];
+    let items = [BlitItem {
+        pixels: &pixels,
+        stride: FB_W * 4,
+        width: FB_W,
+        height: FB_H,
+        fourcc: fourcc::ARGB8888,
+        x: 0,
+        y: 0,
+    }];
+    // Pre-filled with a sentinel, which is the case that matters: an fbdev
+    // mapping already holds the rest of the screen. A zeroed framebuffer
+    // cannot tell "left alone" from "converted from an empty shadow" -- the
+    // first version of this case could not, and converting every row passed
+    // it.
+    let mut framebuffer = vec![0xAAu8; (FB_W * FB_H * 4) as usize];
+    let mut shadow = vec![0u8; (FB_W * FB_H * 4) as usize];
+    let mut target = FbTarget {
+        pixels: &mut framebuffer,
+        stride: FB_W * 4,
+        width: FB_W,
+        height: FB_H,
+        fourcc: fourcc::XRGB8888,
+    };
+
+    // Only row 1.
+    compose_into_framebuffer(
+        &mut target,
+        &mut shadow,
+        &items,
+        DamageRect {
+            x: 0,
+            y: 1,
+            w: FB_W,
+            h: 1,
+        },
+    );
+
+    let row = |n: u32| {
+        let start = (n * FB_W * 4) as usize;
+        framebuffer[start..start + (FB_W * 4) as usize].to_vec()
+    };
+    assert!(
+        row(1).iter().any(|b| *b != 0),
+        "the damaged row was written"
+    );
+    assert!(
+        row(0).iter().all(|b| *b == 0xAA),
+        "the row above still holds what was already on screen -- converting \
+         it would paint the shadow's empty pixels over the rest of the display"
+    );
+    assert!(row(3).iter().all(|b| *b == 0xAA), "and the row below");
+}
+
+/// Empty damage does nothing at all.
+#[test]
+fn empty_damage_composites_nothing() {
+    let pixels = vec![0xFFu8; (FB_W * FB_H * 4) as usize];
+    let items = [BlitItem {
+        pixels: &pixels,
+        stride: FB_W * 4,
+        width: FB_W,
+        height: FB_H,
+        fourcc: fourcc::ARGB8888,
+        x: 0,
+        y: 0,
+    }];
+    let mut framebuffer = vec![0u8; (FB_W * FB_H * 4) as usize];
+    let mut shadow = vec![0u8; (FB_W * FB_H * 4) as usize];
+    let mut target = FbTarget {
+        pixels: &mut framebuffer,
+        stride: FB_W * 4,
+        width: FB_W,
+        height: FB_H,
+        fourcc: fourcc::XRGB8888,
+    };
+
+    compose_into_framebuffer(&mut target, &mut shadow, &items, DamageRect::default());
+
+    assert!(
+        framebuffer.iter().all(|b| *b == 0),
+        "a frame where nothing changed costs nothing, which is the whole \
+         reason damage is tracked"
+    );
+}
+
+/// A decoration outside the damage contributes nothing.
+#[test]
+fn a_decoration_outside_the_damage_contributes_nothing() {
+    let pixel = one_pixel([0xFF, 0xFF, 0xFF, 0xFF]);
+    let items = [BlitItem {
+        pixels: &pixel,
+        stride: 4,
+        width: 1,
+        height: 1,
+        fourcc: fourcc::ARGB8888,
+        x: 7,
+        y: 3,
+    }];
+    let mut framebuffer = vec![0u8; (FB_W * FB_H * 4) as usize];
+    let mut shadow = vec![0u8; (FB_W * FB_H * 4) as usize];
+    let mut target = FbTarget {
+        pixels: &mut framebuffer,
+        stride: FB_W * 4,
+        width: FB_W,
+        height: FB_H,
+        fourcc: fourcc::XRGB8888,
+    };
+
+    // Damage the top-left corner; the decoration is at the bottom-right.
+    compose_into_framebuffer(
+        &mut target,
+        &mut shadow,
+        &items,
+        DamageRect {
+            x: 0,
+            y: 0,
+            w: 2,
+            h: 1,
+        },
+    );
+
+    let at = ((3 * FB_W + 7) * 4) as usize;
+    assert_eq!(
+        &framebuffer[at..at + 4],
+        &[0, 0, 0, 0],
+        "outside the damage means outside this frame's work"
+    );
+}

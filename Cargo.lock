@@ -181,6 +181,7 @@ version = "0.0.0"
 dependencies = [
  "drmkit-fmt",
  "drmkit-planes",
+ "drmkit-scene",
  "thiserror",
  "toml",
 ]

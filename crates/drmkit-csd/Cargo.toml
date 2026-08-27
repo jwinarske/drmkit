@@ -17,6 +17,7 @@ keywords = ["drm", "kms", "compositor", "decorations", "csd"]
 [dependencies]
 drmkit-fmt = { workspace = true }
 drmkit-planes = { workspace = true }
+drmkit-scene = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 

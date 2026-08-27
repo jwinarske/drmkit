@@ -887,3 +887,328 @@ fn a_cross_fade_blends_between_its_endpoints() {
     );
     assert_eq!(sample(&mut cache, 5.0), at_end);
 }
+
+// --- animator -----------------------------------------------------------------
+//
+// Parity port of `tests/unit/test_csd_animator.cpp`.
+
+use crate::{Dirty, HoverButton, PROGRESS_UNSET, WindowAnim, WindowState, ease_out_cubic};
+use std::time::Duration;
+
+const MS: fn(u64) -> Duration = Duration::from_millis;
+
+/// The ease hits both endpoints exactly.
+///
+/// Not "close enough": a window that settled at 0.999 focused would never
+/// quite look focused, and one that started at 0.001 would flicker.
+#[test]
+fn the_ease_hits_both_endpoints_exactly() {
+    assert!((ease_out_cubic(0.0) - 0.0).abs() < f32::EPSILON);
+    assert!((ease_out_cubic(1.0) - 1.0).abs() < f32::EPSILON);
+}
+
+/// Input outside `0..=1` is clamped, not extrapolated.
+///
+/// An animator that overshoots its duration would otherwise carry past the
+/// target and the window would visibly bounce.
+#[test]
+fn the_ease_clamps_rather_than_extrapolating() {
+    assert!((ease_out_cubic(-5.0) - 0.0).abs() < f32::EPSILON);
+    assert!((ease_out_cubic(-0.001) - 0.0).abs() < f32::EPSILON);
+    assert!((ease_out_cubic(5.0) - 1.0).abs() < f32::EPSILON);
+}
+
+/// It only ever increases.
+#[test]
+fn the_ease_never_goes_backwards() {
+    let mut previous = ease_out_cubic(0.0);
+    for step in 1..=100u8 {
+        let current = ease_out_cubic(f32::from(step) / 100.0);
+        assert!(
+            current >= previous,
+            "eased backwards at {step}: {current} < {previous}"
+        );
+        previous = current;
+    }
+}
+
+/// It is fast at the start.
+///
+/// That is what "ease out" means, and it is the half a user notices: the
+/// change is announced immediately and arrives gently.
+#[test]
+fn the_ease_is_fast_at_the_start() {
+    assert!(
+        ease_out_cubic(0.25) > 0.5,
+        "a quarter of the way through time should be past halfway in value"
+    );
+    assert!(ease_out_cubic(0.5) > 0.8);
+}
+
+/// A new animator is settled at its focus, not animating toward it.
+///
+/// A window that appears focused should be drawn focused, not fade in from
+/// unfocused on its first frame.
+#[test]
+fn a_new_animator_is_settled_not_animating() {
+    let focused = WindowAnim::new(true);
+    assert!((focused.focus_progress() - 1.0).abs() < f32::EPSILON);
+    assert!(!focused.is_animating());
+
+    let blurred = WindowAnim::new(false);
+    assert!((blurred.focus_progress() - 0.0).abs() < f32::EPSILON);
+    assert!(!blurred.is_animating());
+}
+
+/// Retargeting to the current target does nothing.
+///
+/// A caller that reports focus every frame would otherwise restart the
+/// timeline every frame, and the window would never finish transitioning.
+#[test]
+fn retargeting_to_the_same_focus_does_nothing() {
+    let mut anim = WindowAnim::new(false);
+    anim.retarget_focus(false);
+    assert!(!anim.is_animating());
+
+    anim.retarget_focus(true);
+    assert!(anim.is_animating());
+    anim.tick(MS(50), MS(200));
+    let midway = anim.focus_progress();
+
+    anim.retarget_focus(true);
+    assert!(
+        (anim.focus_progress() - midway).abs() < f32::EPSILON,
+        "a redundant retarget must not restart the run"
+    );
+}
+
+/// Retargeting starts a run.
+#[test]
+fn retargeting_focus_starts_a_run() {
+    let mut anim = WindowAnim::new(false);
+    anim.retarget_focus(true);
+
+    assert!(anim.is_animating());
+    assert!(
+        (anim.focus_progress() - 0.0).abs() < f32::EPSILON,
+        "and does not jump -- the run has not been ticked yet"
+    );
+}
+
+/// A full duration reaches the target.
+#[test]
+fn a_full_duration_reaches_the_target() {
+    let mut anim = WindowAnim::new(false);
+    anim.retarget_focus(true);
+
+    let still_going = anim.tick(MS(200), MS(200));
+
+    assert!((anim.focus_progress() - 1.0).abs() < f32::EPSILON);
+    assert!(!still_going, "and reports that it has finished");
+    assert!(!anim.is_animating());
+}
+
+/// A tick past the duration clamps to the target.
+#[test]
+fn a_tick_past_the_duration_clamps_to_the_target() {
+    let mut anim = WindowAnim::new(false);
+    anim.retarget_focus(true);
+
+    anim.tick(MS(10_000), MS(200));
+
+    assert!(
+        (anim.focus_progress() - 1.0).abs() < f32::EPSILON,
+        "a dropped frame must not carry the window past focused"
+    );
+}
+
+/// Progress only increases across a run.
+#[test]
+fn progress_only_increases_across_a_run() {
+    let mut anim = WindowAnim::new(false);
+    anim.retarget_focus(true);
+
+    let mut previous = anim.focus_progress();
+    for _ in 0..20 {
+        anim.tick(MS(10), MS(200));
+        assert!(
+            anim.focus_progress() >= previous,
+            "went backwards mid-run: {} < {previous}",
+            anim.focus_progress()
+        );
+        previous = anim.focus_progress();
+    }
+}
+
+/// Retargeting mid-flight eases from where the value is.
+///
+/// Not from zero. A window that loses focus halfway through gaining it should
+/// fade back from half-lit; snapping to unfocused first would flash.
+#[test]
+fn retargeting_mid_flight_eases_from_where_it_is() {
+    let mut anim = WindowAnim::new(false);
+    anim.retarget_focus(true);
+    anim.tick(MS(100), MS(200));
+    let midway = anim.focus_progress();
+    assert!(midway > 0.0 && midway < 1.0, "genuinely mid-flight");
+
+    anim.retarget_focus(false);
+    assert!(
+        (anim.focus_progress() - midway).abs() < f32::EPSILON,
+        "the retarget itself must not move the value"
+    );
+
+    anim.tick(MS(10), MS(200));
+    assert!(
+        anim.focus_progress() < midway,
+        "and it heads back down from there rather than snapping to zero"
+    );
+}
+
+/// Nothing is hovered to begin with.
+#[test]
+fn nothing_is_hovered_to_begin_with() {
+    let anim = WindowAnim::default();
+    assert_eq!(anim.hover_painted(), HoverButton::None);
+    assert!((anim.hover_progress() - 0.0).abs() < f32::EPSILON);
+}
+
+/// Entering a button starts it from zero and finishes at one.
+#[test]
+fn entering_a_button_runs_from_zero_to_one() {
+    let mut anim = WindowAnim::default();
+    anim.retarget_hover(HoverButton::Close);
+
+    assert_eq!(anim.hover_painted(), HoverButton::Close);
+    assert!((anim.hover_progress() - 0.0).abs() < f32::EPSILON);
+
+    anim.tick(MS(200), MS(200));
+    assert!((anim.hover_progress() - 1.0).abs() < f32::EPSILON);
+    assert_eq!(anim.hover_painted(), HoverButton::Close);
+}
+
+/// Leaving fades the button that was left, then stops drawing it.
+///
+/// The painted button is not the target. Setting the target to `None` and
+/// drawing that immediately would make the highlight vanish rather than fade.
+#[test]
+fn leaving_fades_the_button_that_was_left() {
+    let mut anim = WindowAnim::default();
+    anim.retarget_hover(HoverButton::Minimize);
+    anim.tick(MS(200), MS(200));
+    assert!((anim.hover_progress() - 1.0).abs() < f32::EPSILON);
+
+    anim.retarget_hover(HoverButton::None);
+    assert_eq!(
+        anim.hover_painted(),
+        HoverButton::Minimize,
+        "still drawn, because it is still fading"
+    );
+
+    anim.tick(MS(100), MS(200));
+    assert!(anim.hover_progress() < 1.0, "and fading");
+    assert_eq!(anim.hover_painted(), HoverButton::Minimize);
+
+    anim.tick(MS(200), MS(200));
+    assert!((anim.hover_progress() - 0.0).abs() < f32::EPSILON);
+    assert_eq!(
+        anim.hover_painted(),
+        HoverButton::None,
+        "once faded out, it stops being drawn at all"
+    );
+}
+
+/// Moving between buttons restarts on the new one.
+///
+/// They are different highlights in different places; carrying the old one's
+/// progress across would make the new button appear already half-lit.
+#[test]
+fn moving_between_buttons_restarts_on_the_new_one() {
+    let mut anim = WindowAnim::default();
+    anim.retarget_hover(HoverButton::Close);
+    anim.tick(MS(200), MS(200));
+    assert!((anim.hover_progress() - 1.0).abs() < f32::EPSILON);
+
+    anim.retarget_hover(HoverButton::Maximize);
+
+    assert_eq!(anim.hover_painted(), HoverButton::Maximize);
+    assert!(
+        (anim.hover_progress() - 0.0).abs() < f32::EPSILON,
+        "the new button lights from nothing, not from the old one's value"
+    );
+}
+
+/// Snapping jumps to the targets and runs nothing.
+#[test]
+fn snapping_jumps_to_the_targets() {
+    let mut anim = WindowAnim::new(false);
+    anim.retarget_focus(true);
+    anim.retarget_hover(HoverButton::Close);
+    assert!(anim.is_animating());
+
+    anim.snap();
+
+    assert!((anim.focus_progress() - 1.0).abs() < f32::EPSILON);
+    assert!((anim.hover_progress() - 1.0).abs() < f32::EPSILON);
+    assert_eq!(anim.hover_painted(), HoverButton::Close);
+    assert!(!anim.is_animating());
+}
+
+/// A zero duration snaps.
+///
+/// The documented way to turn animations off — `glass-minimal` sets it — not
+/// an edge case being tolerated.
+#[test]
+fn a_zero_duration_snaps() {
+    let mut anim = WindowAnim::new(false);
+    anim.retarget_focus(true);
+
+    let still_going = anim.tick(MS(16), Duration::ZERO);
+
+    assert!((anim.focus_progress() - 1.0).abs() < f32::EPSILON);
+    assert!(!still_going);
+    assert!(!anim.is_animating());
+}
+
+/// Applying writes the animator's progress into the state.
+///
+/// Including the *painted* button rather than the target, so the renderer
+/// draws the one that is fading rather than nothing.
+#[test]
+fn applying_mirrors_the_progress_into_the_state() {
+    let mut anim = WindowAnim::new(false);
+    anim.retarget_focus(true);
+    anim.retarget_hover(HoverButton::Minimize);
+    anim.tick(MS(100), MS(200));
+
+    let mut state = WindowState::default();
+    assert!((state.focus_progress - PROGRESS_UNSET).abs() < f32::EPSILON);
+
+    anim.apply_to(&mut state);
+
+    assert!((state.focus_progress - anim.focus_progress()).abs() < f32::EPSILON);
+    assert!((state.hover_progress - anim.hover_progress()).abs() < f32::EPSILON);
+    assert_eq!(state.hover, HoverButton::Minimize);
+}
+
+/// A fresh state is entirely dirty, and the bits are separable.
+///
+/// Nothing has been drawn yet, so every part of it is new. The separability
+/// is what the mask is for: redrawing because the pointer moved costs a
+/// rounded-rect fill, redrawing because the geometry changed costs a blur.
+#[test]
+fn a_fresh_state_is_dirty_and_the_bits_are_separable() {
+    let state = WindowState::default();
+    assert!(state.dirty.intersects(Dirty::GEOMETRY));
+    assert!(state.dirty.intersects(Dirty::HOVER));
+
+    assert!(Dirty::NONE.is_empty());
+    assert!(
+        !Dirty::HOVER.intersects(Dirty::GEOMETRY),
+        "one bit is not another"
+    );
+    assert!(
+        Dirty::HOVER.union(Dirty::FOCUS).intersects(Dirty::FOCUS),
+        "and a union carries both"
+    );
+}

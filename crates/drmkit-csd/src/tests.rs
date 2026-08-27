@@ -5,6 +5,7 @@
 
 use crate::{Color, ColorError, Theme, ThemeError, glass_default, glass_lite, glass_minimal};
 use crate::{load_theme_file, load_theme_str};
+use drmkit_fmt::fourcc::XRGB8888;
 
 // --- colour -------------------------------------------------------------------
 
@@ -1211,4 +1212,317 @@ fn a_fresh_state_is_dirty_and_the_bits_are_separable() {
         Dirty::HOVER.union(Dirty::FOCUS).intersects(Dirty::FOCUS),
         "and a union carries both"
     );
+}
+
+// --- overlay reservation ------------------------------------------------------
+//
+// Parity port of `tests/unit/test_csd_overlay_reservation.cpp`.
+
+use crate::{OverlayReservation, ReserveError};
+use drmkit_planes::{PlaneCapabilities, PlaneRegistry, PlaneType};
+
+/// A plane on the CRTCs in `crtcs`, at `zpos`, taking `XRGB8888`.
+fn overlay(id: u32, crtcs: u32, zpos: Option<u64>) -> PlaneCapabilities {
+    PlaneCapabilities {
+        id,
+        possible_crtcs: crtcs,
+        plane_type: PlaneType::Overlay,
+        formats: vec![XRGB8888],
+        zpos_min: zpos,
+        zpos_max: zpos,
+        ..PlaneCapabilities::default()
+    }
+}
+
+/// The reference shape: two overlays per CRTC, on two CRTCs, none shared.
+fn partitioned() -> PlaneRegistry {
+    PlaneRegistry::from_capabilities(vec![
+        overlay(10, 0b01, Some(1)),
+        overlay(11, 0b01, Some(2)),
+        overlay(20, 0b10, Some(1)),
+        overlay(21, 0b10, Some(2)),
+    ])
+}
+
+/// Each CRTC reserves from its own planes, without affecting the other.
+#[test]
+fn each_crtc_reserves_without_touching_the_other() {
+    let registry = partitioned();
+    let mut reservation = OverlayReservation::new();
+
+    let first = reservation
+        .reserve(&registry, 0, XRGB8888, 2, 0)
+        .expect("two overlays on CRTC 0");
+    let second = reservation
+        .reserve(&registry, 1, XRGB8888, 2, 0)
+        .expect("two on CRTC 1, which the first reservation cannot have taken");
+
+    assert_eq!(first, vec![10, 11]);
+    assert_eq!(second, vec![20, 21]);
+    assert_eq!(reservation.all_reserved(), vec![10, 11, 20, 21]);
+}
+
+/// Asking for more than exist is a shortfall, and changes nothing.
+///
+/// A caller can ask again for fewer, or draw into the window instead. A
+/// partial reservation would leave it working out which decoration to drop.
+#[test]
+fn asking_for_more_planes_than_exist_is_a_shortfall() {
+    let registry = partitioned();
+    let mut reservation = OverlayReservation::new();
+
+    let error = reservation
+        .reserve(&registry, 0, XRGB8888, 3, 0)
+        .expect_err("CRTC 0 has two overlays");
+
+    assert_eq!(
+        error,
+        ReserveError::Shortfall {
+            crtc_index: 0,
+            wanted: 3,
+            found: 2
+        }
+    );
+    assert!(
+        reservation.all_reserved().is_empty(),
+        "a shortfall must not leave planes claimed that nobody is using"
+    );
+}
+
+/// A plane reachable from two CRTCs goes to whoever claims it first.
+///
+/// The second CRTC must not be offered it again — two CRTCs scanning out of
+/// one plane is not something the hardware can do, and the refusal has to
+/// happen here rather than at the commit.
+#[test]
+fn a_shared_plane_goes_to_whoever_claims_it_first() {
+    // Both planes reachable from both CRTCs.
+    let registry = PlaneRegistry::from_capabilities(vec![
+        overlay(30, 0b11, Some(1)),
+        overlay(31, 0b11, Some(2)),
+    ]);
+    let mut reservation = OverlayReservation::new();
+
+    let first = reservation
+        .reserve(&registry, 0, XRGB8888, 2, 0)
+        .expect("CRTC 0 takes the pool");
+    assert_eq!(first, vec![30, 31]);
+
+    let error = reservation
+        .reserve(&registry, 1, XRGB8888, 1, 0)
+        .expect_err("there is nothing left");
+    assert_eq!(
+        error,
+        ReserveError::Shortfall {
+            crtc_index: 1,
+            wanted: 1,
+            found: 0
+        }
+    );
+}
+
+/// Releasing gives the planes back.
+#[test]
+fn releasing_frees_the_planes_for_another_crtc() {
+    let registry = PlaneRegistry::from_capabilities(vec![overlay(30, 0b11, Some(1))]);
+    let mut reservation = OverlayReservation::new();
+
+    reservation
+        .reserve(&registry, 0, XRGB8888, 1, 0)
+        .expect("CRTC 0 takes it");
+    assert!(reservation.reserve(&registry, 1, XRGB8888, 1, 0).is_err());
+
+    reservation.release(0);
+
+    assert_eq!(
+        reservation.reserve(&registry, 1, XRGB8888, 1, 0),
+        Ok(vec![30]),
+        "released means available"
+    );
+    assert!(reservation.reserved_for(0).is_empty());
+}
+
+/// Releasing twice, or a CRTC that never reserved, is a no-op.
+///
+/// Both are what a caller tearing down an output does, sometimes twice.
+#[test]
+fn releasing_is_idempotent() {
+    let registry = partitioned();
+    let mut reservation = OverlayReservation::new();
+    reservation
+        .reserve(&registry, 0, XRGB8888, 1, 0)
+        .expect("one overlay");
+
+    reservation.release(0);
+    reservation.release(0);
+    reservation.release(99);
+
+    assert!(reservation.all_reserved().is_empty());
+}
+
+/// Reserving again replaces what the CRTC held.
+///
+/// A caller responding to a mode change asks with a new count; the old claim
+/// would otherwise keep planes it no longer wants out of everyone else's
+/// reach.
+#[test]
+fn reserving_again_replaces_the_previous_claim() {
+    let registry = partitioned();
+    let mut reservation = OverlayReservation::new();
+
+    reservation
+        .reserve(&registry, 0, XRGB8888, 2, 0)
+        .expect("both");
+    let narrowed = reservation
+        .reserve(&registry, 0, XRGB8888, 1, 0)
+        .expect("now just one");
+
+    assert_eq!(narrowed.len(), 1);
+    assert_eq!(
+        reservation.all_reserved(),
+        narrowed,
+        "the plane it gave up is available again, not still claimed"
+    );
+}
+
+/// A zpos floor excludes planes that cannot sit above the window.
+///
+/// A decoration below the content it decorates is invisible, so a caller that
+/// knows the window's stacking position says so here rather than discovering
+/// it on screen.
+#[test]
+fn a_zpos_floor_excludes_planes_below_it() {
+    let registry = PlaneRegistry::from_capabilities(vec![
+        overlay(10, 0b01, Some(1)),
+        overlay(11, 0b01, Some(5)),
+    ]);
+    let mut reservation = OverlayReservation::new();
+
+    let claimed = reservation
+        .reserve(&registry, 0, XRGB8888, 1, 4)
+        .expect("one plane sits at or above 4");
+
+    assert_eq!(claimed, vec![11], "not the one at zpos 1");
+}
+
+/// A plane that cannot scan the format out is not a candidate.
+#[test]
+fn a_plane_that_cannot_take_the_format_is_not_a_candidate() {
+    let mut wrong_format = overlay(11, 0b01, Some(2));
+    wrong_format.formats = vec![drmkit_fmt::fourcc::NV12];
+    let registry = PlaneRegistry::from_capabilities(vec![overlay(10, 0b01, Some(1)), wrong_format]);
+    let mut reservation = OverlayReservation::new();
+
+    let error = reservation
+        .reserve(&registry, 0, XRGB8888, 2, 0)
+        .expect_err("only one plane takes XRGB8888");
+
+    assert_eq!(
+        error,
+        ReserveError::Shortfall {
+            crtc_index: 0,
+            wanted: 2,
+            found: 1
+        }
+    );
+}
+
+/// A plane with no zpos is skipped when a floor was asked for.
+///
+/// It cannot be *shown* to sit above anything. Admitting it would put a
+/// decoration wherever the plane's fixed position happens to be, which on a
+/// driver with no settable zpos is exactly the case the floor exists for.
+#[test]
+fn a_plane_without_a_zpos_is_skipped_when_a_floor_is_required() {
+    let registry = PlaneRegistry::from_capabilities(vec![overlay(10, 0b01, None)]);
+    let mut reservation = OverlayReservation::new();
+
+    assert!(
+        reservation.reserve(&registry, 0, XRGB8888, 1, 1).is_err(),
+        "it cannot be shown to be above zpos 1"
+    );
+}
+
+/// With no floor asked for, a plane without a zpos is fine.
+///
+/// The caller said it does not care where the decoration sits, and refusing
+/// here would leave every driver with no settable zpos unable to reserve
+/// anything at all.
+#[test]
+fn a_plane_without_a_zpos_is_admitted_when_no_floor_is_required() {
+    let registry = PlaneRegistry::from_capabilities(vec![overlay(10, 0b01, None)]);
+    let mut reservation = OverlayReservation::new();
+
+    assert_eq!(
+        reservation.reserve(&registry, 0, XRGB8888, 1, 0),
+        Ok(vec![10])
+    );
+}
+
+/// Planes come back in zpos order, and the order is stable.
+///
+/// A caller stacks decorations by index, so two planes at the same zpos
+/// coming back in registry order would make the stack differ run to run.
+#[test]
+fn reserved_planes_come_back_in_a_stable_zpos_order() {
+    // Deliberately out of order, and with a tie.
+    let registry = PlaneRegistry::from_capabilities(vec![
+        overlay(30, 0b01, Some(5)),
+        overlay(10, 0b01, Some(1)),
+        overlay(20, 0b01, Some(1)),
+    ]);
+    let mut reservation = OverlayReservation::new();
+
+    let claimed = reservation
+        .reserve(&registry, 0, XRGB8888, 3, 0)
+        .expect("all three");
+
+    assert_eq!(
+        claimed,
+        vec![10, 20, 30],
+        "zpos first, then id -- the tie has to break the same way every time"
+    );
+    assert_eq!(reservation.reserved_for(0), claimed.as_slice());
+}
+
+/// Reserving nothing succeeds, and still records the CRTC.
+///
+/// A caller that asked for none has a reservation; it is just empty.
+#[test]
+fn reserving_nothing_succeeds() {
+    let registry = partitioned();
+    let mut reservation = OverlayReservation::new();
+
+    assert_eq!(
+        reservation.reserve(&registry, 0, XRGB8888, 0, 0),
+        Ok(Vec::new())
+    );
+    assert!(reservation.reserved_for(0).is_empty());
+    assert!(reservation.all_reserved().is_empty());
+}
+
+/// A CRTC that never reserved holds nothing.
+#[test]
+fn a_crtc_that_never_reserved_holds_nothing() {
+    let reservation = OverlayReservation::new();
+    assert!(reservation.reserved_for(0).is_empty());
+    assert!(reservation.all_reserved().is_empty());
+}
+
+/// A primary plane is never a candidate.
+///
+/// It carries the window. Reserving it for a decoration would leave the
+/// content with nowhere to go.
+#[test]
+fn a_primary_plane_is_never_reserved() {
+    let mut primary = overlay(10, 0b01, Some(0));
+    primary.plane_type = PlaneType::Primary;
+    let registry = PlaneRegistry::from_capabilities(vec![primary, overlay(11, 0b01, Some(1))]);
+    let mut reservation = OverlayReservation::new();
+
+    let claimed = reservation
+        .reserve(&registry, 0, XRGB8888, 1, 0)
+        .expect("the overlay");
+
+    assert_eq!(claimed, vec![11], "the primary is not on offer");
 }

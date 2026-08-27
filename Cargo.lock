@@ -180,6 +180,7 @@ name = "drmkit-csd"
 version = "0.0.0"
 dependencies = [
  "drmkit-fmt",
+ "drmkit-planes",
  "thiserror",
  "toml",
 ]

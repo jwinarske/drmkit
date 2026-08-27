@@ -15,6 +15,7 @@ mod animator;
 mod color;
 mod geometry;
 mod load;
+mod reservation;
 mod shadow;
 mod state;
 mod theme;
@@ -23,6 +24,7 @@ pub use animator::{WindowAnim, ease_out_cubic};
 pub use color::{Color, ColorError};
 pub use geometry::{DecorationGeometry, decoration_geometry};
 pub use load::{ThemeError, load_theme_file, load_theme_str};
+pub use reservation::{OverlayReservation, ReserveError};
 pub use shadow::{DEFAULT_CAPACITY, Elevation, ShadowCache, ShadowDest, ShadowKey, theme_id};
 pub use state::{Dirty, HoverButton, PROGRESS_UNSET, WindowState};
 pub use theme::{

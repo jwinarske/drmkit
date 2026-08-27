@@ -387,3 +387,99 @@ fn repeated_allocation_does_not_leak_vkms() {
         "120 further allocate/drop cycles grew the fd table by {growth}"
     );
 }
+
+/// A `P010` buffer allocates, registers a framebuffer, and is writable as
+/// 16-bit samples.
+///
+/// Parity port of `tests/integration/test_dumb_buffer_p010_vkms.cpp`, which
+/// goes on to scan it out. The scanout half needs a primary plane that
+/// advertises `P010`; this asserts everything up to that and reports whether
+/// the plane would take it, so the same case answers on hardware that does.
+///
+/// `P010` is the 10-bit HDR path. Its samples are `u16` with the value in the
+/// **high** ten bits, so a row stride is two bytes per pixel rather than one —
+/// a buffer sized as though it were 8-bit is half what the format needs, and
+/// the driver reads the second half of every frame from whatever follows.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn create_planar_p010_allocates_and_registers_a_framebuffer_vkms() {
+    let _guard = card_guard();
+    let device = open_card();
+
+    let mut buffer = match Buffer::create_planar(&device, fourcc::P010, 64, 64) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            println!("note: skipped -- this driver refuses a P010 dumb buffer ({error})");
+            return;
+        }
+    };
+
+    assert!(buffer.gem_handle().is_some());
+    assert!(
+        buffer.fb_id().is_some_and(|id| id != 0),
+        "a P010 buffer the kernel would not register as a framebuffer cannot \
+         be scanned out, whatever the allocation says"
+    );
+    assert!(
+        buffer.stride() >= 64 * 2,
+        "two bytes per sample, not one -- a stride sized for 8-bit is half \
+         what P010 needs, and the driver reads the rest of every row from \
+         whatever follows the allocation"
+    );
+    assert_eq!(
+        buffer.height(),
+        64,
+        "the image height, not the allocated rows"
+    );
+
+    // Writable as u16 samples, which is what a producer does.
+    let stride = buffer.stride() as usize;
+    let mapping = buffer.data_mut();
+    assert!(
+        mapping.len() >= stride * 64,
+        "the luma plane alone needs height * stride"
+    );
+    for row in 0..64usize {
+        for column in 0..64usize {
+            let at = row * stride + column * 2;
+            if let Some(sample) = mapping.get_mut(at..at + 2) {
+                // Mid-grey in the high ten bits, little-endian.
+                sample[0] = 0x00;
+                sample[1] = 0x40;
+            }
+        }
+    }
+    assert_eq!(mapping[1], 0x40, "the write reached the mapping");
+}
+
+/// Whether any plane on this card would scan `P010` out.
+///
+/// Reported rather than asserted: it is a property of the driver, and vkms
+/// answering no is not a failure of anything drmkit does. What it decides is
+/// whether the scanout half of the upstream case can run here at all — which
+/// is worth knowing before a board arrives rather than after.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn report_whether_any_plane_scans_out_p010_vkms() {
+    use drm::control::Device as _;
+
+    let _guard = card_guard();
+    let device = open_card();
+    device.enable_universal_planes().ok();
+
+    let Ok(handles) = device.plane_handles() else {
+        println!("note: skipped -- planes could not be listed");
+        return;
+    };
+    let mut takers = 0usize;
+    for handle in &handles {
+        let Ok(info) = device.get_plane(*handle) else {
+            continue;
+        };
+        if info.formats().contains(&fourcc::P010) {
+            takers += 1;
+        }
+    }
+
+    println!("note: {takers} of {} planes advertise P010", handles.len());
+}

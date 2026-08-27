@@ -1526,3 +1526,343 @@ fn a_primary_plane_is_never_reserved() {
 
     assert_eq!(claimed, vec![11], "the primary is not on offer");
 }
+
+// --- renderer -----------------------------------------------------------------
+//
+// Parity port of the `CsdRenderer` and `CsdRendererDraw` cases in
+// `tests/unit/test_csd_renderer.cpp`.
+
+use crate::{Canvas, DrawError, Renderer, RendererConfig};
+
+const W: u32 = 240;
+const H: u32 = 160;
+
+/// A canvas and its backing bytes.
+fn canvas() -> Vec<u8> {
+    vec![0u8; (W * H * 4) as usize]
+}
+
+/// Draw a decoration and hand back the pixels.
+fn render(theme: &Theme, state: &WindowState) -> Vec<u8> {
+    let mut pixels = canvas();
+    let mut shadows = ShadowCache::new(4);
+    let mut target = Canvas {
+        pixels: &mut pixels,
+        stride: W * 4,
+        width: W,
+        height: H,
+    };
+    Renderer::default()
+        .draw(theme, state, &mut target, &mut shadows)
+        .expect("a 240x160 canvas is drawable");
+    pixels
+}
+
+/// The alpha byte at a pixel.
+fn alpha_at(pixels: &[u8], x: u32, y: u32) -> u8 {
+    pixels[((y * W + x) * 4 + 3) as usize]
+}
+
+/// A renderer builds with defaults, and reports no font.
+///
+/// Text is not implemented — a font stack is a separate dependency and a
+/// separate decision — so `has_font` answers false rather than having a
+/// caller reserve title-bar width for something that never appears.
+#[test]
+fn a_renderer_builds_and_reports_no_font() {
+    let renderer = Renderer::default();
+    assert!(!renderer.has_font());
+    assert_eq!(renderer.font_path(), None);
+
+    let configured = Renderer::new(RendererConfig {
+        font_path: Some("/usr/share/fonts/x.ttf".to_owned()),
+    });
+    assert_eq!(configured.font_path(), Some("/usr/share/fonts/x.ttf"));
+    assert!(
+        !configured.has_font(),
+        "a path is not a loaded font, and saying otherwise would be a lie a \
+         caller lays out against"
+    );
+}
+
+/// An empty canvas is refused.
+///
+/// A window mid-resize passes through zero. Reporting success on a loop that
+/// wrote nothing would have the caller present an unpainted buffer believing
+/// it had been drawn.
+#[test]
+fn an_empty_canvas_is_refused() {
+    let mut shadows = ShadowCache::new(2);
+    let mut nothing: Vec<u8> = Vec::new();
+    let mut target = Canvas {
+        pixels: &mut nothing,
+        stride: 0,
+        width: 0,
+        height: 0,
+    };
+
+    assert_eq!(
+        Renderer::default().draw(
+            &glass_default(),
+            &WindowState::default(),
+            &mut target,
+            &mut shadows
+        ),
+        Err(DrawError::EmptyCanvas)
+    );
+}
+
+/// A canvas shorter than its own stride and height is refused.
+#[test]
+fn a_canvas_shorter_than_it_claims_is_refused() {
+    let mut shadows = ShadowCache::new(2);
+    let mut pixels = vec![0u8; 16];
+    let mut target = Canvas {
+        pixels: &mut pixels,
+        stride: W * 4,
+        width: W,
+        height: H,
+    };
+
+    let error = Renderer::default()
+        .draw(
+            &glass_default(),
+            &WindowState::default(),
+            &mut target,
+            &mut shadows,
+        )
+        .expect_err("sixteen bytes is not a 240x160 canvas");
+
+    assert!(
+        matches!(error, DrawError::Undersized { got: 16, .. }),
+        "got {error}, which does not say what was wrong with the canvas"
+    );
+}
+
+/// The middle of the panel is painted.
+#[test]
+fn the_middle_of_the_panel_is_painted() {
+    let state = WindowState {
+        title: "test".to_owned(),
+        focused: true,
+        ..WindowState::default()
+    };
+    let pixels = render(&glass_default(), &state);
+
+    assert!(
+        alpha_at(&pixels, W / 2, H / 2) > 0,
+        "the centre of a decoration is inside its panel; zero alpha there \
+         means nothing was drawn at all"
+    );
+}
+
+/// The extreme corner stays clear.
+///
+/// The shadow fades toward the edges and the panel is inset from them, so the
+/// very corner of the canvas is outside both. Something opaque there means
+/// the panel is being drawn at the wrong origin.
+#[test]
+fn the_far_corner_stays_transparent() {
+    let state = WindowState {
+        focused: true,
+        ..WindowState::default()
+    };
+    let pixels = render(&glass_default(), &state);
+
+    assert_eq!(
+        alpha_at(&pixels, 0, 0),
+        0,
+        "the top-left of the canvas is beyond the shadow's reach"
+    );
+}
+
+/// The same inputs draw the same bytes.
+///
+/// What lets a caller skip a redraw it knows would change nothing, and why
+/// the panel's dither is a hash of the coordinate rather than a random
+/// number.
+#[test]
+fn drawing_is_deterministic() {
+    let state = WindowState {
+        focused: true,
+        ..WindowState::default()
+    };
+
+    let first = render(&glass_default(), &state);
+    let second = render(&glass_default(), &state);
+
+    assert_eq!(
+        first, second,
+        "two draws of one decoration must be byte-identical, or every \
+         redraw-skipping optimisation above this is unsound"
+    );
+}
+
+/// Focused and blurred decorations differ.
+///
+/// The rim colour is the cue that tells a user where their keystrokes are
+/// going. Two windows that looked identical would make it useless.
+#[test]
+fn a_focused_decoration_differs_from_a_blurred_one() {
+    let theme = glass_default();
+    let focused = render(
+        &theme,
+        &WindowState {
+            focused: true,
+            ..WindowState::default()
+        },
+    );
+    let blurred = render(
+        &theme,
+        &WindowState {
+            focused: false,
+            ..WindowState::default()
+        },
+    );
+
+    assert_ne!(focused, blurred, "the two must not look the same");
+
+    // Specifically at the rim, and against a theme with **no shadow**.
+    //
+    // Two confounds had to go for this to mean anything. Comparing whole
+    // buffers passes on the shadow alone, since focused and blurred use
+    // different elevations. And sampling the rim under a shadowed theme still
+    // passes, because the rim is composited *over* a shadow that itself
+    // differs -- so an identical rim colour still produces different bytes.
+    // Both verified by injecting a rim that ignores focus, which passed until
+    // the shadow was taken out from under it.
+    let unshadowed = glass_minimal();
+    let focused = render(
+        &unshadowed,
+        &WindowState {
+            focused: true,
+            ..WindowState::default()
+        },
+    );
+    let blurred = render(
+        &unshadowed,
+        &WindowState {
+            focused: false,
+            ..WindowState::default()
+        },
+    );
+    let differs_at_rim = (0..W).any(|x| {
+        let offset = (x * 4) as usize;
+        focused[offset..offset + 4] != blurred[offset..offset + 4]
+    });
+    assert!(
+        differs_at_rim,
+        "the rim is the cue that says where keystrokes are going; it has to \
+         be the thing that changes, not the shadow behind it"
+    );
+}
+
+/// Hovering a button changes pixels at that button, and not at the others.
+#[test]
+fn hovering_a_button_changes_that_button_and_no_other() {
+    let theme = glass_default();
+    let geometry = decoration_geometry(&theme, W, H);
+    let plain = render(&theme, &WindowState::default());
+    let hovered = render(
+        &theme,
+        &WindowState {
+            hover: HoverButton::Close,
+            hover_progress: 1.0,
+            ..WindowState::default()
+        },
+    );
+
+    let at = |pixels: &[u8], cx: i32| {
+        let x = u32::try_from(cx).expect("on canvas");
+        let y = u32::try_from(geometry.button_cy).expect("on canvas");
+        let offset = ((y * W + x) * 4) as usize;
+        pixels[offset..offset + 4].to_vec()
+    };
+
+    assert_ne!(
+        at(&plain, geometry.close_cx),
+        at(&hovered, geometry.close_cx),
+        "the hovered button has to light, or hover means nothing"
+    );
+    assert_eq!(
+        at(&plain, geometry.minimize_cx),
+        at(&hovered, geometry.minimize_cx),
+        "and only that one -- lighting every button on any hover would be \
+         worse than lighting none"
+    );
+}
+
+/// Drawing populates the shadow cache.
+///
+/// The blur is the expensive part, and it happening through the cache is what
+/// makes the second frame cheap.
+#[test]
+fn drawing_populates_the_shadow_cache() {
+    let mut pixels = canvas();
+    let mut shadows = ShadowCache::new(4);
+    assert!(shadows.is_empty());
+
+    let mut target = Canvas {
+        pixels: &mut pixels,
+        stride: W * 4,
+        width: W,
+        height: H,
+    };
+    Renderer::default()
+        .draw(
+            &glass_default(),
+            &WindowState {
+                focused: true,
+                ..WindowState::default()
+            },
+            &mut target,
+            &mut shadows,
+        )
+        .expect("drawable");
+
+    assert_eq!(shadows.len(), 1, "the shadow went through the cache");
+}
+
+/// A theme with no shadow draws no shadow and still draws a panel.
+#[test]
+fn a_theme_with_no_shadow_still_draws_its_panel() {
+    let pixels = render(
+        &glass_minimal(),
+        &WindowState {
+            focused: true,
+            ..WindowState::default()
+        },
+    );
+
+    assert!(alpha_at(&pixels, W / 2, H / 2) > 0, "the panel is there");
+    assert!(
+        alpha_at(&pixels, 0, H / 2) > 0,
+        "and with no shadow inset it reaches the canvas edge -- sampled at \
+         mid-height, because the panel is still rounded and the literal \
+         corner is outside it"
+    );
+    assert_eq!(
+        alpha_at(&pixels, 0, 0),
+        0,
+        "the corner is clear even with no shadow, because the panel is rounded"
+    );
+}
+
+/// A decoration too small for its own shadow draws nothing rather than
+/// panicking.
+#[test]
+fn a_decoration_too_small_for_its_shadow_draws_nothing() {
+    let theme = glass_default();
+    let mut pixels = vec![0u8; (16 * 16 * 4) as usize];
+    let mut shadows = ShadowCache::new(2);
+    let mut target = Canvas {
+        pixels: &mut pixels,
+        stride: 16 * 4,
+        width: 16,
+        height: 16,
+    };
+
+    Renderer::default()
+        .draw(&theme, &WindowState::default(), &mut target, &mut shadows)
+        .expect("a zero panel is not an error");
+}

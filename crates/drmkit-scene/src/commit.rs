@@ -212,8 +212,8 @@ pub fn emit_layer(
     plane_id: u32,
     layer: &drmkit_planes::Layer,
     baseline: Option<&drmkit_planes::PropertySnapshot>,
-) -> Result<usize, CoreError> {
-    let mut written = 0;
+) -> Result<LayerWrites, CoreError> {
+    let mut written = LayerWrites::default();
     for (tag, value) in layer.properties() {
         let Some(property_id) = map.property_id(plane_id, tag) else {
             continue;
@@ -235,9 +235,26 @@ pub fn emit_layer(
             continue;
         }
         request.add_property(plane_id, property_id, value)?;
-        written += 1;
+        written.properties += 1;
+        if tag == PropTag::FbId {
+            written.framebuffers += 1;
+        }
     }
     Ok(written)
+}
+
+/// What emitting one layer put on the wire.
+///
+/// `framebuffers` is a subset of `properties`, kept apart because it answers a
+/// different question: `FB_ID` is written every frame by contract, so it is
+/// the floor a minimal frame is measured against rather than part of what the
+/// diff decided.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LayerWrites {
+    /// Properties written for this layer.
+    pub properties: usize,
+    /// Of those, `FB_ID` attachments.
+    pub framebuffers: usize,
 }
 
 impl PlanePropertyMap {
@@ -535,27 +552,33 @@ impl<'a> Modeset<'a> {
 pub fn emit_frame(
     request: &mut drmkit_core::AtomicRequest,
     map: &PlanePropertyMap,
-    plan: &[crate::PlanePlan],
-    disables: &[u32],
+    build: &mut crate::FrameBuild,
     modeset: Option<&Modeset<'_>>,
 ) -> Result<usize, CoreError> {
     let mut written = 0;
+    let mut fbs = 0;
     if let Some(modeset) = modeset {
         written += modeset.emit(request)?;
     }
-    for plane_id in disables {
+    for plane_id in build.disables() {
         written += emit_disable(request, map, *plane_id)?;
     }
-    for entry in plan {
-        written += emit_layer(
+    for entry in build.plan() {
+        let layer = emit_layer(
             request,
             map,
             entry.plane_id,
             &entry.layer,
             entry.baseline.as_ref(),
         )?;
+        written += layer.properties;
+        fbs += layer.framebuffers;
         written += emit_color_props(request, map, entry.plane_id)?;
     }
+    // Recorded rather than only returned: the caller has no way to put these
+    // back into the report, and a discarded return is how `properties_written`
+    // and `fbs_attached` came to be documented counters that were always zero.
+    build.record_emission(written, fbs);
     Ok(written)
 }
 

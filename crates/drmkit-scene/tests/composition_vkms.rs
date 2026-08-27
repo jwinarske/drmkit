@@ -441,9 +441,9 @@ fn a_composed_frame_is_accepted_by_the_kernel_vkms() {
 
     let planes = fx.planes;
     fill(&mut fx, planes + 2);
-    let build = build(&mut fx);
+    let mut build = build(&mut fx);
     let mut request = AtomicRequest::with_capacity(96);
-    emit_frame(&mut request, &fx.map, build.plan(), build.disables(), None).expect("emit");
+    emit_frame(&mut request, &fx.map, &mut build, None).expect("emit");
 
     let verdict = request.test(&fx.device, AtomicCommitFlags::empty());
     let composited = build.report().layers_composited;
@@ -544,7 +544,7 @@ fn a_frame_never_arms_more_planes_than_the_kernel_will_take_vkms() {
     };
 
     // More layers than the budget, so composition is unavoidable.
-    let build = fx
+    let mut build = fx
         .scene
         .build_frame(
             &fx.registry,
@@ -555,7 +555,7 @@ fn a_frame_never_arms_more_planes_than_the_kernel_will_take_vkms() {
         .expect("build");
 
     let mut request = AtomicRequest::with_capacity(96);
-    emit_frame(&mut request, &fx.map, build.plan(), build.disables(), None).expect("emit");
+    emit_frame(&mut request, &fx.map, &mut build, None).expect("emit");
     let report = build.report().clone();
     // The build owns acquisitions; handing it back is what returns them.
     fx.scene.finalize_frame(build, KernelResult::Ok);

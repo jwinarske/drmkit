@@ -317,13 +317,13 @@ impl Harness {
             .then(|| crtc_out_fence_property(&self.device, self.crtc_id))
             .flatten();
 
-        let plan = build.plan().to_vec();
-        let disables = build.disables().to_vec();
         let (map, crtc_id) = (&self.map, self.crtc_id);
         let modeset_ref = modeset.as_ref();
 
         let outcome = drmkit_core::commit_with_out_fence(&self.device, flags, |request, slot| {
-            emit_frame(request, map, &plan, &disables, modeset_ref)?;
+            // Two sequential `&mut build` borrows, which is why `emit_frame`
+            // taking the build outright removed the clones this used to need.
+            emit_frame(request, map, &mut build, modeset_ref)?;
             arm_acquire_fences(&mut build, request, map, true)?;
             if let Some(property) = out_fence_property {
                 request.add_property(crtc_id, property, slot)?;

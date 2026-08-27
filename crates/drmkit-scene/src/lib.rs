@@ -19,7 +19,7 @@
 //!
 //! // per frame
 //! let build = scene.build_frame(&registry, crtc_index, kind, &mut committer)?;
-//! emit_frame(&mut request, &map, build.plan(), build.disables(), modeset)?;
+//! emit_frame(&mut request, &map, &mut build, modeset)?;
 //! arm_acquire_fences(&mut build, &mut request, &map, true)?;
 //! let result = request.commit(&device, flags);
 //! let report = scene.finalize_frame(build, result.into());
@@ -85,8 +85,8 @@ pub use canvas::{
     canvas_output_bpp, clear_into, format_supported,
 };
 pub use commit::{
-    DeviceCommitter, FenceAction, Modeset, PlanePropertyMap, arm_acquire_fences, classify,
-    emit_disable, emit_frame, emit_layer, fence_action,
+    DeviceCommitter, FenceAction, LayerWrites, Modeset, PlanePropertyMap, arm_acquire_fences,
+    classify, emit_disable, emit_frame, emit_layer, fence_action,
 };
 pub use display::{DisplayParams, Rect, to_16_16};
 pub use frame::{AcquireTally, CommitKind, FrameLifecycle, FrameOutcome, KernelResult};

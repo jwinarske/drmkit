@@ -365,14 +365,8 @@ impl<'a> Runner<'a> {
 
         let mut request = AtomicRequest::with_capacity(64);
         let modeset = self.first_commit.then_some(&self.modeset);
-        emit_frame(
-            &mut request,
-            &self.map,
-            build.plan(),
-            build.disables(),
-            modeset,
-        )
-        .map_err(|e| format!("emit: {e}"))?;
+        emit_frame(&mut request, &self.map, &mut build, modeset)
+            .map_err(|e| format!("emit: {e}"))?;
 
         // After the plan is emitted and before the commit, so a fence the
         // plane cannot take is waited on rather than ignored.

@@ -242,7 +242,7 @@ fn frame(fx: &mut Fixture) -> AtomicRequest {
         AtomicCommitFlags::empty(),
         None,
     );
-    let build = fx
+    let mut build = fx
         .scene
         .build_frame(
             &fx.registry,
@@ -253,7 +253,7 @@ fn frame(fx: &mut Fixture) -> AtomicRequest {
         .expect("build");
 
     let mut request = AtomicRequest::with_capacity(64);
-    emit_frame(&mut request, &fx.map, build.plan(), build.disables(), None).expect("emit");
+    emit_frame(&mut request, &fx.map, &mut build, None).expect("emit");
 
     for entry in build.plan() {
         fx.map.note_color_committed(entry.plane_id);
@@ -404,7 +404,7 @@ fn a_fenced_buffer_arms_its_plane_vkms() {
 
     let mut build = build_one(&mut fx);
     let mut request = AtomicRequest::with_capacity(64);
-    emit_frame(&mut request, &fx.map, build.plan(), build.disables(), None).expect("emit");
+    emit_frame(&mut request, &fx.map, &mut build, None).expect("emit");
     arm_acquire_fences(&mut build, &mut request, &fx.map, true).expect("arm");
 
     let mut store = PropertyStore::new();

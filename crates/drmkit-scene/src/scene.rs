@@ -225,6 +225,16 @@ impl FrameBuild {
         &self.report
     }
 
+    /// Record what this frame's emission wrote.
+    ///
+    /// Called by [`emit_frame`](crate::emit_frame), which is the only thing
+    /// that knows: the counts are decided by the diff against what the kernel
+    /// last took, and that happens at emission rather than at build time.
+    pub(crate) const fn record_emission(&mut self, properties: usize, framebuffers: usize) {
+        self.report.properties_written = properties;
+        self.report.fbs_attached = framebuffers;
+    }
+
     /// How many buffers this frame is holding.
     #[must_use]
     pub fn held(&self) -> usize {
@@ -1037,6 +1047,25 @@ impl LayerScene {
 
         self.deliver(outcome.released);
         outcome.report
+    }
+
+    /// Re-emit every property on every commit, for a driver that mishandles a
+    /// partial write.
+    ///
+    /// Off by default. A quirk escape hatch, not a tuning knob: it defeats
+    /// invariant 4's minimal-write path and multiplies per-frame property
+    /// traffic, and the only reason to reach for it is a driver that gets the
+    /// minimal set wrong. Exposed here because the allocator it configures is
+    /// the scene's, and a caller stuck on such a driver otherwise has no way
+    /// in.
+    pub const fn set_force_full_property_writes(&mut self, force: bool) {
+        self.allocator.set_force_full_property_writes(force);
+    }
+
+    /// Whether full property writes are being forced.
+    #[must_use]
+    pub const fn force_full_property_writes(&self) -> bool {
+        self.allocator.force_full_property_writes()
     }
 
     /// Whether this frame is worth committing at all.

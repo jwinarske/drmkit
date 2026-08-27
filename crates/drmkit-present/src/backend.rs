@@ -397,15 +397,12 @@ impl ScanoutBackend {
             .then_some(self.out_fence_property)
             .flatten();
 
-        // Taken out of `build` before the closure: `arm_acquire_fences` needs
-        // it mutably and `emit_frame` needs it immutably, and one closure
-        // cannot hold both. The plan is one entry per placed layer, so the
-        // copy is small and per-frame.
-        let plan = build.plan().to_vec();
-        let disables = build.disables().to_vec();
+        // The plane ids are taken before the closure: the commit reports them
+        // back afterwards, and `build` is borrowed mutably inside.
+        let programmed: Vec<u32> = build.plan().iter().map(|entry| entry.plane_id).collect();
 
         let emit = |request: &mut AtomicRequest, slot: u64| -> Result<(), drmkit_core::CoreError> {
-            emit_frame(request, &self.map, &plan, &disables, modeset.as_ref())?;
+            emit_frame(request, &self.map, &mut build, modeset.as_ref())?;
             arm_acquire_fences(&mut build, request, &self.map, true)?;
             if let (Some(property), wanted) = vrr {
                 request.add_property(crtc_id, property, u64::from(wanted))?;
@@ -416,7 +413,6 @@ impl ScanoutBackend {
             Ok(())
         };
 
-        let programmed: Vec<u32> = plan.iter().map(|entry| entry.plane_id).collect();
         let outcome = commit_with_out_fence(device, flags, emit);
 
         let fence = match outcome {

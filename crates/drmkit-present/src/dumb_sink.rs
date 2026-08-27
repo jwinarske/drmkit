@@ -371,13 +371,7 @@ impl DumbScanoutSink {
         )?;
 
         let mut request = AtomicRequest::with_capacity(64);
-        emit_frame(
-            &mut request,
-            &self.map,
-            build.plan(),
-            build.disables(),
-            modeset.as_ref(),
-        )?;
+        emit_frame(&mut request, &self.map, &mut build, modeset.as_ref())?;
         arm_acquire_fences(&mut build, &mut request, &self.map, true)?;
 
         let programmed: Vec<u32> = build.plan().iter().map(|entry| entry.plane_id).collect();

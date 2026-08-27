@@ -71,6 +71,7 @@ drmkit-sync = { version = "0.0.0", path = "crates/drmkit-sync" }
 drmkit-time = { version = "0.0.0", path = "crates/drmkit-time" }
 
 drm = { version = "0.15" }
+jpeg-encoder = { version = "0.6", default-features = false, features = ["std"] }
 png = { version = "0.18" }
 libseat = { version = "0.2" }
 # default-features = false drops the wayland keymap-fd helper (and memmap2 with

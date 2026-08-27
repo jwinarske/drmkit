@@ -14,6 +14,8 @@
 //! missing its video overlay is more use than no screenshot.
 
 mod image;
+#[cfg(feature = "jpeg")]
+mod jpg;
 mod png;
 mod snapshot;
 
@@ -21,6 +23,8 @@ mod snapshot;
 mod tests;
 
 pub use image::{Image, src_over, unpremultiply};
+#[cfg(feature = "jpeg")]
+pub use jpg::{Nv12Frame, write_jpg, write_jpg_nv12};
 pub use png::write_png;
 pub use snapshot::snapshot;
 

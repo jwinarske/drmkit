@@ -14,6 +14,11 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = []
+# Encode captures as JPEG as well as PNG.
+jpeg = ["dep:jpeg-encoder"]
+
 [dependencies]
 drmkit-core = { workspace = true }
 drmkit-fmt = { workspace = true }
@@ -25,7 +30,15 @@ thiserror = { workspace = true, features = ["std"] }
 # For the encoder. The crate carries a decoder too, which nothing here uses.
 png = { workspace = true }
 
+# JPEG, behind a feature. Upstream gates its own JPEG support behind a build
+# switch for the same reason: it is a second image format that not every
+# consumer wants, and the dependency should follow the want.
+jpeg-encoder = { workspace = true, optional = true }
+
 [dev-dependencies]
+# Decodes what the encoder wrote, so a round trip is checked rather than
+# assumed from the framing bytes.
+zune-jpeg = { version = "0.5" }
 # Device cases report when they bail without asserting.
 drmkit-testkit = { workspace = true }
 # The decoder, to read back what the encoder wrote.

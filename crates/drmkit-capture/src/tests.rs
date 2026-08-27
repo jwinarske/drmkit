@@ -650,3 +650,298 @@ fn rgb565_is_always_opaque() {
         "all-zero 565 is opaque black, not transparent"
     );
 }
+
+// --- JPEG ---------------------------------------------------------------------
+//
+// Parity port of `tests/unit/test_capture_jpg.cpp`.
+
+#[cfg(feature = "jpeg")]
+mod jpeg {
+    use crate::{Image, Nv12Frame, write_jpg, write_jpg_nv12};
+
+    /// A scratch path that cleans itself up.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let mut path = std::env::temp_dir();
+            path.push(format!("drmkit-capture-{name}-{}.jpg", std::process::id()));
+            Self(path)
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+
+        fn bytes(&self) -> Vec<u8> {
+            std::fs::read(&self.0).expect("the encoder wrote a file")
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    /// An image filled with one premultiplied pixel value.
+    fn solid(width: u32, height: u32, pixel: u32) -> Image {
+        let mut image = Image::new(width, height);
+        for target in image.pixels_mut() {
+            *target = pixel;
+        }
+        image
+    }
+
+    /// An empty image is refused rather than written.
+    ///
+    /// A zero-byte JPEG is not a JPEG, and a caller that got `Ok` would go on
+    /// to hand someone a file no decoder opens.
+    #[test]
+    fn an_empty_image_is_refused() {
+        let scratch = Scratch::new("empty");
+        assert!(matches!(
+            write_jpg(&Image::default(), scratch.path(), 90),
+            Err(crate::CaptureError::EmptyImage)
+        ));
+        assert!(!scratch.path().exists(), "and nothing was created");
+    }
+
+    /// What comes out is framed as a JPEG.
+    ///
+    /// `FFD8` opens every JPEG and `FFD9` closes it. Checking both ends is
+    /// what separates "the encoder ran" from "the encoder finished" — a
+    /// truncated write leaves the first marker and not the second.
+    #[test]
+    fn the_output_is_framed_as_a_jpeg() {
+        let scratch = Scratch::new("framing");
+        write_jpg(&solid(32, 32, 0xFF00_8040), scratch.path(), 90).expect("encode");
+
+        let bytes = scratch.bytes();
+        assert!(bytes.len() > 4, "a JPEG is more than its markers");
+        assert_eq!(&bytes[0..2], &[0xFF, 0xD8], "start of image");
+        assert_eq!(
+            &bytes[bytes.len() - 2..],
+            &[0xFF, 0xD9],
+            "end of image -- a truncated write would have the first and not this"
+        );
+    }
+
+    /// An opaque colour survives the round trip.
+    ///
+    /// JPEG is lossy, so this is about the colour being recognisably itself
+    /// rather than exact. A channel order swapped somewhere in the pack would
+    /// show up as a wildly different colour, not a slightly wrong one.
+    #[test]
+    fn an_opaque_colour_round_trips() {
+        let scratch = Scratch::new("colour");
+        // Opaque, so premultiplied and straight are the same value.
+        write_jpg(&solid(32, 32, 0xFF80_4020), scratch.path(), 95).expect("encode");
+
+        let bytes = scratch.bytes();
+        let decoded = zune_jpeg::JpegDecoder::new(std::io::Cursor::new(&bytes))
+            .decode()
+            .expect("what we wrote is decodable");
+        assert!(decoded.len() >= 3);
+        // R=0x80, G=0x40, B=0x20 at quality 95.
+        assert!(
+            decoded[0].abs_diff(0x80) < 8,
+            "red came back as {:#04x}",
+            decoded[0]
+        );
+        assert!(decoded[1].abs_diff(0x40) < 8, "green");
+        assert!(decoded[2].abs_diff(0x20) < 8, "blue");
+    }
+
+    /// Premultiplied colour is undone before encoding.
+    ///
+    /// JPEG has no alpha, so a half-covered pixel's colour has to be recovered
+    /// before the alpha is dropped. Encoding the premultiplied value instead
+    /// darkens every partly transparent pixel toward black — a translucent
+    /// decoration comes out looking like a dark one rather than like itself.
+    #[test]
+    fn premultiplied_colour_is_undone_before_encoding() {
+        let scratch = Scratch::new("premul");
+        // Alpha 0x80 with channels already scaled by it: 0x40/0x80 -> ~0x7F.
+        write_jpg(&solid(32, 32, 0x8040_2010), scratch.path(), 95).expect("encode");
+
+        let bytes = scratch.bytes();
+        let decoded = zune_jpeg::JpegDecoder::new(std::io::Cursor::new(&bytes))
+            .decode()
+            .expect("decodable");
+        assert!(
+            decoded[0].abs_diff(0x7F) < 8,
+            "red came back as {:#04x}; the premultiplied value would be 0x40",
+            decoded[0]
+        );
+        assert!(decoded[1].abs_diff(0x3F) < 8, "green");
+        assert!(decoded[2].abs_diff(0x1F) < 8, "blue");
+    }
+
+    /// Quality outside `1..=100` is clamped, not refused.
+    ///
+    /// It is a knob passed through from a config file or a command line, and
+    /// a screenshot is not worth failing over a number that only ever means
+    /// "as good as possible" or "as small as possible" at the ends.
+    #[test]
+    fn quality_outside_the_range_is_clamped() {
+        for quality in [0u8, 1, 100, 200, 255] {
+            let scratch = Scratch::new(&format!("quality{quality}"));
+            write_jpg(&solid(16, 16, 0xFF40_8040), scratch.path(), quality)
+                .unwrap_or_else(|error| panic!("quality {quality}: {error}"));
+            let bytes = scratch.bytes();
+            assert_eq!(
+                &bytes[0..2],
+                &[0xFF, 0xD8],
+                "quality {quality} wrote a JPEG"
+            );
+        }
+    }
+
+    /// A frame with a zero dimension, or planes too short for it, is refused.
+    #[test]
+    fn a_malformed_nv12_frame_is_refused() {
+        let scratch = Scratch::new("nv12-bad");
+        let luma = vec![0x80u8; 64 * 64];
+        let chroma = vec![0x80u8; 64 * 32];
+        let base = Nv12Frame {
+            luma: &luma,
+            luma_stride: 64,
+            chroma: &chroma,
+            chroma_stride: 64,
+            width: 64,
+            height: 64,
+        };
+
+        assert!(write_jpg_nv12(&Nv12Frame { width: 0, ..base }, scratch.path(), 90).is_err());
+        assert!(write_jpg_nv12(&Nv12Frame { height: 0, ..base }, scratch.path(), 90).is_err());
+        assert!(
+            write_jpg_nv12(
+                &Nv12Frame {
+                    width: 1024,
+                    height: 1024,
+                    ..base
+                },
+                scratch.path(),
+                90
+            )
+            .is_err(),
+            "a plane shorter than its claimed dimensions would be read past \
+             the end"
+        );
+    }
+
+    /// An odd height needs the extra chroma row, and a plane without it is
+    /// refused.
+    ///
+    /// Chroma is subsampled by two and an odd dimension rounds **up**: a
+    /// 17-row frame has 9 chroma rows, not 8. A guard that rounded down would
+    /// accept a plane one row short, and the interleave would pad the last
+    /// row with neutral grey — a frame whose bottom rows quietly lose their
+    /// colour, which is much worse than being refused.
+    #[test]
+    fn an_odd_height_needs_its_extra_chroma_row() {
+        let scratch = Scratch::new("nv12-odd");
+        let luma = vec![0x80u8; 16 * 17];
+        // Eight rows: what rounding *down* would ask for.
+        let short = vec![0x80u8; 16 * 8];
+        let enough = vec![0x80u8; 16 * 9];
+
+        assert!(
+            write_jpg_nv12(
+                &Nv12Frame {
+                    luma: &luma,
+                    luma_stride: 16,
+                    chroma: &short,
+                    chroma_stride: 16,
+                    width: 16,
+                    height: 17,
+                },
+                scratch.path(),
+                90
+            )
+            .is_err(),
+            "eight chroma rows is one short for seventeen luma rows"
+        );
+
+        write_jpg_nv12(
+            &Nv12Frame {
+                luma: &luma,
+                luma_stride: 16,
+                chroma: &enough,
+                chroma_stride: 16,
+                width: 16,
+                height: 17,
+            },
+            scratch.path(),
+            90,
+        )
+        .expect("nine chroma rows is what seventeen luma rows need");
+    }
+
+    /// A solid NV12 frame round trips.
+    #[test]
+    fn a_solid_nv12_frame_round_trips() {
+        let scratch = Scratch::new("nv12");
+        // Mid-grey: luma 0x80, chroma neutral at 0x80.
+        let luma = vec![0x80u8; 32 * 32];
+        let chroma = vec![0x80u8; 32 * 16];
+
+        write_jpg_nv12(
+            &Nv12Frame {
+                luma: &luma,
+                luma_stride: 32,
+                chroma: &chroma,
+                chroma_stride: 32,
+                width: 32,
+                height: 32,
+            },
+            scratch.path(),
+            90,
+        )
+        .expect("encode");
+
+        let bytes = scratch.bytes();
+        assert_eq!(&bytes[0..2], &[0xFF, 0xD8]);
+        let decoded = zune_jpeg::JpegDecoder::new(std::io::Cursor::new(&bytes))
+            .decode()
+            .expect("decodable");
+        assert!(
+            decoded[0].abs_diff(0x80) < 12,
+            "neutral chroma over mid luma is grey, and came back as {:#04x}",
+            decoded[0]
+        );
+    }
+
+    /// Dimensions that are not a multiple of the MCU still encode.
+    ///
+    /// JPEG works in 16x16 blocks for 4:2:0, and a frame that is not a whole
+    /// number of them is the ordinary case — a 33-pixel-wide frame has 17
+    /// chroma columns, not 16, and sizing for 16 reads past the last row.
+    #[test]
+    fn dimensions_that_are_not_a_whole_mcu_still_encode() {
+        for (width, height) in [(33u32, 17u32), (1, 1), (7, 3)] {
+            let scratch = Scratch::new(&format!("mcu{width}x{height}"));
+            let chroma_rows = (height as usize).div_ceil(2);
+            let chroma_cols = (width as usize).div_ceil(2) * 2;
+            let luma = vec![0x80u8; width as usize * height as usize];
+            let chroma = vec![0x80u8; chroma_cols * chroma_rows];
+
+            write_jpg_nv12(
+                &Nv12Frame {
+                    luma: &luma,
+                    luma_stride: width as usize,
+                    chroma: &chroma,
+                    chroma_stride: chroma_cols,
+                    width,
+                    height,
+                },
+                scratch.path(),
+                90,
+            )
+            .unwrap_or_else(|error| panic!("{width}x{height}: {error}"));
+
+            assert_eq!(&scratch.bytes()[0..2], &[0xFF, 0xD8]);
+        }
+    }
+}

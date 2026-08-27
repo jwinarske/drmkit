@@ -23,8 +23,8 @@ use drmkit_fmt::fourcc;
 use drmkit_planes::PlaneRegistry;
 use drmkit_scene::{
     AcquiredBuffer, BindingModel, CommitKind, CommitReport, DeviceCommitter, DisplayParams,
-    KernelResult, LayerBufferSource, LayerScene, Modeset, PlanePropertyMap, Rect, SourceError,
-    SourceFormat, arm_acquire_fences, emit_frame,
+    KernelResult, LayerBufferSource, LayerHandle, LayerScene, Modeset, PlanePropertyMap, Rect,
+    SourceError, SourceFormat, arm_acquire_fences, emit_frame,
 };
 use drmkit_scene_sources::{ExternalDmaBufRing, ExternalPlane};
 use drmkit_sync::SyncFence;
@@ -156,6 +156,7 @@ struct Harness {
     crtc_index: u32,
     connector_id: u32,
     mode: drmkit_core::Mode,
+    layer: LayerHandle,
     ring: Rc<RefCell<ExternalDmaBufRing>>,
     needs_modeset: bool,
     /// Kept alive: the ring's imports reference these descriptors.
@@ -240,8 +241,6 @@ fn harness(device: Device, on_release: Option<drmkit_scene_sources::OnRelease>) 
     let ring = Rc::new(RefCell::new(ring));
     let mut scene = LayerScene::new(crtc_id);
     let layer = scene.add_layer(Box::new(SharedRing(Rc::clone(&ring))));
-    // The handle is used only to place the layer; later cases that add a
-    // second one keep theirs.
     scene.layer_mut(layer)?.set_display(DisplayParams {
         src_rect: Rect {
             x: 0,
@@ -267,6 +266,7 @@ fn harness(device: Device, on_release: Option<drmkit_scene_sources::OnRelease>) 
         crtc_index,
         connector_id,
         mode,
+        layer,
         ring,
         needs_modeset: true,
         _fds: fds,
@@ -415,6 +415,128 @@ fn a_displaced_buffer_is_released_carrying_the_commits_out_fence_vkms() {
         "at least one release must carry the displacing commit's OUT_FENCE, \
          which is the whole reason a source opts into wanting it"
     );
+
+    h.teardown();
+}
+
+/// An idle producer holds its buffer, and it frees once the producer resumes.
+///
+/// A held frame is still on screen, so releasing it would let the producer
+/// render over what the display engine is reading. Releasing it only when
+/// something supersedes it is the contract; a ring that freed on every idle
+/// frame would tear, and one that never freed would starve the producer.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn an_idle_producer_holds_its_buffer_until_something_supersedes_it_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+
+    let releases = Arc::new(AtomicU32::new(0));
+    let counter = Arc::clone(&releases);
+    let Some(mut h) = harness(
+        device,
+        Some(Box::new(move |_slot, _fence| {
+            counter.fetch_add(1, Ordering::Relaxed);
+        })),
+    ) else {
+        drmkit_testkit::skipped("no connected output with an importable ring");
+        return;
+    };
+
+    h.submit(0);
+    for frame in 0..4 {
+        let report = h
+            .commit()
+            .unwrap_or_else(|error| panic!("idle frame {frame}: {error}"));
+        assert!(
+            report.layers_assigned >= 1,
+            "the held frame must stay on a plane, not fall off it"
+        );
+    }
+    assert_eq!(
+        releases.load(Ordering::Relaxed),
+        0,
+        "nothing displaced slot 0, so freeing it would hand the producer a \
+         buffer the display engine is still reading"
+    );
+
+    // The producer resumes: now slot 0 is superseded and can go back.
+    h.submit(1);
+    for frame in 0..4 {
+        h.commit()
+            .unwrap_or_else(|error| panic!("resume frame {frame}: {error}"));
+        h.submit(usize::from(frame % 2 != 0));
+    }
+    assert!(
+        releases.load(Ordering::Relaxed) > 0,
+        "once the producer resumes the superseded slot has to come back, or \
+         it starves"
+    );
+
+    h.teardown();
+}
+
+/// An idle scene reports nothing to commit, so no atomic commit is issued.
+///
+/// This is the whole-commit skip: with every source saying it has nothing new
+/// and no layer moved, the display goes on scanning out what is there. A
+/// commit every vblank saying nothing changed is wasted bandwidth on any
+/// device, and on a self-refresh panel it is what stops the panel entering
+/// self-refresh at all.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn an_idle_scene_has_nothing_worth_committing_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some(mut h) = harness(device, None) else {
+        drmkit_testkit::skipped("no connected output with an importable ring");
+        return;
+    };
+
+    h.submit(0);
+    assert!(
+        h.scene.content_changed(),
+        "a submitted frame is exactly what makes a commit worth issuing"
+    );
+    h.commit().expect("the first frame");
+    assert!(
+        !h.scene.content_changed(),
+        "the frame was taken; nothing else has changed since"
+    );
+
+    // Four vblanks with an idle producer: every one is skippable.
+    for _ in 0..4 {
+        assert!(
+            !h.scene.content_changed(),
+            "an idle producer must not drive a commit"
+        );
+    }
+
+    // Moving the layer is a change even though the producer said nothing.
+    h.scene
+        .layer_mut(h.layer)
+        .expect("layer")
+        .set_display(DisplayParams {
+            src_rect: Rect {
+                x: 0,
+                y: 0,
+                w: WIDTH,
+                h: HEIGHT,
+            },
+            dst_rect: Rect {
+                x: 8,
+                y: 8,
+                w: WIDTH,
+                h: HEIGHT,
+            },
+            ..DisplayParams::default()
+        });
+    assert!(
+        h.scene.content_changed(),
+        "a repositioned layer needs a commit even with nothing new to show"
+    );
+    h.commit().expect("the move");
+    assert!(!h.scene.content_changed());
 
     h.teardown();
 }

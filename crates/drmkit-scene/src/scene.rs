@@ -78,6 +78,14 @@ pub struct SceneLayer {
     /// values written to a chosen plane, so the scene drops the allocator's
     /// warm start for that frame and lets the layer move.
     hints_dirty: bool,
+    /// Whether the geometry changed since the last commit.
+    ///
+    /// Separate from `hints_dirty`, which drops the warm start: geometry only
+    /// changes what is written to the plane a layer already has. This exists
+    /// so [`LayerScene::content_changed`] can tell a moved layer from an idle
+    /// one, since a source with nothing new to say would otherwise make a
+    /// repositioned layer look like no change at all.
+    display_dirty: bool,
     /// The framebuffer this layer last put on screen.
     ///
     /// Kept so a frame where the source has nothing ready can re-attach it:
@@ -121,6 +129,7 @@ impl SceneLayer {
     /// already has, so this does **not** drop the warm start.
     pub const fn set_display(&mut self, display: DisplayParams) {
         self.display = display;
+        self.display_dirty = true;
     }
 
     /// The allocator's content-type hint.
@@ -329,6 +338,14 @@ pub struct LayerScene {
     /// the display engine may still be scanning them. They are kept until every
     /// buffer has come back.
     retiring: Vec<(LayerId, Box<dyn LayerBufferSource>)>,
+    /// Whether a layer was added or removed since the last commit.
+    topology_dirty: bool,
+    /// Whether any real commit has succeeded yet.
+    ///
+    /// Until one has, the scanout contents are undefined and *nothing changed*
+    /// describes nothing -- so the first frame is never skipped, however
+    /// quiet the sources are.
+    committed_once: bool,
 }
 
 impl std::fmt::Debug for LayerScene {
@@ -355,6 +372,8 @@ impl LayerScene {
             canvas: None,
             lifecycle: FrameLifecycle::new(),
             retiring: Vec::new(),
+            topology_dirty: true,
+            committed_once: false,
         }
     }
 
@@ -406,6 +425,7 @@ impl LayerScene {
 
     /// Add a layer backed by `source`.
     pub fn add_layer(&mut self, source: Box<dyn LayerBufferSource>) -> LayerHandle {
+        self.topology_dirty = true;
         let layer = Box::new(SceneLayer {
             source,
             display: DisplayParams::default(),
@@ -413,6 +433,7 @@ impl LayerScene {
             update_hint_hz: 0,
             app_priority: 0,
             hints_dirty: false,
+            display_dirty: true,
             last_fb_id: None,
         });
 
@@ -449,6 +470,7 @@ impl LayerScene {
         self.free.push(handle.id);
 
         if self.lifecycle.buffers_in_flight() > 0 {
+            self.topology_dirty = true;
             self.retiring.push((handle.layer_id(), layer.source));
         }
 
@@ -616,12 +638,15 @@ impl LayerScene {
 
         let report = build_report(&tally, &allocation, registry, &starved, composited);
 
-        // Clear the hint flags now the allocation has seen them.
+        // Clear the change flags now the allocation has seen them.
         for handle in self.handles().collect::<Vec<_>>() {
             if let Some(layer) = self.layer_mut(handle) {
                 layer.hints_dirty = false;
+                layer.display_dirty = false;
             }
         }
+        self.topology_dirty = false;
+        self.committed_once = true;
 
         let (mut plan, disables) = build_plan(
             &self.allocator,
@@ -1012,6 +1037,32 @@ impl LayerScene {
 
         self.deliver(outcome.released);
         outcome.report
+    }
+
+    /// Whether this frame is worth committing at all.
+    ///
+    /// **The whole-commit skip.** When every live source says it has nothing
+    /// new and no layer has moved, the frame can be dropped without issuing an
+    /// atomic commit — the display goes on scanning out what is already there.
+    /// That is a power win on any device and the thing that lets a
+    /// self-refresh panel stay in self-refresh, which it cannot do if a
+    /// commit arrives every vblank saying nothing changed.
+    ///
+    /// Answers `true` for anything it cannot rule out. A source that cannot
+    /// tell whether its buffer changed reports "changed" by default, so a CPU
+    /// producer painting into a dumb buffer never gets skipped; the layer set
+    /// changing counts, geometry changing counts, and the first frame always
+    /// counts, because nothing is on screen yet for "unchanged" to describe.
+    #[must_use]
+    pub fn content_changed(&self) -> bool {
+        if !self.committed_once || self.topology_dirty {
+            return true;
+        }
+        self.handles().any(|handle| {
+            self.layer(handle).is_some_and(|layer| {
+                layer.hints_dirty() || layer.display_dirty || layer.source().has_fresh_content()
+            })
+        })
     }
 
     /// Whether any live source wants this commit's `OUT_FENCE`.

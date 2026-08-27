@@ -179,9 +179,13 @@ dependencies = [
 name = "drmkit-csd"
 version = "0.0.0"
 dependencies = [
+ "drm 0.15.0",
+ "drmkit-core",
+ "drmkit-dumb",
  "drmkit-fmt",
  "drmkit-planes",
  "drmkit-scene",
+ "drmkit-testkit",
  "thiserror",
  "toml",
 ]

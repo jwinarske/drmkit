@@ -7,6 +7,31 @@ use crate::{Color, ColorError, Theme, ThemeError, glass_default, glass_lite, gla
 use crate::{load_theme_file, load_theme_str};
 use drmkit_fmt::fourcc::XRGB8888;
 
+/// GBM and DRM opens share the node, so device cases serialize.
+static CARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn card_guard() -> std::sync::MutexGuard<'static, ()> {
+    CARD_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn open_card() -> Option<drmkit_core::Device> {
+    let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
+    drmkit_testkit::announce_card(&path);
+    match drmkit_core::Device::open(&path) {
+        Ok(device) => Some(device),
+        Err(error) => {
+            assert!(
+                std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
+                "{path}: {error}, but DRMKIT_REQUIRE_MASTER is set"
+            );
+            drmkit_testkit::skipped(&format!("no DRM device at {path} ({error})"));
+            None
+        }
+    }
+}
+
 // --- colour -------------------------------------------------------------------
 
 /// Six digits is a colour, and it is opaque.
@@ -2729,4 +2754,208 @@ fn the_canvas_framebuffer_is_written_verbatim() {
         ),
         Some(99)
     );
+}
+
+// --- decoration surface -------------------------------------------------------
+//
+// Parity port of `tests/unit/test_csd_surface.cpp`.
+//
+// Upstream's `MoveCtorPreservesEmpty` and `MoveAssignPreservesEmpty` have no
+// counterpart: they check that a moved-from husk stays safe, and Rust's move
+// semantics do not produce one. `CreateAgainstNonDrmFdFails` likewise — a
+// drmkit `Device` exists only where an open succeeded.
+
+use crate::{SURFACE_FOURCC, Surface, SurfaceConfig, SurfaceError};
+
+/// A default surface holds nothing, and says so consistently.
+#[test]
+fn a_default_surface_holds_nothing() {
+    let surface = Surface::default();
+
+    assert!(surface.is_empty());
+    assert_eq!(surface.fb_id(), 0, "zero is what disarms a plane");
+    assert_eq!(surface.width(), 0);
+    assert_eq!(surface.height(), 0);
+    assert_eq!(surface.stride(), 0);
+    assert_eq!(surface.generation(), 0);
+}
+
+/// The format is `ARGB8888`, empty or not.
+///
+/// A decoration is translucent by design — the panel is a gradient with
+/// alpha, the shadow is nothing but alpha — so a format without an alpha
+/// channel cannot represent one. An empty surface still answers, because a
+/// caller laying out a decoration it has not allocated yet needs to know what
+/// it will be.
+#[test]
+fn the_format_is_always_argb8888() {
+    assert_eq!(Surface::default().format(), SURFACE_FOURCC);
+    assert_eq!(SURFACE_FOURCC, drmkit_fmt::fourcc::ARGB8888);
+}
+
+/// Painting an empty surface is an error, not a panic.
+#[test]
+fn painting_an_empty_surface_is_refused() {
+    let mut surface = Surface::default();
+
+    assert!(matches!(
+        surface.paint(drmkit_dumb::MapAccess::ReadWrite),
+        Err(SurfaceError::Empty)
+    ));
+    assert_eq!(
+        surface.generation(),
+        0,
+        "a refused paint is not a paint -- counting it would report a change \
+         that never happened"
+    );
+}
+
+/// Forgetting an empty surface is a no-op.
+///
+/// What a caller tearing down twice does.
+#[test]
+fn forgetting_an_empty_surface_is_harmless() {
+    let mut surface = Surface::default();
+    surface.forget();
+    surface.forget();
+    assert!(surface.is_empty());
+}
+
+/// A zero dimension is refused, and says which.
+#[test]
+fn a_zero_dimension_is_refused_by_name() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+
+    for (field, config) in [
+        (
+            "width",
+            SurfaceConfig {
+                width: 0,
+                height: 64,
+            },
+        ),
+        (
+            "height",
+            SurfaceConfig {
+                width: 64,
+                height: 0,
+            },
+        ),
+    ] {
+        let error =
+            Surface::create(&device, config).expect_err("a zero dimension is not a surface");
+        assert!(
+            matches!(error, SurfaceError::Invalid { field: named } if named == field),
+            "asked about {field} and got {error}"
+        );
+    }
+}
+
+/// A real surface reports its shape and a usable framebuffer.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_real_surface_reports_its_shape_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+
+    let surface = Surface::create(
+        &device,
+        SurfaceConfig {
+            width: 64,
+            height: 32,
+        },
+    )
+    .expect("a 64x32 ARGB8888 surface");
+
+    assert!(!surface.is_empty());
+    assert_eq!(surface.width(), 64);
+    assert_eq!(surface.height(), 32);
+    assert!(surface.stride() >= 64 * 4);
+    assert_ne!(
+        surface.fb_id(),
+        0,
+        "a decoration with no framebuffer cannot reach a plane"
+    );
+}
+
+/// Painting bumps the generation, which is what makes a repaint visible.
+///
+/// A decoration at the same place with different pixels looks unchanged to
+/// the damage tracker otherwise, and is never recomposited.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn painting_bumps_the_generation_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+
+    let mut surface = Surface::create(
+        &device,
+        SurfaceConfig {
+            width: 64,
+            height: 32,
+        },
+    )
+    .expect("a surface");
+
+    assert_eq!(surface.generation(), 0);
+    {
+        let _mapping = surface.paint(drmkit_dumb::MapAccess::Write).expect("map");
+    }
+    assert_eq!(surface.generation(), 1);
+    {
+        let _mapping = surface
+            .paint(drmkit_dumb::MapAccess::ReadWrite)
+            .expect("map");
+    }
+    assert_eq!(surface.generation(), 2);
+
+    {
+        let _mapping = surface.paint(drmkit_dumb::MapAccess::Read).expect("map");
+    }
+    assert_eq!(
+        surface.generation(),
+        2,
+        "reading is not painting -- counting it would recomposite a \
+         decoration that nobody touched"
+    );
+}
+
+/// A forgotten surface is empty again, and answers like one.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn forgetting_a_real_surface_empties_it_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+
+    let mut surface = Surface::create(
+        &device,
+        SurfaceConfig {
+            width: 64,
+            height: 32,
+        },
+    )
+    .expect("a surface");
+    assert!(!surface.is_empty());
+
+    surface.forget();
+
+    assert!(surface.is_empty());
+    assert_eq!(surface.fb_id(), 0);
+    assert!(matches!(
+        surface.paint(drmkit_dumb::MapAccess::ReadWrite),
+        Err(SurfaceError::Empty)
+    ));
+}
+
+/// Exporting an empty surface is refused.
+#[test]
+fn exporting_an_empty_surface_is_refused() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+
+    assert!(matches!(
+        Surface::default().export(&device),
+        Err(SurfaceError::Empty)
+    ));
 }

@@ -18,8 +18,15 @@ keywords = ["drm", "kms", "compositor", "decorations", "csd"]
 drmkit-fmt = { workspace = true }
 drmkit-planes = { workspace = true }
 drmkit-scene = { workspace = true }
+drmkit-core = { workspace = true }
+drmkit-dumb = { workspace = true }
+drm = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
+
+[dev-dependencies]
+# Device cases report which card they ran on and when they bailed.
+drmkit-testkit = { workspace = true }
 
 [lints]
 workspace = true

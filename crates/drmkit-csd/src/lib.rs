@@ -24,6 +24,7 @@ mod renderer;
 mod reservation;
 mod shadow;
 mod state;
+mod surface;
 mod theme;
 
 pub use animator::{WindowAnim, ease_out_cubic};
@@ -39,6 +40,7 @@ pub use renderer::{Canvas, DrawError, Renderer, RendererConfig};
 pub use reservation::{OverlayReservation, ReserveError};
 pub use shadow::{DEFAULT_CAPACITY, Elevation, ShadowCache, ShadowDest, ShadowKey, theme_id};
 pub use state::{Dirty, HoverButton, PROGRESS_UNSET, WindowState};
+pub use surface::{SURFACE_FOURCC, Surface, SurfaceConfig, SurfaceError};
 pub use theme::{
     Button, Buttons, Colors, Theme, TitleBar, glass_default, glass_lite, glass_minimal,
 };

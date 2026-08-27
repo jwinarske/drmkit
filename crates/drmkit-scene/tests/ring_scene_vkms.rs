@@ -159,8 +159,9 @@ struct Harness {
     layer: LayerHandle,
     ring: Rc<RefCell<ExternalDmaBufRing>>,
     needs_modeset: bool,
-    /// Kept alive: the ring's imports reference these descriptors.
-    _fds: Vec<std::os::fd::OwnedFd>,
+    /// Kept alive: the ring's imports reference these descriptors, and a
+    /// second layer parks its own here too.
+    fds: Vec<std::os::fd::OwnedFd>,
 }
 
 const WIDTH: u32 = 64;
@@ -269,7 +270,7 @@ fn harness(device: Device, on_release: Option<drmkit_scene_sources::OnRelease>) 
         layer,
         ring,
         needs_modeset: true,
-        _fds: fds,
+        fds,
     })
 }
 
@@ -346,9 +347,83 @@ impl Harness {
         }
     }
 
+    /// Add a second ring as another layer, offset so it does not cover the
+    /// first.
+    ///
+    /// Returns its handle and its ring; the descriptors are parked in the
+    /// harness because the import refers to them for as long as the layer
+    /// lives.
+    fn add_ring_layer(
+        &mut self,
+        x: i32,
+        y: i32,
+        on_release: Option<drmkit_scene_sources::OnRelease>,
+    ) -> Option<(LayerHandle, Rc<RefCell<ExternalDmaBufRing>>)> {
+        let mut fds = Vec::new();
+        let mut pitches = Vec::new();
+        for _ in 0..SLOTS {
+            let (fd, pitch) = exported_buffer(&self.device, WIDTH, HEIGHT)?;
+            fds.push(fd);
+            pitches.push(pitch);
+        }
+        let planes: Vec<Vec<ExternalPlane<'_>>> = fds
+            .iter()
+            .zip(&pitches)
+            .map(|(fd, pitch)| {
+                vec![ExternalPlane {
+                    fd: std::os::fd::AsFd::as_fd(fd),
+                    offset: 0,
+                    pitch: *pitch,
+                }]
+            })
+            .collect();
+        let slots: Vec<&[ExternalPlane<'_>]> = planes.iter().map(Vec::as_slice).collect();
+
+        let mut ring = ExternalDmaBufRing::create(
+            &self.device,
+            SourceFormat {
+                fourcc: fourcc::XRGB8888,
+                modifier: 0,
+                width: WIDTH,
+                height: HEIGHT,
+            },
+            &slots,
+            None,
+        )
+        .ok()?;
+        if let Some(callback) = on_release {
+            ring.set_on_release(callback);
+        }
+        let ring = Rc::new(RefCell::new(ring));
+        let handle = self.scene.add_layer(Box::new(SharedRing(Rc::clone(&ring))));
+        self.scene.layer_mut(handle)?.set_display(DisplayParams {
+            src_rect: Rect {
+                x: 0,
+                y: 0,
+                w: WIDTH,
+                h: HEIGHT,
+            },
+            dst_rect: Rect {
+                x,
+                y,
+                w: WIDTH,
+                h: HEIGHT,
+            },
+            ..DisplayParams::default()
+        });
+
+        self.fds.extend(fds);
+        Some((handle, ring))
+    }
+
     /// Submit into `slot` through the shared ring.
     fn submit(&self, slot: usize) {
         self.ring.borrow().submit(slot, None, &[]);
+    }
+
+    /// Submit into `slot`, declaring what changed.
+    fn submit_damaged(&self, slot: usize, damage: &[drmkit_scene::DamageRect]) {
+        self.ring.borrow().submit(slot, None, damage);
     }
 
     /// Put the CRTC back down.
@@ -537,6 +612,202 @@ fn an_idle_scene_has_nothing_worth_committing_vkms() {
     );
     h.commit().expect("the move");
     assert!(!h.scene.content_changed());
+
+    h.teardown();
+}
+
+/// Two layers, each with its own ring: both get their release fences, and
+/// removing one retires its source without disturbing the other.
+///
+/// The release edge is per layer. A scene that routed every release to the
+/// first source, or dropped a removed layer's source while its buffers were
+/// still in flight, would pass every single-layer case here.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn two_layers_each_get_their_own_releases_and_one_can_be_removed_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+
+    let first_releases = Arc::new(AtomicU32::new(0));
+    let counter = Arc::clone(&first_releases);
+    let Some(mut h) = harness(
+        device,
+        Some(Box::new(move |_slot, _fence| {
+            counter.fetch_add(1, Ordering::Relaxed);
+        })),
+    ) else {
+        drmkit_testkit::skipped("no connected output with an importable ring");
+        return;
+    };
+
+    let second_releases = Arc::new(AtomicU32::new(0));
+    let counter = Arc::clone(&second_releases);
+    let Some((second_layer, second_ring)) = h.add_ring_layer(
+        WIDTH.cast_signed(),
+        0,
+        Some(Box::new(move |_slot, _fence| {
+            counter.fetch_add(1, Ordering::Relaxed);
+        })),
+    ) else {
+        drmkit_testkit::skipped("no second importable ring");
+        return;
+    };
+
+    for frame in 0..8 {
+        h.submit(frame % SLOTS);
+        second_ring.borrow().submit(frame % SLOTS, None, &[]);
+        let report = h
+            .commit()
+            .unwrap_or_else(|error| panic!("frame {frame}: {error}"));
+        assert_eq!(report.layers_total, 2, "both layers are in the scene");
+    }
+
+    assert!(
+        first_releases.load(Ordering::Relaxed) > 0,
+        "the first layer's ring must retire buffers"
+    );
+    assert!(
+        second_releases.load(Ordering::Relaxed) > 0,
+        "and so must the second's -- a scene routing every release to the \
+         first source would pass every single-layer case"
+    );
+
+    // Remove the second layer while its buffers are still in flight. Its
+    // source is kept alive until they come back, or the release would have
+    // nowhere to go and its handles would be freed under the display engine.
+    let before = second_releases.load(Ordering::Relaxed);
+    h.scene.remove_layer(second_layer);
+
+    for frame in 0..4 {
+        h.submit(frame % SLOTS);
+        let report = h
+            .commit()
+            .unwrap_or_else(|error| panic!("post-removal frame {frame}: {error}"));
+        assert_eq!(report.layers_total, 1, "only the first layer remains");
+    }
+    assert!(
+        second_releases.load(Ordering::Relaxed) > before,
+        "the removed layer had buffers in flight, and they must still come \
+         back to its source -- dropping the source with the removal would \
+         strand them, freeing handles the display engine may still be reading"
+    );
+
+    h.teardown();
+}
+
+/// Per-frame damage commits, and reaches the kernel where the driver takes it.
+///
+/// `FB_DAMAGE_CLIPS` is a blob per plane per frame. Upstream asserts only that
+/// the commits land -- which they would on a scene that dropped the damage
+/// entirely -- so this also checks the report against what the driver actually
+/// advertises.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn per_frame_damage_commits_and_is_counted_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let takes_damage = drmkit_display::DriverProfile::probe(&device)
+        .map(|profile| profile.fb_damage_clips)
+        .unwrap_or(false);
+    let Some(mut h) = harness(device, None) else {
+        drmkit_testkit::skipped("no connected output with an importable ring");
+        return;
+    };
+
+    let mut damaged_frames = 0;
+    for frame in 0..6 {
+        let x = i32::try_from(frame % 4).expect("a small frame index") * 8;
+        h.submit_damaged(
+            frame % SLOTS,
+            &[drmkit_scene::DamageRect {
+                x,
+                y: 0,
+                w: 8,
+                h: 8,
+            }],
+        );
+        let report = h
+            .commit()
+            .unwrap_or_else(|error| panic!("damage frame {frame}: {error}"));
+        damaged_frames += usize::from(report.damaged_layers > 0);
+    }
+
+    if takes_damage {
+        assert!(
+            damaged_frames > 0,
+            "this driver advertises FB_DAMAGE_CLIPS, so a scene that dropped \
+             the damage would be silently repainting whole frames"
+        );
+    } else {
+        assert_eq!(
+            damaged_frames, 0,
+            "the driver takes no damage property, so nothing should claim to \
+             have written one"
+        );
+        println!("note: this driver has no FB_DAMAGE_CLIPS; only the commits are pinned");
+    }
+
+    h.teardown();
+}
+
+/// Two layers each damaging their own region in the same frame.
+///
+/// Damage is per plane, not per commit. A scene that wrote one blob for the
+/// frame would repaint the wrong region on one of the two.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn two_layers_damage_their_own_regions_in_one_frame_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let takes_damage = drmkit_display::DriverProfile::probe(&device)
+        .map(|profile| profile.fb_damage_clips)
+        .unwrap_or(false);
+    let Some(mut h) = harness(device, None) else {
+        drmkit_testkit::skipped("no connected output with an importable ring");
+        return;
+    };
+    let Some((_second_layer, second_ring)) = h.add_ring_layer(WIDTH.cast_signed(), 0, None) else {
+        drmkit_testkit::skipped("no second importable ring");
+        return;
+    };
+
+    let mut both_damaged = 0;
+    for frame in 0..6 {
+        h.submit_damaged(
+            frame % SLOTS,
+            &[drmkit_scene::DamageRect {
+                x: 0,
+                y: 0,
+                w: 8,
+                h: 8,
+            }],
+        );
+        second_ring.borrow().submit(
+            frame % SLOTS,
+            None,
+            &[drmkit_scene::DamageRect {
+                x: 16,
+                y: 16,
+                w: 8,
+                h: 8,
+            }],
+        );
+        let report = h
+            .commit()
+            .unwrap_or_else(|error| panic!("damage frame {frame}: {error}"));
+        assert_eq!(report.layers_total, 2);
+        both_damaged += usize::from(report.damaged_layers >= 2);
+    }
+
+    if takes_damage {
+        assert!(
+            both_damaged > 0,
+            "each layer damages its own region, so both must carry a blob -- \
+             one blob for the frame would repaint the wrong area on one of them"
+        );
+    } else {
+        println!("note: this driver has no FB_DAMAGE_CLIPS; only the commits are pinned");
+    }
 
     h.teardown();
 }

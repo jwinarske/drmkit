@@ -12,9 +12,10 @@ scene composition, and scanout. A behavioral-parity Rust port of
 
 A scene can bring up a display, allocate planes for a layer stack, commit a
 frame, composite what it cannot place, and release buffers on the right
-vblank. EDID, colour management, cursor and capture are in. The present spine,
-client-side decorations, and the GL, GBM surface and stream source tiers are
-not.
+vblank. EDID, colour management, cursor and capture are in, as are the present
+spine, cross-output orchestration, GBM surface sources and client-side
+decorations. The GL compositor, EGL streams, and the V4L2 and `GStreamer`
+sources are not.
 
 See the [crate documentation](https://docs.rs/drmkit) for which member crate
 does what, or <https://github.com/jwinarske/drmkit> for the porting plan.

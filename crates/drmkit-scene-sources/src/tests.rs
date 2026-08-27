@@ -2533,3 +2533,90 @@ fn an_explicit_modifier_and_its_absence_both_import_vkms() {
     );
     assert_eq!(cache.len(), 2);
 }
+
+/// The pool lends its acquired import's descriptors, like the other two.
+///
+/// This was the one of the three that could not, and the reason was
+/// structural rather than an oversight: its imports live behind a `Mutex`,
+/// and `DmaBufDesc` borrows what it describes, so a borrow taken inside the
+/// guard cannot outlive it. Holding the acquired import as an `Arc` outside
+/// the lock is what makes the borrow come from the pool. Recorded as P-29
+/// while it was open.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_pool_lends_its_acquired_descriptors_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((fd, pitch)) = pool_planes(&device) else {
+        println!("note: skipped -- no importable dma-buf on this card");
+        return;
+    };
+    let planes = [ExternalPlane {
+        fd: fd.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+
+    let mut pool = ExternalDmaBufPool::new(pool_format(), None);
+
+    assert!(
+        matches!(pool.export_dma_buf(), Err(SourceError::Unsupported)),
+        "nothing has been acquired, so there is nothing to describe"
+    );
+
+    assert!(pool.submit(&device, 0xA, &planes, None, &[]));
+    let acquired = pool.acquire().expect("key A");
+
+    let exported = pool
+        .export_dma_buf()
+        .expect("the pool has to lend, like the others");
+    assert_eq!(exported.fds.len(), 1);
+    assert_eq!(exported.pitches, vec![pitch]);
+    assert_eq!(exported.format, pool_format());
+
+    assert!(
+        matches!(
+            pool.map(drmkit_dumb::MapAccess::Read),
+            Err(SourceError::Unsupported)
+        ),
+        "and the CPU map is still correctly unsupported -- the export is what \
+         keeps the layer compositable, not a mapping"
+    );
+
+    pool.release(acquired);
+}
+
+/// A session pause drops what the pool was lending.
+///
+/// The descriptors belong to a device that is going away. Continuing to
+/// describe them would have composition read from a buffer whose backing is
+/// gone.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_paused_pool_lends_nothing_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((fd, pitch)) = pool_planes(&device) else {
+        println!("note: skipped -- no importable dma-buf on this card");
+        return;
+    };
+    let planes = [ExternalPlane {
+        fd: fd.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+
+    let mut pool = ExternalDmaBufPool::new(pool_format(), None);
+    assert!(pool.submit(&device, 0xA, &planes, None, &[]));
+    let acquired = pool.acquire().expect("key A");
+    assert!(pool.export_dma_buf().is_ok());
+    pool.release(acquired);
+
+    pool.on_session_paused();
+
+    assert!(
+        matches!(pool.export_dma_buf(), Err(SourceError::Unsupported)),
+        "the descriptors belong to a device that is going away"
+    );
+    assert_eq!(pool.cached_count(), 0, "and the imports went with it");
+}

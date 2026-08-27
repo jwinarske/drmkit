@@ -24,6 +24,7 @@
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -39,7 +40,13 @@ use crate::ring::OnRelease;
 
 /// One imported buffer.
 struct PoolSlot {
-    imported: ImportedFramebuffer,
+    /// Shared, so the acquired one can be held outside the lock.
+    ///
+    /// `DmaBufDesc` borrows what it describes, and a borrow taken inside the
+    /// mutex guard cannot outlive it — which is why lending the descriptors
+    /// was impossible while this was owned by the map. An `Arc` costs a
+    /// refcount per acquire and makes the borrow come from the pool itself.
+    imported: Arc<ImportedFramebuffer>,
     /// A monotonic stamp, bumped on every submit of this key.
     ///
     /// Ordering, not time: what the cap needs is which import has gone longest
@@ -58,6 +65,13 @@ pub struct ExternalDmaBufPool {
     presenter: RingPresenter,
     format: Mutex<SourceFormat>,
     on_release: Option<OnRelease>,
+    /// The import the last successful acquire handed out.
+    ///
+    /// Held outside the lock so `export_dma_buf` has something to lend a
+    /// borrow of. It also keeps the framebuffer alive past an eviction that
+    /// removed it from the map, which is correct: the display engine is still
+    /// reading it.
+    acquired: Option<Arc<ImportedFramebuffer>>,
     /// How many imports to keep. See [`set_max_pool`](Self::set_max_pool).
     max_pool: usize,
     /// Source of `last_used` stamps.
@@ -93,6 +107,7 @@ impl ExternalDmaBufPool {
             presenter: RingPresenter::new(fence_deadline),
             format: Mutex::new(format),
             on_release: None,
+            acquired: None,
             max_pool: DEFAULT_MAX_POOL,
             tick: std::sync::atomic::AtomicU64::new(0),
         }
@@ -149,7 +164,7 @@ impl ExternalDmaBufPool {
                     return false;
                 };
                 entry.insert(PoolSlot {
-                    imported,
+                    imported: Arc::new(imported),
                     last_used: 0,
                     retiring: false,
                 });
@@ -266,27 +281,37 @@ impl ExternalDmaBufPool {
 }
 
 impl LayerBufferSource for ExternalDmaBufPool {
-    /// **Not implemented**, unlike [`ExternalDmaBufSource`](crate::ExternalDmaBufSource)
-    /// and [`ExternalDmaBufRing`](crate::ExternalDmaBufRing), which both lend
-    /// their descriptors.
+    /// Lend the acquired import's descriptors, so the layer can be
+    /// composited.
     ///
-    /// The descriptors exist -- the imports hold them -- but they live inside a
-    /// `Mutex<HashMap<..>>`, and `DmaBufDesc` borrows what it describes. A
-    /// borrow taken from inside the guard cannot outlive it, so there is no
-    /// signature that lends them out without first moving the acquired slot's
-    /// import out from behind the lock. Upstream has no such constraint: its
-    /// pool returns the descriptors directly.
+    /// Same contract as [`ExternalDmaBufSource`](crate::ExternalDmaBufSource)
+    /// and [`ExternalDmaBufRing`](crate::ExternalDmaBufRing): a foreign buffer
+    /// exposes no CPU mapping, so without this the layer blanks whenever the
+    /// allocator cannot place it — the case composition exists to rescue.
     ///
-    /// The cost is real and not cosmetic: a layer fed from this pool blanks
-    /// whenever the allocator cannot place it, where the same layer fed from a
-    /// ring would be composited. Tracked as P-29 with the fix -- holding the
-    /// acquired slot as an `Arc` outside the lock.
+    /// The pool needed a reshape the other two did not. Its imports live
+    /// behind a `Mutex`, and `DmaBufDesc` borrows what it describes, so a
+    /// borrow taken inside the guard cannot outlive it. Holding the acquired
+    /// import as an `Arc` outside the lock is what makes the borrow come from
+    /// the pool rather than from the map.
     ///
     /// # Errors
     ///
-    /// Always [`SourceError::Unsupported`].
+    /// [`SourceError::Unsupported`] before the first successful acquire, and
+    /// after a session pause has dropped every import.
     fn export_dma_buf(&mut self) -> Result<DmaBufDesc<'_>, SourceError> {
-        Err(SourceError::Unsupported)
+        let format = *self.lock_format();
+        let imported = self.acquired.as_ref().ok_or(SourceError::Unsupported)?;
+        let (fds, offsets, pitches) = imported.dma_buf_planes();
+        if fds.is_empty() {
+            return Err(SourceError::Unsupported);
+        }
+        Ok(DmaBufDesc {
+            fds: fds.iter().map(std::os::fd::AsFd::as_fd).collect(),
+            offsets: offsets.to_vec(),
+            pitches: pitches.to_vec(),
+            format,
+        })
     }
 
     fn acquire(&mut self) -> Result<AcquiredBuffer, SourceError> {
@@ -318,6 +343,20 @@ impl LayerBufferSource for ExternalDmaBufPool {
             }
             Present::None => Err(SourceError::WouldBlock),
         };
+
+        // Remember what was handed out, so the descriptors can be lent. Only
+        // on success: a refused acquire put nothing on screen, and keeping the
+        // previous import would have `export_dma_buf` describe a buffer this
+        // frame is not using.
+        if result.is_ok() {
+            // The guard is released before the assignment: holding it across
+            // one would borrow `self` twice.
+            let handed_out = self
+                .lock_slots()
+                .get(&decision.key)
+                .map(|slot| Arc::clone(&slot.imported));
+            self.acquired = handed_out;
+        }
 
         // After the decision, so a buffer this frame just took is referenced
         // and survives the sweep.
@@ -357,8 +396,13 @@ impl LayerBufferSource for ExternalDmaBufPool {
         // revoked. Dropping the imports without ioctls leaves the pool empty,
         // so the producer's next submit re-imports against the live device
         // rather than the pool handing out ids the kernel has forgotten.
+        // The acquired reference goes first: `forget` needs unique access,
+        // and the pool's own clone is the only other holder.
+        self.acquired = None;
         for slot in self.lock_slots().values_mut() {
-            slot.imported.forget();
+            if let Some(imported) = Arc::get_mut(&mut slot.imported) {
+                imported.forget();
+            }
         }
         self.lock_slots().clear();
         self.presenter.reset();

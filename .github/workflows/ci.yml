@@ -168,18 +168,25 @@ jobs:
       # what these lanes are for. A type error, a bad cast, an assumption about
       # pointer width would all still fail here.
       #
+      # drmkit-scene-gbm goes with drmkit-gbm and for the same reason: it
+      # depends on it, so its test binaries link libgbm too. A crate that
+      # links a C library the runner has no cross sysroot for has to be
+      # checked rather than built, whether it names the library itself or
+      # inherits it.
+      #
       # drmkit-session is built and tested *without* its seat backend here.
       # libseat-sys's build script needs pkg-config to find libseat for the
       # target, which fails even for `cargo check` -- so unlike gbm there is no
       # way to type-check the binding cross. The sequencing is the part with
       # the logic in it, and it is covered on every target; the binding is
       # covered on the host lanes, where the library is installed.
-      - run: cargo build --workspace --exclude xtask --exclude drmkit-gbm --exclude drmkit-session --exclude drmkit-input --target ${{ matrix.target }}
+      - run: cargo build --workspace --exclude xtask --exclude drmkit-gbm --exclude drmkit-scene-gbm --exclude drmkit-session --exclude drmkit-input --target ${{ matrix.target }}
       - run: cargo check -p drmkit-gbm --target ${{ matrix.target }}
+      - run: cargo check -p drmkit-scene-gbm --target ${{ matrix.target }}
       - run: cargo build -p drmkit-session --no-default-features --target ${{ matrix.target }}
       # qemu-user runs T0 under the cross target; the runner comes from the
       # per-target .cargo fragment.
-      - run: cargo test --workspace --exclude xtask --exclude drmkit-gbm --exclude drmkit-session --exclude drmkit-input --target ${{ matrix.target }}
+      - run: cargo test --workspace --exclude xtask --exclude drmkit-gbm --exclude drmkit-scene-gbm --exclude drmkit-session --exclude drmkit-input --target ${{ matrix.target }}
       - run: cargo test -p drmkit-session --no-default-features --target ${{ matrix.target }}
       # drmkit-input splits three ways because its two C libraries behave
       # differently. libudev-sys runs pkg-config in its build script, so the
@@ -311,6 +318,16 @@ jobs:
       # fuzz lane already needed a suppression for. Adding them means adding
       # suppressions, and a suppression file is how a sanitizer stops finding
       # things.
+      # drmkit-csd and drmkit-scene-set are deliberately absent, and the
+      # reason is worth writing down so nobody adds them on the assumption
+      # they were forgotten. Neither contains a single `unsafe` block: every
+      # buffer access in the decoration renderer -- the blur, the blend, the
+      # blit into a caller's canvas -- goes through checked slice indexing, so
+      # there is no out-of-bounds write for a sanitizer to find. Verified by
+      # removing a bounds check in `blend_pixel` and running this lane: it
+      # passes, because `get_mut` returns `None` rather than writing. What
+      # catches that class there is the type system and the tests, and the
+      # damage arithmetic goes under Miri instead.
       - run: >
           cargo +nightly test
           -p drmkit-core -p drmkit-dumb -p drmkit-modeset -p drmkit-sync
@@ -396,3 +413,15 @@ jobs:
       # separate crates -- so the whole thing is pure logic and belongs here
       # for the same reason the matcher does.
       - run: cargo +nightly miri test -p drmkit-present
+      # drmkit-scene-set's lib is the partition and the container: index
+      # arithmetic over slot vectors, with the device half in a separate test
+      # target that is not built here. Two seconds under the interpreter.
+      - run: cargo +nightly miri test -p drmkit-scene-set --lib
+      # drmkit-csd's damage tracking only. The rest of the crate is pure too,
+      # but the shadow blur and the renderer are large buffer loops -- three
+      # box passes over a 96x96 patch, 240x160 draws -- and take tens of
+      # minutes under the interpreter for arithmetic clippy's cast lints
+      # already check and 132 host tests already exercise. The damage bounds
+      # are the part worth the interpreter: signed accumulation, clamping to a
+      # canvas, and rectangles that may lie outside it. 11 cases, ~2s.
+      - run: cargo +nightly miri test -p drmkit-csd --lib -- damage

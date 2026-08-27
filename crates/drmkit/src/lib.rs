@@ -15,14 +15,18 @@
 //! need directly until this becomes their feature-gated re-export surface.
 //!
 //! Phases 0–4 of the porting plan are met and phase 5, the `v0.1.0-minimal`
-//! ship gate, is under way. A scene can bring up a display, allocate planes
-//! for a layer stack, commit a frame, composite what it cannot place, and
-//! release buffers on the right vblank; EDID, colour management, cursor and
-//! capture are in.
+//! ship gate, is under way — what it still wants is the HIL smoke on real
+//! boards. A scene can bring up a display, allocate planes for a layer stack,
+//! commit a frame, composite what it cannot place, and release buffers on the
+//! right vblank; EDID, colour management, cursor and capture are in. So are
+//! the present spine, cross-output orchestration, and client-side
+//! decorations.
 //!
-//! Not yet here: the present spine, client-side decorations, and the GL, GBM
-//! surface and stream source tiers. 47 of the 97 upstream test files are
-//! unported and every one of them waits on a crate that does not exist yet.
+//! Not yet here: the GL compositor, EGL streams, V4L2 and `GStreamer` sources.
+//! Of the 97 upstream test files, 67 are ported and 13 partial; the 15 still
+//! pending each wait on hardware or a library this tree does not have — a
+//! GPU render node, the `vgem`, `vivid` or `vicodec` modules, or NVIDIA
+//! silicon. `TEST_PARITY.md` records which, per file.
 //!
 //! # The crates
 //!
@@ -39,6 +43,10 @@
 //! | [`drmkit-planes`](https://docs.rs/drmkit-planes) | The plane registry and the allocator that assigns layers to planes. |
 //! | [`drmkit-scene`](https://docs.rs/drmkit-scene) | A layer stack, lowered to a frame and committed; composition for what will not fit. |
 //! | [`drmkit-scene-sources`](https://docs.rs/drmkit-scene-sources) | Where a layer's pixels come from: dumb buffers, imported DMA-BUFs. |
+//! | [`drmkit-scene-gbm`](https://docs.rs/drmkit-scene-gbm) | A layer fed by a GBM surface — the swap chain a GL or Vulkan producer renders into. |
+//! | [`drmkit-scene-set`](https://docs.rs/drmkit-scene-set) | Several scenes committed together, and how many ioctls that costs. |
+//! | [`drmkit-present`](https://docs.rs/drmkit-present) | The scanout spine: buffer rings, modifier negotiation, frame pacing, and a backend that drives them. |
+//! | [`drmkit-csd`](https://docs.rs/drmkit-csd) | Client-side decorations: title bars, shadows, and getting them onto a plane. |
 //! | [`drmkit-display`](https://docs.rs/drmkit-display) | EDID, driver capabilities, colour pipelines and tone mapping. |
 //! | [`drmkit-cursor`](https://docs.rs/drmkit-cursor) | Cursor themes, and getting one onto a plane. |
 //! | [`drmkit-capture`](https://docs.rs/drmkit-capture) | Reading back what a CRTC is scanning out. |

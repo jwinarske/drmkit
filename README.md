@@ -8,17 +8,22 @@ composition, and scanout.
 [![vkms](https://github.com/jwinarske/drmkit/actions/workflows/vkms.yml/badge.svg)](https://github.com/jwinarske/drmkit/actions/workflows/vkms.yml)
 
 > **Status: phases 0–4 met, phase 5 (the v0.1.0-minimal ship gate) under way.**
-> Eighteen crates; 712 unit and integration tests plus 27 doctests on the host,
-> 93 more that need a card, and 1,336 cases run under qemu on the aarch64 and
-> riscv64 cross lanes. All six [`INVARIANTS.md`](INVARIANTS.md) contracts are
+> Twenty-two crates; 919 unit and integration tests plus 27 doctests on the
+> host, 180 more that need a card, and the host suite again under qemu on the
+> aarch64 and riscv64 cross lanes. All six [`INVARIANTS.md`](INVARIANTS.md) contracts are
 > pinned against a real device. A scene can build a frame, allocate planes,
 > commit it, composite what it cannot place, and hand buffers back on the right
 > vblank; EDID, colour management, the cursor and capture paths are in and
 > tested.
 >
-> Not yet a display library you would ship: the present spine, CSD, and the
-> GL/GBM/stream source tiers are still ahead — 47 of the 97 upstream test files
-> are unported, and every one of them waits on a crate that does not exist yet.
+> The present spine, cross-output orchestration, GBM surface sources and
+> client-side decorations have since landed. Of the 97 upstream test files, 67
+> are ported and 13 partial. The 15 still pending do **not** wait on unwritten
+> crates any more — each waits on hardware or a library this tree does not
+> have: a working GPU render node, the `vgem`, `vivid` or `vicodec` modules, or
+> NVIDIA silicon for EGL streams. [`TEST_PARITY.md`](TEST_PARITY.md) records
+> which, per file, and [`docs/parity-findings.md`](docs/parity-findings.md)
+> records the seven findings still open, every one of them for that reason.
 > See [`plan.md`](plan.md) for the full porting plan.
 >
 > It has run on more than vkms. amdgpu and vc4 (Raspberry Pi 5) by hand, a

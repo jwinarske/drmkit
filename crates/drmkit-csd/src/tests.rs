@@ -2644,3 +2644,89 @@ fn a_decoration_outside_the_damage_contributes_nothing() {
         "outside the damage means outside this frame's work"
     );
 }
+
+// --- composite presenter, canvas writes ---------------------------------------
+//
+// Parity port of the `CsdComputeCanvasWrites` cases in
+// `tests/unit/test_csd_presenter_composite.cpp`.
+
+use crate::compute_canvas_writes;
+
+/// The canvas is armed full-screen and unscaled.
+///
+/// There is no per-decoration geometry here, which is the difference from the
+/// plane tier: the positioning already happened during the blend, and the
+/// canvas is the size of the mode by construction.
+#[test]
+fn the_canvas_is_armed_full_screen_and_unscaled() {
+    let canvas = PlaneSlot {
+        plane_id: 7,
+        crtc_id: 42,
+        ..slot(7)
+    };
+    let writes = compute_canvas_writes(&canvas, 1234, 1920, 1080);
+
+    assert_eq!(writes.len(), 10, "ten properties arm a plane, no more");
+    assert_eq!(value_of(&writes, 7, canvas.fb_id_prop), Some(1234));
+    assert_eq!(value_of(&writes, 7, canvas.crtc_id_prop), Some(42));
+    assert_eq!(value_of(&writes, 7, canvas.crtc_x_prop), Some(0));
+    assert_eq!(value_of(&writes, 7, canvas.crtc_y_prop), Some(0));
+    assert_eq!(value_of(&writes, 7, canvas.crtc_w_prop), Some(1920));
+    assert_eq!(value_of(&writes, 7, canvas.crtc_h_prop), Some(1080));
+    assert_eq!(value_of(&writes, 7, canvas.src_x_prop), Some(0));
+    assert_eq!(value_of(&writes, 7, canvas.src_y_prop), Some(0));
+    assert_eq!(
+        value_of(&writes, 7, canvas.src_w_prop),
+        Some(1920 << 16),
+        "16.16 fixed point -- pixels here would ask for a source region 65536 \
+         times too small"
+    );
+    assert_eq!(value_of(&writes, 7, canvas.src_h_prop), Some(1080 << 16));
+}
+
+/// Every write targets the canvas plane and nothing else.
+#[test]
+fn every_canvas_write_targets_the_canvas_plane() {
+    let canvas = PlaneSlot {
+        plane_id: 3,
+        ..slot(3)
+    };
+    let writes = compute_canvas_writes(&canvas, 55, 640, 480);
+
+    assert!(
+        writes.iter().all(|w| w.object_id == 3),
+        "a write aimed at another object would program a plane the composite \
+         tier does not own"
+    );
+}
+
+/// The framebuffer id is written verbatim, zero included.
+///
+/// A zero framebuffer takes the canvas plane down, which is what a caller
+/// with nothing to show wants. Suppressing it would leave the previous canvas
+/// armed and the last frame's decorations on screen after every window has
+/// closed.
+#[test]
+fn the_canvas_framebuffer_is_written_verbatim() {
+    let canvas = PlaneSlot {
+        plane_id: 1,
+        ..slot(1)
+    };
+
+    assert_eq!(
+        value_of(
+            &compute_canvas_writes(&canvas, 0, 800, 600),
+            1,
+            canvas.fb_id_prop
+        ),
+        Some(0)
+    );
+    assert_eq!(
+        value_of(
+            &compute_canvas_writes(&canvas, 99, 800, 600),
+            1,
+            canvas.fb_id_prop
+        ),
+        Some(99)
+    );
+}

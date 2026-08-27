@@ -88,6 +88,17 @@ pub struct SceneLayer {
     /// caller's deterministic-plane assumption being violated is worth saying
     /// out loud, and worth saying more than it is worth blanking a layer over.
     pinned_plane: Option<u32>,
+    /// A caller-chosen identity, stable across a rebind.
+    ///
+    /// A [`LayerHandle`] identifies a layer *within one scene's lifetime*.
+    /// This identifies what the layer **is** to the caller — a window, a
+    /// video stream, a cursor — so a caller holding its own state can find its
+    /// layer again without keeping a parallel map keyed by handle.
+    ///
+    /// Upstream uses a `const void*`, which works there because the caller
+    /// already has a stable object to point at. A `u64` says the same thing
+    /// without inviting a raw pointer into a type the scene stores.
+    identity_tag: Option<u64>,
     /// Whether the geometry changed since the last commit.
     ///
     /// Separate from `hints_dirty`, which drops the warm start: geometry only
@@ -140,6 +151,23 @@ impl SceneLayer {
     pub const fn set_display(&mut self, display: DisplayParams) {
         self.display = display;
         self.display_dirty = true;
+    }
+
+    /// The caller's identity for this layer, if it set one.
+    #[must_use]
+    pub const fn identity_tag(&self) -> Option<u64> {
+        self.identity_tag
+    }
+
+    /// Label this layer with a caller-chosen identity.
+    ///
+    /// Purely for the caller's own lookups — see
+    /// [`identity_tag`](Self::identity_tag). The scene never interprets it,
+    /// and does not require it to be unique; a duplicate simply means
+    /// [`find_by_identity_tag`](LayerScene::find_by_identity_tag) answers with
+    /// the first match.
+    pub const fn set_identity_tag(&mut self, tag: Option<u64>) {
+        self.identity_tag = tag;
     }
 
     /// The plane this layer is pinned to, if any.
@@ -215,6 +243,43 @@ impl SceneLayer {
 enum Slot {
     Occupied(Box<SceneLayer>),
     Free,
+}
+
+/// What a [`rebind`](LayerScene::rebind) found that will not fit.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RebindReport {
+    /// Layers the new output cannot display as they stand.
+    pub incompatibilities: Vec<LayerIncompatibility>,
+}
+
+impl RebindReport {
+    /// Whether every layer fits the new output.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.incompatibilities.is_empty()
+    }
+}
+
+/// One layer the new output cannot display as it stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayerIncompatibility {
+    /// Which layer. Still valid: a rebind does not invalidate handles.
+    pub handle: LayerHandle,
+    /// Why it does not fit.
+    pub reason: IncompatibilityReason,
+}
+
+/// Why a layer does not fit its new output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum IncompatibilityReason {
+    /// The destination rectangle falls outside the new mode.
+    ///
+    /// Reported rather than clamped. A layer at the old mode's bottom-right
+    /// is not *wrong*, it is somewhere the caller now has to decide about, and
+    /// silently moving it would put a window somewhere the caller never asked
+    /// for and cannot detect.
+    DstRectOffScreen,
 }
 
 /// One plane's share of a built frame.
@@ -504,6 +569,7 @@ impl LayerScene {
             app_priority: 0,
             hints_dirty: false,
             pinned_plane: None,
+            identity_tag: None,
             display_dirty: true,
             last_fb_id: None,
         });
@@ -1222,6 +1288,72 @@ impl LayerScene {
                 layer.hints_dirty() || layer.display_dirty || layer.source().has_fresh_content()
             })
         })
+    }
+
+    /// The first layer carrying `tag`, if any.
+    ///
+    /// The lookup that makes [`SceneLayer::set_identity_tag`] worth setting:
+    /// a caller that survived a rebind, a session resume, or its own restart
+    /// can find its layers again from its own identifiers rather than from
+    /// handles it may no longer hold.
+    #[must_use]
+    pub fn find_by_identity_tag(&self, tag: u64) -> Option<LayerHandle> {
+        self.handles().find(|handle| {
+            self.layer(*handle)
+                .is_some_and(|layer| layer.identity_tag() == Some(tag))
+        })
+    }
+
+    /// Move this scene to another output, keeping its layers.
+    ///
+    /// For an output that changed underneath the caller: a mode set, a
+    /// different CRTC after a session resume, a display swapped for another.
+    /// **Layer handles survive** — that is the point, since a caller that had
+    /// to rebuild its layers would have to rebuild everything it knows about
+    /// them too.
+    ///
+    /// Everything cached about the previous output is dropped. A plane id
+    /// means nothing on another pipe, so both the assignment and the committed
+    /// baseline go: diffing the first frame against the old output's baseline
+    /// would suppress properties the new one has never been told, and the
+    /// layer would arrive half-programmed. The next commit is therefore a full
+    /// emit, and the caller must set the new mode with it.
+    ///
+    /// Returns what will not fit. A layer whose destination lies outside the
+    /// new mode is **not** dropped — the caller may be about to move it, and
+    /// deciding on its behalf would be worse than saying so.
+    pub fn rebind(&mut self, crtc_id: u32, width: u32, height: u32) -> RebindReport {
+        self.crtc_id = crtc_id;
+        self.allocator.forget_output();
+        // Everything has to be re-emitted against the new pipe, and the layer
+        // set is effectively new to it.
+        self.topology_dirty = true;
+        self.committed_once = false;
+        for handle in self.handles().collect::<Vec<_>>() {
+            if let Some(layer) = self.layer_mut(handle) {
+                layer.hints_dirty = true;
+                layer.display_dirty = true;
+                layer.last_fb_id = None;
+            }
+        }
+
+        let incompatibilities = self
+            .handles()
+            .filter_map(|handle| {
+                let layer = self.layer(handle)?;
+                let dst = layer.display().dst_rect;
+                let off_screen = dst.x < 0
+                    || dst.y < 0
+                    || dst.x.saturating_add(dst.w.cast_signed()) > width.cast_signed()
+                    || dst.y.saturating_add(dst.h.cast_signed()) > height.cast_signed();
+                off_screen.then_some(LayerIncompatibility {
+                    handle,
+                    reason: IncompatibilityReason::DstRectOffScreen,
+                })
+            })
+            .collect();
+
+        RebindReport { incompatibilities }
     }
 
     /// Whether any live source wants this commit's `OUT_FENCE`.

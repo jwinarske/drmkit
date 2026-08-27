@@ -411,6 +411,22 @@ impl Allocator {
         self.previous_valid = false;
     }
 
+    /// Forget everything cached about the previous output.
+    ///
+    /// For a scene moving to a different CRTC. Both the assignment and the
+    /// committed baseline describe *that* output's planes, and a plane id
+    /// means nothing on another pipe -- diffing against a baseline from the
+    /// old one would suppress properties the new one has never been told.
+    ///
+    /// Stronger than [`invalidate_allocation`](Self::invalidate_allocation),
+    /// which only forces a fresh search and keeps the baseline.
+    pub fn forget_output(&mut self) {
+        self.previous = PlaneAssignment::new();
+        self.previous_valid = false;
+        self.last_committed.clear();
+        self.failure_cache = TestCache::default();
+    }
+
     /// Record what the kernel accepted, so the next frame's fast path has a
     /// baseline. Call after a successful real commit, never after a test.
     ///

@@ -29,6 +29,7 @@ rustix = { workspace = true, features = ["std", "event"] }
 drmkit-fmt = { workspace = true }
 drmkit-scene-sources = { workspace = true }
 drm = { workspace = true }
+drmkit-modeset = { workspace = true }
 
 [lints]
 workspace = true

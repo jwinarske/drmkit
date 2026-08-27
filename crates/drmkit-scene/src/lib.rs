@@ -93,7 +93,10 @@ pub use frame::{AcquireTally, CommitKind, FrameLifecycle, FrameOutcome, KernelRe
 pub use lower::{LoweringInput, lower_layer};
 pub use release::{Acquisition, ReleaseQueue, ReleaseReason, Released, ScenePendingFlip};
 pub use report::{CommitReport, LayerPlacement, Placement};
-pub use scene::{FrameBuild, LayerHandle, LayerScene, PlanePlan, SceneError, SceneLayer};
+pub use scene::{
+    FrameBuild, IncompatibilityReason, LayerHandle, LayerIncompatibility, LayerScene, PlanePlan,
+    RebindReport, SceneError, SceneLayer,
+};
 pub use signaling::{ColorPrimaries, OutputSignalling, derive_output_signalling, widest_gamut};
 pub use source::{
     AcquiredBuffer, BindingModel, DamageRect, DmaBufDesc, LayerBufferSource, SourceError,

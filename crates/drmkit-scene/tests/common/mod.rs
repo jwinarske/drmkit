@@ -245,6 +245,27 @@ impl Fixture {
         None
     }
 
+    /// The mode this fixture drives, in pixels.
+    pub(crate) fn mode_size(&self) -> (u32, u32) {
+        (
+            drmkit_modeset::ModeInfo::width(&self.mode),
+            drmkit_modeset::ModeInfo::height(&self.mode),
+        )
+    }
+
+    /// The CRTC this fixture drives.
+    pub(crate) const fn crtc_id(&self) -> u32 {
+        self.crtc_id
+    }
+
+    /// Set the mode again with the next commit.
+    ///
+    /// What a caller does after a rebind: the scene has forgotten the output,
+    /// and the mode has to be re-stated with the frame that reintroduces it.
+    pub(crate) const fn force_modeset(&mut self) {
+        self.needs_modeset = true;
+    }
+
     pub(crate) fn teardown(&mut self) {
         let _ = self.device.set_crtc(
             drm::control::crtc::Handle::from(

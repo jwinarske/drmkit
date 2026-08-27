@@ -1866,3 +1866,458 @@ fn a_decoration_too_small_for_its_shadow_draws_nothing() {
         .draw(&theme, &WindowState::default(), &mut target, &mut shadows)
         .expect("a zero panel is not an error");
 }
+
+// --- presenter tier -----------------------------------------------------------
+//
+// Parity port of `tests/unit/test_csd_probe_presenter.cpp`.
+
+use crate::{
+    PlaneError, PlaneSlot, PropertyWrite, SurfaceRef, Tier, choose_presenter_tier, compute_writes,
+};
+
+/// Enough reservable planes means a plane per decoration.
+#[test]
+fn enough_planes_means_a_plane_each() {
+    assert_eq!(choose_presenter_tier(3, 3, true), Some(Tier::Plane));
+    assert_eq!(
+        choose_presenter_tier(5, 3, false),
+        Some(Tier::Plane),
+        "with a plane each, no canvas is needed"
+    );
+}
+
+/// Too few planes but a canvas means compositing.
+#[test]
+fn too_few_planes_with_a_canvas_means_compositing() {
+    assert_eq!(choose_presenter_tier(1, 3, true), Some(Tier::Composite));
+    assert_eq!(choose_presenter_tier(0, 1, true), Some(Tier::Composite));
+}
+
+/// Neither a plane each nor a canvas means neither tier.
+///
+/// `None` rather than `Fb`: the framebuffer tier is what a caller falls back
+/// *to* when KMS has nothing, not one of the KMS options being chosen among.
+#[test]
+fn no_planes_and_no_canvas_chooses_nothing() {
+    assert_eq!(choose_presenter_tier(0, 1, false), None);
+    assert_eq!(choose_presenter_tier(1, 3, false), None);
+}
+
+/// Wanting no decorations is never the plane tier.
+///
+/// Reserving zero planes trivially succeeds, and answering Plane on that
+/// basis would have a caller build a plane presenter with no slots.
+#[test]
+fn wanting_no_decorations_is_never_the_plane_tier() {
+    assert_eq!(choose_presenter_tier(4, 0, true), Some(Tier::Composite));
+    assert_eq!(choose_presenter_tier(4, 0, false), None);
+}
+
+// --- plane presenter ----------------------------------------------------------
+//
+// Parity port of `tests/unit/test_csd_presenter_plane.cpp`.
+
+fn slot(plane_id: u32) -> PlaneSlot {
+    PlaneSlot {
+        plane_id,
+        crtc_id: 99,
+        fb_id_prop: 1,
+        crtc_id_prop: 2,
+        crtc_x_prop: 3,
+        crtc_y_prop: 4,
+        crtc_w_prop: 5,
+        crtc_h_prop: 6,
+        src_x_prop: 7,
+        src_y_prop: 8,
+        src_w_prop: 9,
+        src_h_prop: 10,
+        ..PlaneSlot::default()
+    }
+}
+
+fn surface(fb_id: u32, x: i32, y: i32) -> SurfaceRef {
+    SurfaceRef {
+        fb_id,
+        width: 64,
+        height: 32,
+        x,
+        y,
+        generation: 0,
+    }
+}
+
+/// Whether a write for this object and property exists, and its value.
+fn value_of(writes: &[PropertyWrite], object_id: u32, property_id: u32) -> Option<u64> {
+    writes
+        .iter()
+        .find(|w| w.object_id == object_id && w.property_id == property_id)
+        .map(|w| w.value)
+}
+
+/// More decorations than planes is refused.
+///
+/// Truncating would leave windows silently undecorated, and the caller
+/// reserved the planes knowing how many it wanted.
+#[test]
+fn more_decorations_than_planes_is_refused() {
+    let error = compute_writes(&[slot(10)], &[surface(1, 0, 0), surface(2, 0, 0)])
+        .expect_err("two decorations, one plane");
+
+    assert_eq!(
+        error,
+        PlaneError::TooManySurfaces {
+            surfaces: 2,
+            slots: 1
+        }
+    );
+}
+
+/// No slots and no surfaces is trivially nothing.
+#[test]
+fn no_slots_and_no_surfaces_writes_nothing() {
+    assert_eq!(compute_writes(&[], &[]), Ok(Vec::new()));
+}
+
+/// An armed slot gets its geometry, with the source in 16.16.
+#[test]
+fn an_armed_slot_gets_its_geometry() {
+    let writes = compute_writes(&[slot(10)], &[surface(77, 5, 9)]).expect("one each");
+
+    assert_eq!(value_of(&writes, 10, 1), Some(77), "FB_ID");
+    assert_eq!(value_of(&writes, 10, 2), Some(99), "CRTC_ID");
+    assert_eq!(value_of(&writes, 10, 3), Some(5), "CRTC_X");
+    assert_eq!(value_of(&writes, 10, 4), Some(9), "CRTC_Y");
+    assert_eq!(value_of(&writes, 10, 5), Some(64), "CRTC_W");
+    assert_eq!(value_of(&writes, 10, 6), Some(32), "CRTC_H");
+    assert_eq!(
+        value_of(&writes, 10, 9),
+        Some(64 << 16),
+        "SRC_W is 16.16 fixed point, not pixels"
+    );
+    assert_eq!(value_of(&writes, 10, 10), Some(32 << 16), "SRC_H likewise");
+}
+
+/// A surface with no framebuffer disarms its slot.
+///
+/// Leaving the plane alone would have it go on scanning out last frame's
+/// buffer, so a window that closed would leave its decoration on screen.
+#[test]
+fn a_surface_with_no_framebuffer_disarms_its_slot() {
+    let writes = compute_writes(&[slot(10)], &[surface(0, 0, 0)]).expect("one slot");
+
+    assert_eq!(value_of(&writes, 10, 1), Some(0), "FB_ID cleared");
+    assert_eq!(
+        value_of(&writes, 10, 2),
+        Some(0),
+        "and unbound from the CRTC"
+    );
+    assert_eq!(
+        writes.len(),
+        2,
+        "and nothing else -- describing geometry for a framebuffer that is \
+         not there says nothing"
+    );
+}
+
+/// A zero-sized surface is a disarm too.
+#[test]
+fn a_zero_sized_surface_disarms_its_slot() {
+    let empty = SurfaceRef {
+        fb_id: 7,
+        width: 0,
+        height: 32,
+        ..SurfaceRef::default()
+    };
+    let writes = compute_writes(&[slot(10)], &[empty]).expect("one slot");
+
+    assert_eq!(writes.len(), 2, "disarmed, not drawn at zero width");
+    assert_eq!(value_of(&writes, 10, 1), Some(0));
+}
+
+/// Slots past the surfaces are disarmed.
+#[test]
+fn slots_past_the_surfaces_are_disarmed() {
+    let writes = compute_writes(&[slot(10), slot(20), slot(30)], &[surface(77, 0, 0)])
+        .expect("one of three");
+
+    assert_eq!(value_of(&writes, 10, 1), Some(77), "the first is armed");
+    assert_eq!(value_of(&writes, 20, 1), Some(0), "the tail is not");
+    assert_eq!(value_of(&writes, 30, 1), Some(0));
+    assert_eq!(value_of(&writes, 30, 2), Some(0));
+}
+
+/// The optional properties are written when the plane has them.
+#[test]
+fn the_optional_properties_are_written_when_present() {
+    let with_extras = PlaneSlot {
+        blend_mode_prop: 20,
+        blend_mode_value: 3,
+        alpha_prop: 21,
+        zpos_prop: 22,
+        zpos_value: 7,
+        ..slot(10)
+    };
+    let writes = compute_writes(&[with_extras], &[surface(77, 0, 0)]).expect("one slot");
+
+    assert_eq!(value_of(&writes, 10, 20), Some(3), "blend mode");
+    assert_eq!(
+        value_of(&writes, 10, 21),
+        Some(0xFFFF),
+        "fully opaque -- the decoration's own alpha is in its pixels, and a \
+         per-plane alpha on top would fade the whole thing"
+    );
+    assert_eq!(value_of(&writes, 10, 22), Some(7), "zpos");
+}
+
+/// A property the plane does not expose is not written.
+///
+/// A zero id means absent, and writing to object zero is an `EINVAL` that
+/// takes the whole commit down rather than just this plane.
+#[test]
+fn a_property_the_plane_lacks_is_not_written() {
+    let writes = compute_writes(&[slot(10)], &[surface(77, 0, 0)]).expect("one slot");
+
+    assert!(
+        !writes.iter().any(|w| w.property_id == 0),
+        "a write to property zero would take down every layer in the commit, \
+         not just this one"
+    );
+    assert_eq!(
+        writes.len(),
+        10,
+        "the ten mandatory properties, and no more"
+    );
+}
+
+/// A negative position is carried as two's complement.
+///
+/// A decoration may sit partly off the left or top edge, and the kernel clips
+/// it. Clamping to zero here would move it instead.
+#[test]
+fn a_negative_position_is_carried_through() {
+    let writes = compute_writes(&[slot(10)], &[surface(77, -4, -8)]).expect("one slot");
+
+    assert_eq!(
+        value_of(&writes, 10, 3),
+        Some(i64::from(-4).cast_unsigned())
+    );
+    assert_eq!(
+        value_of(&writes, 10, 4),
+        Some(i64::from(-8).cast_unsigned())
+    );
+}
+
+/// A default surface reference names nothing.
+#[test]
+fn a_default_surface_reference_is_not_armed() {
+    assert!(!SurfaceRef::default().is_armed());
+    assert!(surface(1, 0, 0).is_armed());
+}
+
+// --- composite damage ---------------------------------------------------------
+//
+// Parity port of the `CsdCompositeDamage` cases in
+// `tests/unit/test_csd_presenter_composite.cpp`.
+
+use crate::{DamageRect, DamageSlot, compute_damage, intersect_rect, union_rect};
+
+const CANVAS_W: u32 = 200;
+const CANVAS_H: u32 = 100;
+
+fn armed(x: i32, y: i32, w: u32, h: u32, generation: u64) -> DamageSlot {
+    DamageSlot {
+        armed: true,
+        x,
+        y,
+        w,
+        h,
+        generation,
+    }
+}
+
+fn damage(prev: &[DamageSlot], cur: &[DamageSlot]) -> DamageRect {
+    compute_damage(prev, cur, CANVAS_W, CANVAS_H)
+}
+
+/// The first frame damages the whole canvas.
+///
+/// Nothing is on it yet, so everything has to be painted.
+#[test]
+fn the_first_frame_damages_the_whole_canvas() {
+    let region = damage(&[], &[armed(0, 0, 10, 10, 1)]);
+
+    assert_eq!(
+        region,
+        DamageRect {
+            x: 0,
+            y: 0,
+            w: CANVAS_W,
+            h: CANVAS_H
+        }
+    );
+}
+
+/// A different number of slots damages everything.
+///
+/// The slots are compared pairwise by index, so a count change makes the
+/// pairing meaningless — comparing slot 2 against what used to be slot 3
+/// reports changes in the wrong places and misses real ones.
+#[test]
+fn a_change_in_slot_count_damages_the_whole_canvas() {
+    let before = [armed(0, 0, 10, 10, 1)];
+    let after = [armed(0, 0, 10, 10, 1), armed(50, 50, 10, 10, 1)];
+
+    assert_eq!(damage(&before, &after).w, CANVAS_W);
+    assert_eq!(damage(&after, &before).w, CANVAS_W);
+}
+
+/// Nothing changing damages nothing.
+///
+/// The whole point: a frame where no decoration moved or repainted costs no
+/// compositing at all.
+#[test]
+fn nothing_changing_damages_nothing() {
+    let slots = [armed(10, 10, 20, 20, 5), armed(80, 40, 30, 30, 9)];
+
+    assert!(damage(&slots, &slots).is_empty());
+}
+
+/// A move damages both the old footprint and the new.
+///
+/// The old has to be vacated or the decoration leaves a copy of itself
+/// behind; the new has to be painted. One rectangle covering both is what a
+/// row-wise repaint wants.
+#[test]
+fn a_move_damages_the_old_footprint_and_the_new() {
+    let before = [armed(10, 10, 20, 20, 1)];
+    let after = [armed(50, 10, 20, 20, 1)];
+
+    let region = damage(&before, &after);
+
+    assert_eq!(region.x, 10, "starts at the old left edge");
+    assert_eq!(region.w, 60, "and reaches the new right edge");
+    assert_eq!(region.y, 10);
+    assert_eq!(region.h, 20);
+}
+
+/// A repaint in place damages that slot.
+///
+/// Same rectangle, different generation. Without the generation this looks
+/// unchanged, and a decoration whose pixels changed would never be
+/// recomposited.
+#[test]
+fn a_repaint_in_place_damages_its_slot() {
+    let before = [armed(10, 10, 20, 20, 1)];
+    let after = [armed(10, 10, 20, 20, 2)];
+
+    assert_eq!(
+        damage(&before, &after),
+        DamageRect {
+            x: 10,
+            y: 10,
+            w: 20,
+            h: 20
+        }
+    );
+}
+
+/// A window opening damages where it appeared; closing damages where it was.
+#[test]
+fn opening_damages_the_new_rectangle_and_closing_the_old() {
+    let empty = [DamageSlot::default()];
+    let present = [armed(30, 20, 40, 25, 1)];
+
+    let opened = damage(&empty, &present);
+    assert_eq!(
+        opened,
+        DamageRect {
+            x: 30,
+            y: 20,
+            w: 40,
+            h: 25
+        }
+    );
+
+    let closed = damage(&present, &empty);
+    assert_eq!(
+        closed, opened,
+        "the same region has to be repainted either way"
+    );
+}
+
+/// Damage is clamped to the canvas.
+///
+/// A decoration partly off-screen has a footprint that is not, and a repaint
+/// loop handed those bounds would run off the end of the buffer.
+#[test]
+fn damage_is_clamped_to_the_canvas() {
+    let before = [DamageSlot::default()];
+    let after = [armed(-20, -10, 60, 40, 1)];
+
+    let region = damage(&before, &after);
+
+    assert_eq!(region.x, 0, "not negative");
+    assert_eq!(region.y, 0);
+    assert_eq!(region.w, 40, "and only the part that is on the canvas");
+    assert_eq!(region.h, 30);
+}
+
+/// A decoration entirely off the canvas damages nothing.
+#[test]
+fn a_decoration_entirely_off_the_canvas_damages_nothing() {
+    let before = [DamageSlot::default()];
+    let after = [armed(500, 500, 10, 10, 1)];
+
+    assert!(damage(&before, &after).is_empty());
+}
+
+/// A union covers both rectangles, and an empty one contributes nothing.
+#[test]
+fn a_union_covers_both_and_ignores_an_empty_one() {
+    let a = DamageRect {
+        x: 0,
+        y: 0,
+        w: 10,
+        h: 10,
+    };
+    let b = DamageRect {
+        x: 90,
+        y: 40,
+        w: 10,
+        h: 10,
+    };
+
+    let both = union_rect(a, b);
+    assert_eq!(both.x, 0);
+    assert_eq!(both.y, 0);
+    assert_eq!(both.w, 100);
+    assert_eq!(both.h, 50);
+
+    assert_eq!(union_rect(a, DamageRect::default()), a);
+    assert_eq!(union_rect(DamageRect::default(), b), b);
+}
+
+/// An intersection is the overlap, and disjoint rectangles have none.
+#[test]
+fn an_intersection_is_the_overlap() {
+    let region = DamageRect {
+        x: 10,
+        y: 10,
+        w: 50,
+        h: 50,
+    };
+
+    assert_eq!(
+        intersect_rect(0, 0, 20, 20, region),
+        DamageRect {
+            x: 10,
+            y: 10,
+            w: 10,
+            h: 10
+        }
+    );
+    assert!(
+        intersect_rect(100, 100, 10, 10, region).is_empty(),
+        "disjoint rectangles overlap in nothing"
+    );
+}

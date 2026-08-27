@@ -560,6 +560,25 @@ impl<'a> Modeset<'a> {
 /// # Errors
 ///
 /// [`CoreError`] if a property write is rejected before the commit.
+/// # The modeset must outlive the commit, not this call
+///
+/// A [`Modeset`] holds a [`PropertyBlob`](drmkit_core::PropertyBlob) that is
+/// destroyed when it drops, and the request carries only the blob's **id**.
+/// Taking `&Modeset` means it is alive *here*; it says nothing about whether
+/// it is alive at `commit`. A modeset built inside a loop that emits several
+/// scenes into one request, and dropped at the end of its iteration, leaves
+/// the request naming a blob the kernel has already freed — and the commit is
+/// refused with `EINVAL`, naming nothing useful.
+///
+/// Build them all first, into something that outlives the commit:
+///
+/// ```ignore
+/// let modesets: Vec<Modeset<'_>> = slots.iter().map(|s| Modeset::learn(..)).collect()?;
+/// for (slot, modeset) in slots.iter().zip(&modesets) {
+///     emit_frame(&mut request, &map, &mut build, Some(modeset))?;
+/// }
+/// request.commit(device, flags)?;  // every blob still alive
+/// ```
 pub fn emit_frame(
     request: &mut drmkit_core::AtomicRequest,
     map: &PlanePropertyMap,

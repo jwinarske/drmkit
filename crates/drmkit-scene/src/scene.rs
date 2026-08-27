@@ -88,6 +88,16 @@ pub struct SceneLayer {
     /// caller's deterministic-plane assumption being violated is worth saying
     /// out loud, and worth saying more than it is worth blanking a layer over.
     pinned_plane: Option<u32>,
+    /// Whether the caller insists this layer is composited rather than
+    /// placed on a plane of its own.
+    ///
+    /// The allocator reads it through
+    /// [`Layer::is_force_composited`](drmkit_planes::Layer::is_force_composited)
+    /// and scores the layer out of plane candidacy. For a caller that knows
+    /// something the allocator does not — content that must blend with what
+    /// is under it, or a layer it would rather spend no plane on so the
+    /// others have more to choose from.
+    force_composited: bool,
     /// A caller-chosen identity, stable across a rebind.
     ///
     /// A [`LayerHandle`] identifies a layer *within one scene's lifetime*.
@@ -151,6 +161,21 @@ impl SceneLayer {
     pub const fn set_display(&mut self, display: DisplayParams) {
         self.display = display;
         self.display_dirty = true;
+    }
+
+    /// Whether this layer is forced through composition.
+    #[must_use]
+    pub const fn is_force_composited(&self) -> bool {
+        self.force_composited
+    }
+
+    /// Force this layer through composition rather than onto its own plane.
+    ///
+    /// Flags for re-allocation: it changes what the allocator will consider,
+    /// and therefore what is left for every other layer.
+    pub const fn set_force_composited(&mut self, force: bool) {
+        self.force_composited = force;
+        self.hints_dirty = true;
     }
 
     /// The caller's identity for this layer, if it set one.
@@ -569,6 +594,7 @@ impl LayerScene {
             app_priority: 0,
             hints_dirty: false,
             pinned_plane: None,
+            force_composited: false,
             identity_tag: None,
             display_dirty: true,
             last_fb_id: None,
@@ -1708,6 +1734,7 @@ fn lower(
     plane_layer.set_content_type(layer.content_type);
     plane_layer.set_update_hint(layer.update_hint_hz);
     plane_layer.set_app_priority(layer.app_priority);
+    plane_layer.set_force_composited(layer.force_composited);
 
     // The pin, if it can be honoured. `set_pinned` makes the allocator skip
     // this layer entirely -- the scene owns the plane from here -- so an

@@ -384,6 +384,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "drmkit-scene-set"
+version = "0.0.0"
+dependencies = [
+ "drm 0.15.0",
+ "drmkit-core",
+ "drmkit-fmt",
+ "drmkit-planes",
+ "drmkit-scene",
+ "drmkit-scene-sources",
+ "drmkit-sync",
+ "drmkit-testkit",
+ "thiserror",
+]
+
+[[package]]
 name = "drmkit-scene-sources"
 version = "0.0.0"
 dependencies = [

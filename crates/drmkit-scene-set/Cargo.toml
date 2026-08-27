@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: (c) 2026 Joel Winarske
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "drmkit-scene-set"
+description = "Cross-CRTC orchestration for drmkit scenes: one commit across several outputs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["graphics", "os::linux-apis"]
+keywords = ["drm", "kms", "compositor", "multi-monitor", "scanout"]
+
+[dependencies]
+drmkit-core = { workspace = true }
+drmkit-planes = { workspace = true }
+drmkit-scene = { workspace = true }
+drmkit-sync = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+drmkit-testkit = { workspace = true }
+drmkit-fmt = { workspace = true }
+drm = { workspace = true }
+drmkit-scene-sources = { workspace = true }
+
+[lints]
+workspace = true

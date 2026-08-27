@@ -29,6 +29,8 @@ rustix = { workspace = true, features = ["std", "event"] }
 drmkit-fmt = { workspace = true }
 drmkit-scene-sources = { workspace = true }
 drm = { workspace = true }
+drmkit-dumb = { workspace = true }
+drmkit-sync = { workspace = true }
 
 [lints]
 workspace = true

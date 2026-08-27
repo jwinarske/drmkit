@@ -330,6 +330,7 @@ dependencies = [
  "drmkit-planes",
  "drmkit-scene",
  "drmkit-scene-sources",
+ "drmkit-sync",
  "drmkit-testkit",
  "thiserror",
 ]

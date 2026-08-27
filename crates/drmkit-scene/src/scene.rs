@@ -11,6 +11,7 @@ use drmkit_planes::{
 };
 
 use drmkit_core::Device;
+use drmkit_sync::SyncFence;
 
 use crate::canvas::{CompositeCanvas, CompositeRect, CompositeSrc};
 use crate::display::DisplayParams;
@@ -921,7 +922,32 @@ impl LayerScene {
 
     /// Reconcile scene state with the kernel's answer, releasing buffers per
     /// invariants 1, 2 and 5.
-    pub fn finalize_frame(&mut self, mut build: FrameBuild, result: KernelResult) -> CommitReport {
+    pub fn finalize_frame(&mut self, build: FrameBuild, result: KernelResult) -> CommitReport {
+        self.finalize_frame_with_fence(build, result, None)
+    }
+
+    /// Finalize a frame, handing over the commit's `OUT_FENCE`.
+    ///
+    /// `release_fence` signals once this commit's buffers are on screen —
+    /// which is the moment the buffers it *displaced* are off screen and safe
+    /// to render into again. Sources that opted in through
+    /// [`wants_release_fence`](LayerBufferSource::wants_release_fence) get a
+    /// duplicate of it alongside each released buffer, so a GPU producer waits
+    /// on it GPU-side instead of blocking until a later release edge.
+    ///
+    /// Ask [`wants_release_fence`](Self::wants_release_fence) whether to arm
+    /// `OUT_FENCE_PTR` at all: with no source listening, the fence costs a
+    /// descriptor per commit and nothing reads it.
+    ///
+    /// Passing `None` is [`finalize_frame`](Self::finalize_frame), and is
+    /// correct whenever the CRTC has no `OUT_FENCE_PTR` or the commit did not
+    /// ask for one.
+    pub fn finalize_frame_with_fence(
+        &mut self,
+        mut build: FrameBuild,
+        result: KernelResult,
+        release_fence: Option<&SyncFence>,
+    ) -> CommitReport {
         build.finalized = true;
         let acquisitions = std::mem::take(&mut build.acquisitions);
         let report = std::mem::take(&mut build.report);
@@ -956,10 +982,29 @@ impl LayerScene {
             self.allocator.record_commit(&applied);
         }
 
-        let wants_fence = |_layer: LayerId| false;
-        let outcome: FrameOutcome =
-            self.lifecycle
-                .finalize(kind, result, acquisitions, report, None, wants_fence);
+        // Which layers asked for the release fence, decided before the
+        // lifecycle borrow: the answer lives in the sources, and the closure
+        // cannot reach them while `finalize` holds `self` mutably.
+        let wanting: Vec<LayerId> = if release_fence.is_some() {
+            self.handles()
+                .filter(|handle| {
+                    self.layer(*handle)
+                        .is_some_and(|layer| layer.source().wants_release_fence())
+                })
+                .map(LayerHandle::layer_id)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let wants_fence = |layer: LayerId| wanting.contains(&layer);
+        let outcome: FrameOutcome = self.lifecycle.finalize(
+            kind,
+            result,
+            acquisitions,
+            report,
+            release_fence,
+            wants_fence,
+        );
 
         if outcome.invalidate_allocation {
             self.allocator.invalidate_allocation();
@@ -967,6 +1012,19 @@ impl LayerScene {
 
         self.deliver(outcome.released);
         outcome.report
+    }
+
+    /// Whether any live source wants this commit's `OUT_FENCE`.
+    ///
+    /// The commit path asks before arming `OUT_FENCE_PTR`: the fence costs a
+    /// descriptor per commit that has to be closed, and with nothing listening
+    /// it is a descriptor leak dressed as a feature.
+    #[must_use]
+    pub fn wants_release_fence(&self) -> bool {
+        self.handles().any(|handle| {
+            self.layer(handle)
+                .is_some_and(|layer| layer.source().wants_release_fence())
+        })
     }
 
     /// Hand every held buffer back, without waiting on the kernel.

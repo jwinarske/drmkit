@@ -19,6 +19,7 @@ use drmkit_scene::{
     CommitKind, CommitReport, DeviceCommitter, DisplayParams, KernelResult, LayerHandle,
     LayerScene, Modeset, PlanePropertyMap, arm_acquire_fences, emit_frame,
 };
+use drmkit_sync::SyncFence;
 
 use crate::{FrameAction, FrameEconomy, PresentError, ScanoutProducer, negotiate};
 
@@ -388,7 +389,13 @@ impl ScanoutBackend {
 
         let crtc_id = self.target.crtc.id;
         let vrr = (self.vrr_property, self.vrr_wanted);
-        let out_fence_property = out_fence.as_ref().and(self.out_fence_property);
+        // The fence is armed if the caller asked for it, or if a source did:
+        // a producer that opted into release fences needs one whether or not
+        // this particular caller wants to see it.
+        let wanted_internally = self.scene.wants_release_fence();
+        let out_fence_property = (out_fence.is_some() || wanted_internally)
+            .then_some(self.out_fence_property)
+            .flatten();
 
         // Taken out of `build` before the closure: `arm_acquire_fences` needs
         // it mutably and `emit_frame` needs it immutably, and one closure
@@ -421,6 +428,11 @@ impl ScanoutBackend {
                 return Err(PresentError::Commit(error));
             }
         };
+        // Imported before it is handed over, because both halves may want it:
+        // the sources get a duplicate each, and the caller keeps the original.
+        let release_fence = fence
+            .as_ref()
+            .and_then(|fd| SyncFence::import(std::os::fd::AsFd::as_fd(fd)).ok());
         if let Some(slot) = out_fence {
             *slot = fence;
         }
@@ -430,7 +442,9 @@ impl ScanoutBackend {
         }
         self.needs_modeset = false;
         self.vrr_armed = self.vrr_wanted;
-        Ok(self.scene.finalize_frame(build, KernelResult::Ok))
+        Ok(self
+            .scene
+            .finalize_frame_with_fence(build, KernelResult::Ok, release_fence.as_ref()))
     }
 
     /// Ask for variable refresh, or stop asking, from the next frame.

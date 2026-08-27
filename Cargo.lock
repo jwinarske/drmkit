@@ -176,6 +176,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "drmkit-csd"
+version = "0.0.0"
+dependencies = [
+ "drmkit-fmt",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
 name = "drmkit-cursor"
 version = "0.0.0"
 dependencies = [

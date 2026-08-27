@@ -1,0 +1,25 @@
+// SPDX-FileCopyrightText: (c) 2026 Joel Winarske
+// SPDX-License-Identifier: MIT
+
+//! Client-side window decorations.
+//!
+//! Port of `src/csd/`. Title bars, shadows, rounded corners and the buttons
+//! on them — drawn by the client rather than by a compositor, which is what
+//! makes them *client-side*.
+//!
+//! Everything here is CPU work over a pixel buffer. Nothing in this crate
+//! touches a DRM device: a decoration is pixels, and where those pixels go is
+//! the presenter's business.
+
+mod color;
+mod load;
+mod theme;
+
+pub use color::{Color, ColorError};
+pub use load::{ThemeError, load_theme_file, load_theme_str};
+pub use theme::{
+    Button, Buttons, Colors, Theme, TitleBar, glass_default, glass_lite, glass_minimal,
+};
+
+#[cfg(test)]
+mod tests;

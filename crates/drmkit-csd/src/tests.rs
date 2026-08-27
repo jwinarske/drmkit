@@ -354,3 +354,536 @@ fn a_nested_button_colour_is_read_and_reported_by_different_names() {
         other => panic!("got {other}"),
     }
 }
+
+// --- decoration geometry ------------------------------------------------------
+//
+// Parity port of the `CsdDecorationGeometry` cases in
+// `tests/unit/test_csd_renderer.cpp`.
+
+use crate::decoration_geometry;
+
+/// The panel is inset by the shadow on every side.
+///
+/// The shadow is drawn *outside* the panel, so the decoration is larger than
+/// the window it decorates by twice the extent. A panel that started at the
+/// origin would put the shadow off the top-left of its own buffer.
+#[test]
+fn the_panel_is_inset_by_the_shadow_on_every_side() {
+    let theme = glass_default();
+    let geometry = decoration_geometry(&theme, 600, 360);
+
+    assert_eq!(geometry.panel_x, theme.shadow_extent);
+    assert_eq!(geometry.panel_y, theme.shadow_extent);
+    assert_eq!(geometry.panel_w, 600 - 2 * theme.shadow_extent);
+    assert_eq!(geometry.panel_h, 360 - 2 * theme.shadow_extent);
+}
+
+/// With no shadow, the panel is the whole canvas.
+#[test]
+fn a_theme_with_no_shadow_fills_the_canvas() {
+    let geometry = decoration_geometry(&glass_minimal(), 600, 360);
+
+    assert_eq!((geometry.panel_x, geometry.panel_y), (0, 0));
+    assert_eq!((geometry.panel_w, geometry.panel_h), (600, 360));
+}
+
+/// A decoration too small for its own shadow gets a zero panel, not a
+/// negative one.
+///
+/// A negative width reaching a rasterizer is either a crash or a very large
+/// unsigned number, and asking for a 30-pixel decoration under a 24-pixel
+/// shadow is an ordinary mistake rather than a reason to fail.
+#[test]
+fn a_decoration_too_small_for_its_shadow_clamps_to_a_zero_panel() {
+    let geometry = decoration_geometry(&glass_default(), 30, 30);
+
+    assert_eq!(geometry.panel_w, 0);
+    assert_eq!(geometry.panel_h, 0);
+    assert!(
+        geometry.panel_w >= 0 && geometry.panel_h >= 0,
+        "clamped, not wrapped"
+    );
+}
+
+/// A negative shadow extent is treated as none.
+///
+/// A hand-written theme can carry one, and a panel inset the *other* way is
+/// drawn outside its own decoration — reproducing that faithfully would put
+/// pixels wherever the buffer's stride happened to lead.
+#[test]
+fn a_negative_shadow_extent_is_treated_as_none() {
+    let theme = Theme {
+        shadow_extent: -20,
+        ..glass_default()
+    };
+    let geometry = decoration_geometry(&theme, 600, 360);
+
+    assert_eq!((geometry.panel_x, geometry.panel_y), (0, 0));
+    assert_eq!((geometry.panel_w, geometry.panel_h), (600, 360));
+}
+
+/// The buttons run right to left, evenly spaced.
+///
+/// Close is outermost: it is the one a user reaches for by feel, so it must
+/// not move when the others are absent.
+#[test]
+fn the_buttons_run_right_to_left_evenly_spaced() {
+    let geometry = decoration_geometry(&glass_default(), 600, 360);
+
+    assert!(geometry.close_cx > geometry.minimize_cx);
+    assert!(geometry.minimize_cx > geometry.maximize_cx);
+    assert_eq!(
+        geometry.close_cx - geometry.minimize_cx,
+        geometry.minimize_cx - geometry.maximize_cx,
+        "evenly spaced, or the row looks like a mistake"
+    );
+}
+
+/// Every button lands inside the title bar.
+///
+/// The one property that makes the row usable rather than decorative: a
+/// button whose circle crosses the panel edge or the title bar's bottom is
+/// clipped, and a clipped button is one a user cannot reliably hit.
+#[test]
+fn every_button_lands_inside_the_title_bar() {
+    let theme = glass_default();
+    let geometry = decoration_geometry(&theme, 600, 360);
+
+    for (name, cx) in [
+        ("close", geometry.close_cx),
+        ("minimize", geometry.minimize_cx),
+        ("maximize", geometry.maximize_cx),
+    ] {
+        assert!(
+            cx - geometry.button_radius >= geometry.panel_x,
+            "{name} crosses the panel's left edge"
+        );
+        assert!(
+            cx + geometry.button_radius < geometry.panel_x + geometry.panel_w,
+            "{name} crosses the panel's right edge"
+        );
+    }
+
+    assert!(
+        geometry.button_cy - geometry.button_radius >= geometry.panel_y,
+        "the row crosses the top of the panel"
+    );
+    assert!(
+        geometry.button_cy + geometry.button_radius < geometry.panel_y + geometry.title_bar_height,
+        "the row hangs below the title bar and into the window's content"
+    );
+}
+
+/// A panel too narrow for the buttons still reports where they would be.
+///
+/// Geometry answers where things go; whether they fit is the caller's to
+/// check, which is what the case above does. Refusing here would leave a
+/// caller with nothing to check.
+#[test]
+fn a_panel_too_narrow_for_the_buttons_still_answers() {
+    let geometry = decoration_geometry(&glass_default(), 60, 360);
+
+    assert_eq!(geometry.panel_w, 60 - 2 * glass_default().shadow_extent);
+    assert!(
+        geometry.maximize_cx < geometry.panel_x,
+        "the leftmost button does not fit, which is exactly what a caller \
+         checking the bounds needs to be able to see"
+    );
+}
+
+// --- shadow cache -------------------------------------------------------------
+//
+// Parity port of `tests/unit/test_csd_shadow_cache.cpp`.
+
+use crate::{DEFAULT_CAPACITY, Elevation, ShadowCache, ShadowDest, ShadowKey, theme_id};
+
+fn key(width: u32, height: u32, elevation: Elevation, theme: &Theme) -> ShadowKey {
+    ShadowKey {
+        width,
+        height,
+        elevation,
+        theme_id: theme_id(theme),
+    }
+}
+
+/// A destination big enough for a patch, zeroed.
+fn dest(width: u32, height: u32) -> (Vec<u8>, u32) {
+    (vec![0u8; (width * height * 4) as usize], width * 4)
+}
+
+/// The same theme hashes the same, every time.
+#[test]
+fn a_theme_id_is_stable_across_rebuilds() {
+    assert_eq!(theme_id(&glass_default()), theme_id(&glass_default()));
+    assert_eq!(theme_id(&glass_minimal()), theme_id(&glass_minimal()));
+}
+
+/// A colour change is a different theme.
+#[test]
+fn a_theme_id_changes_when_a_colour_does() {
+    let base = glass_default();
+    let changed = Theme {
+        colors: crate::Colors {
+            shadow: Color::new(1, 2, 3, 4),
+            ..base.colors
+        },
+        ..base.clone()
+    };
+
+    assert_ne!(
+        theme_id(&base),
+        theme_id(&changed),
+        "a cached shadow drawn in the old colour would outlive the change"
+    );
+}
+
+/// A shadow-extent change is a different theme.
+#[test]
+fn a_theme_id_changes_when_the_shadow_extent_does() {
+    let base = glass_default();
+    let changed = Theme {
+        shadow_extent: base.shadow_extent + 1,
+        ..base.clone()
+    };
+
+    assert_ne!(theme_id(&base), theme_id(&changed));
+}
+
+/// The name does not change how anything looks, so it does not change the id.
+///
+/// Hashing it would evict every cached shadow when a caller renamed a theme —
+/// a full re-blur per window, for a string.
+#[test]
+fn a_theme_id_ignores_the_name() {
+    let base = glass_default();
+    let renamed = Theme {
+        name: "something-else".to_owned(),
+        ..base.clone()
+    };
+
+    assert_eq!(theme_id(&base), theme_id(&renamed));
+}
+
+/// Nor does the animation duration.
+#[test]
+fn a_theme_id_ignores_the_animation_duration() {
+    let base = glass_default();
+    let quicker = Theme {
+        animation_duration_ms: base.animation_duration_ms / 2,
+        ..base.clone()
+    };
+
+    assert_eq!(
+        theme_id(&base),
+        theme_id(&quicker),
+        "how long a shadow takes to fade cannot change what it looks like"
+    );
+}
+
+/// Zero capacity means the default, not none.
+///
+/// A cache holding nothing would re-blur every shadow every frame, which is
+/// the cost this type exists to remove.
+#[test]
+fn a_zero_capacity_cache_uses_the_default() {
+    assert_eq!(ShadowCache::new(0).capacity(), DEFAULT_CAPACITY);
+    assert_eq!(ShadowCache::default().capacity(), DEFAULT_CAPACITY);
+}
+
+/// An explicit capacity is respected.
+#[test]
+fn an_explicit_capacity_is_respected() {
+    assert_eq!(ShadowCache::new(3).capacity(), 3);
+}
+
+/// Clearing empties the cache.
+#[test]
+fn clearing_empties_the_cache() {
+    let theme = glass_default();
+    let mut cache = ShadowCache::new(4);
+    let (mut pixels, stride) = dest(64, 64);
+    let mut target = ShadowDest {
+        pixels: &mut pixels,
+        stride,
+        width: 64,
+        height: 64,
+    };
+
+    assert!(cache.blit_into(key(64, 64, Elevation::Focused, &theme), &theme, &mut target));
+    assert_eq!(cache.len(), 1);
+
+    cache.clear();
+    assert!(cache.is_empty());
+    assert!(!cache.contains(&key(64, 64, Elevation::Focused, &theme)));
+}
+
+/// A zero-sized key writes nothing.
+///
+/// A window being resized passes through zero, and a decoration that errored
+/// on the way would flicker.
+#[test]
+fn a_zero_sized_shadow_writes_nothing() {
+    let theme = glass_default();
+    let mut cache = ShadowCache::new(4);
+    let (mut pixels, stride) = dest(64, 64);
+    let mut target = ShadowDest {
+        pixels: &mut pixels,
+        stride,
+        width: 64,
+        height: 64,
+    };
+
+    assert!(!cache.blit_into(key(0, 64, Elevation::Focused, &theme), &theme, &mut target));
+    assert!(!cache.blit_into(key(64, 0, Elevation::Focused, &theme), &theme, &mut target));
+    assert!(cache.is_empty(), "and nothing was cached either");
+}
+
+/// A zero-sized destination writes nothing.
+#[test]
+fn a_zero_sized_destination_writes_nothing() {
+    let theme = glass_default();
+    let mut cache = ShadowCache::new(4);
+    let (mut pixels, stride) = dest(64, 64);
+    let mut target = ShadowDest {
+        pixels: &mut pixels,
+        stride,
+        width: 0,
+        height: 64,
+    };
+
+    assert!(!cache.blit_into(key(64, 64, Elevation::Focused, &theme), &theme, &mut target));
+}
+
+/// The first blit renders the shadow and writes visible alpha.
+#[test]
+fn the_first_blit_renders_a_shadow_with_visible_alpha() {
+    let theme = glass_default();
+    let mut cache = ShadowCache::new(4);
+    let (mut pixels, stride) = dest(96, 96);
+    let mut target = ShadowDest {
+        pixels: &mut pixels,
+        stride,
+        width: 96,
+        height: 96,
+    };
+
+    assert!(cache.blit_into(key(96, 96, Elevation::Focused, &theme), &theme, &mut target));
+    assert_eq!(cache.len(), 1);
+
+    let centre = ((48 * 96) + 48) * 4;
+    assert!(
+        pixels[centre + 3] > 0,
+        "the middle of a shadow patch is where it is strongest; zero there \
+         means nothing was drawn"
+    );
+}
+
+/// The second blit of the same key is a hit.
+#[test]
+fn a_second_blit_of_the_same_shadow_is_a_hit() {
+    let theme = glass_default();
+    let mut cache = ShadowCache::new(4);
+    let (mut pixels, stride) = dest(64, 64);
+    let shadow = key(64, 64, Elevation::Focused, &theme);
+
+    for _ in 0..3 {
+        let mut target = ShadowDest {
+            pixels: &mut pixels,
+            stride,
+            width: 64,
+            height: 64,
+        };
+        assert!(cache.blit_into(shadow, &theme, &mut target));
+    }
+    assert_eq!(cache.len(), 1, "three blits of one shadow render it once");
+}
+
+/// Focused and blurred are different shadows.
+///
+/// They differ in strength, which is what makes the focused window read as
+/// nearer. Sharing a cache entry would make every window look focused.
+#[test]
+fn focused_and_blurred_are_separate_entries() {
+    let theme = glass_default();
+    let mut cache = ShadowCache::new(4);
+    let (mut focused_px, stride) = dest(64, 64);
+    let (mut blurred_px, _) = dest(64, 64);
+
+    let mut target = ShadowDest {
+        pixels: &mut focused_px,
+        stride,
+        width: 64,
+        height: 64,
+    };
+    cache.blit_into(key(64, 64, Elevation::Focused, &theme), &theme, &mut target);
+    let mut target = ShadowDest {
+        pixels: &mut blurred_px,
+        stride,
+        width: 64,
+        height: 64,
+    };
+    cache.blit_into(key(64, 64, Elevation::Blurred, &theme), &theme, &mut target);
+
+    assert_eq!(cache.len(), 2, "two elevations, two shadows");
+    assert_ne!(
+        focused_px, blurred_px,
+        "and they must actually differ, or the elevation says nothing"
+    );
+
+    let centre = ((32 * 64) + 32) * 4 + 3;
+    assert!(
+        focused_px[centre] > blurred_px[centre],
+        "the focused shadow is the stronger one"
+    );
+}
+
+/// Past capacity, the least recently used goes.
+#[test]
+fn the_least_recently_used_shadow_is_evicted() {
+    let theme = glass_default();
+    let mut cache = ShadowCache::new(2);
+    let (mut pixels, stride) = dest(64, 64);
+
+    for size in [32u32, 48, 64] {
+        let mut target = ShadowDest {
+            pixels: &mut pixels,
+            stride,
+            width: 64,
+            height: 64,
+        };
+        cache.blit_into(
+            key(size, size, Elevation::Focused, &theme),
+            &theme,
+            &mut target,
+        );
+    }
+
+    assert_eq!(cache.len(), 2, "the cap holds");
+    assert!(
+        !cache.contains(&key(32, 32, Elevation::Focused, &theme)),
+        "the oldest went"
+    );
+    assert!(cache.contains(&key(64, 64, Elevation::Focused, &theme)));
+}
+
+/// Using a shadow again makes it recent.
+///
+/// Without this the LRU would evict whatever the caller draws every frame and
+/// keep whatever it drew once — the opposite of a cache.
+#[test]
+fn using_a_shadow_again_keeps_it_from_eviction() {
+    let theme = glass_default();
+    let mut cache = ShadowCache::new(2);
+    let (mut pixels, stride) = dest(64, 64);
+    let blit = |cache: &mut ShadowCache, size: u32, pixels: &mut Vec<u8>| {
+        let mut target = ShadowDest {
+            pixels,
+            stride,
+            width: 64,
+            height: 64,
+        };
+        cache.blit_into(
+            key(size, size, Elevation::Focused, &theme),
+            &theme,
+            &mut target,
+        );
+    };
+
+    blit(&mut cache, 32, &mut pixels);
+    blit(&mut cache, 48, &mut pixels);
+    // Touch the older one, then add a third.
+    blit(&mut cache, 32, &mut pixels);
+    blit(&mut cache, 64, &mut pixels);
+
+    assert!(
+        cache.contains(&key(32, 32, Elevation::Focused, &theme)),
+        "32 was used most recently before the eviction, so it stays"
+    );
+    assert!(
+        !cache.contains(&key(48, 48, Elevation::Focused, &theme)),
+        "48 was the stalest"
+    );
+}
+
+/// A theme with no shadow produces a transparent patch.
+#[test]
+fn a_theme_with_no_shadow_produces_nothing_visible() {
+    let theme = glass_minimal();
+    let mut cache = ShadowCache::new(2);
+    let (mut pixels, stride) = dest(64, 64);
+    let mut target = ShadowDest {
+        pixels: &mut pixels,
+        stride,
+        width: 64,
+        height: 64,
+    };
+
+    assert!(cache.blit_into(key(64, 64, Elevation::Focused, &theme), &theme, &mut target));
+    assert!(
+        pixels.iter().all(|byte| *byte == 0),
+        "a zero-alpha shadow colour must write nothing visible, whatever the \
+         extent says"
+    );
+}
+
+/// A destination smaller than the patch is clipped, not overrun.
+///
+/// The alternative is writing past the caller's buffer, which is the one
+/// outcome worse than a clipped shadow.
+#[test]
+fn a_destination_smaller_than_the_patch_is_clipped() {
+    let theme = glass_default();
+    let mut cache = ShadowCache::new(2);
+    let (mut pixels, stride) = dest(32, 32);
+    let mut target = ShadowDest {
+        pixels: &mut pixels,
+        stride,
+        width: 32,
+        height: 32,
+    };
+
+    assert!(cache.blit_into(key(96, 96, Elevation::Focused, &theme), &theme, &mut target));
+    assert_eq!(pixels.len(), 32 * 32 * 4, "nothing grew the destination");
+}
+
+/// A cross fade blends the two endpoints, and clamps outside them.
+///
+/// `t` past the ends is a caller bug — an animation that overshoots —
+/// and extrapolating a colour past its endpoints produces values that are not
+/// a shadow at all.
+#[test]
+fn a_cross_fade_blends_between_its_endpoints() {
+    let theme = glass_default();
+    let mut cache = ShadowCache::new(4);
+    let focused = key(64, 64, Elevation::Focused, &theme);
+    let blurred = key(64, 64, Elevation::Blurred, &theme);
+    let centre = ((32 * 64) + 32) * 4 + 3;
+
+    let sample = |cache: &mut ShadowCache, t: f32| {
+        let (mut pixels, stride) = dest(64, 64);
+        let mut target = ShadowDest {
+            pixels: &mut pixels,
+            stride,
+            width: 64,
+            height: 64,
+        };
+        assert!(cache.blit_cross_fade(focused, blurred, &theme, &mut target, t));
+        pixels[centre]
+    };
+
+    let at_start = sample(&mut cache, 0.0);
+    let midway = sample(&mut cache, 0.5);
+    let at_end = sample(&mut cache, 1.0);
+
+    assert!(at_start > at_end, "focused is the stronger endpoint");
+    assert!(
+        midway < at_start && midway > at_end,
+        "halfway is between them, not at one of them"
+    );
+    assert_eq!(
+        sample(&mut cache, -5.0),
+        at_start,
+        "clamped, not extrapolated"
+    );
+    assert_eq!(sample(&mut cache, 5.0), at_end);
+}

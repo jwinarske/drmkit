@@ -12,11 +12,15 @@
 //! the presenter's business.
 
 mod color;
+mod geometry;
 mod load;
+mod shadow;
 mod theme;
 
 pub use color::{Color, ColorError};
+pub use geometry::{DecorationGeometry, decoration_geometry};
 pub use load::{ThemeError, load_theme_file, load_theme_str};
+pub use shadow::{DEFAULT_CAPACITY, Elevation, ShadowCache, ShadowDest, ShadowKey, theme_id};
 pub use theme::{
     Button, Buttons, Colors, Theme, TitleBar, glass_default, glass_lite, glass_minimal,
 };

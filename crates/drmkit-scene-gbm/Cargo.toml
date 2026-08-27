@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: (c) 2026 Joel Winarske
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "drmkit-scene-gbm"
+description = "A drmkit scene source backed by a GBM surface, for GL and Vulkan producers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["graphics", "os::linux-apis"]
+keywords = ["drm", "kms", "gbm", "egl", "scanout"]
+
+[dependencies]
+drm = { workspace = true }
+drmkit-core = { workspace = true }
+drmkit-fmt = { workspace = true }
+drmkit-gbm = { workspace = true }
+drmkit-scene = { workspace = true }
+drmkit-sync = { workspace = true }
+gbm = { workspace = true }
+rustix = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Device cases report which card they ran on and when they bailed.
+drmkit-testkit = { workspace = true }
+# `map` returns a dumb mapping by trait signature, so the type is needed to
+# name the access mode even though a surface never produces one.
+drmkit-dumb = { workspace = true }
+
+[lints]
+workspace = true

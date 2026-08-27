@@ -40,6 +40,111 @@ impl GbmDevice {
         Ok(Self { inner })
     }
 
+    /// Whether this device can make GBM **surfaces** at all.
+    ///
+    /// A display-only DRM node has no render node, so Mesa gives it the
+    /// minimal GBM backend: buffers work, surfaces do not. That backend does
+    /// not *refuse* a surface — `gbm_surface_create` returns a handle whose
+    /// entry points are absent, and the first call through one takes the
+    /// process down with `SIGSEGV`. Measured on vkms, where
+    /// `gbm_surface_create` succeeds and `gbm_surface_has_free_buffers`
+    /// segfaults immediately.
+    ///
+    /// So the question has to be answered before asking for a surface, and
+    /// the only answer available is whether the kernel gave this device a
+    /// render node: that is the DRI backend's precondition, and without the
+    /// DRI backend there are no surfaces. Read from sysfs by device number,
+    /// rather than from the driver name — vkms reports `faux_driver` there,
+    /// and a name-based check would be wrong on the first device that
+    /// disagrees.
+    ///
+    /// Conservative in the safe direction: an unreadable sysfs answers `false`
+    /// and costs a caller a surface it might have had, where the opposite
+    /// costs it the process.
+    ///
+    /// # Necessary, not sufficient
+    ///
+    /// A render node is what the DRI backend needs, not a promise it started.
+    /// Measured on this machine's amdgpu, which *has* one: Mesa's
+    /// `amdgpu_query_info(ACCEL_WORKING)` failed with `EACCES`, the DRI
+    /// backend fell back to the same minimal one, and the surface crashed
+    /// identically. GBM exposes nothing that separates the two — both report
+    /// backend `drm`, both allocate buffers, both create a surface — so a
+    /// caller on a device that passes this check can still be handed one that
+    /// is unsafe to touch. That is a defect in what GBM offers, and this is
+    /// the best answer available on top of it.
+    #[must_use]
+    pub fn supports_surfaces(&self) -> bool {
+        let Ok(stat) = rustix::fs::fstat(self.inner.as_fd()) else {
+            return false;
+        };
+        let (major, minor) = (
+            rustix::fs::major(stat.st_rdev),
+            rustix::fs::minor(stat.st_rdev),
+        );
+        let siblings = format!("/sys/dev/char/{major}:{minor}/device/drm");
+        let Ok(entries) = std::fs::read_dir(siblings) else {
+            return false;
+        };
+        entries
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().starts_with("renderD"))
+    }
+
+    /// Create a rendering surface — a swap chain a GL or Vulkan producer
+    /// draws into.
+    ///
+    /// Distinct from a buffer: a surface holds several, and `eglSwapBuffers`
+    /// rotates them. `modifiers` constrains the layout the driver may pick,
+    /// and an empty slice means no constraint.
+    ///
+    /// The surface asks for `SCANOUT | RENDERING` up front. Asking for one
+    /// alone is how a driver ends up choosing a layout the other cannot use,
+    /// and that failure surfaces at the atomic commit rather than here.
+    ///
+    /// # Errors
+    ///
+    /// [`GbmError::Allocation`] if the format is not one GBM knows, or the
+    /// driver refuses the surface.
+    pub fn create_surface(
+        &self,
+        width: u32,
+        height: u32,
+        fourcc: u32,
+        modifiers: &[u64],
+    ) -> Result<gbm::Surface<()>, GbmError> {
+        // Before anything else: a device with no surface backend hands back a
+        // handle that crashes on first use rather than refusing. See
+        // `supports_surfaces`.
+        if !self.supports_surfaces() {
+            return Err(GbmError::NoSurfaceSupport);
+        }
+
+        let format = gbm::Format::try_from(fourcc)
+            .map_err(|_| GbmError::Allocation(format!("unsupported format {fourcc:#x}")))?;
+        let usage = gbm::BufferObjectFlags::SCANOUT | gbm::BufferObjectFlags::RENDERING;
+
+        if !modifiers.is_empty()
+            && let Ok(surface) = self.raw().create_surface_with_modifiers2::<()>(
+                width,
+                height,
+                format,
+                modifiers.iter().copied().map(gbm::Modifier::from),
+                usage,
+            )
+        {
+            // A driver with no modifier entry point falls through, the same as
+            // `GbmBuffer::create_with_modifiers`. The caller reads the layout
+            // back off a locked buffer rather than assuming it got what it
+            // asked for.
+            return Ok(surface);
+        }
+
+        self.raw()
+            .create_surface::<()>(width, height, format, usage)
+            .map_err(|error| GbmError::Allocation(error.to_string()))
+    }
+
     /// The backend the driver bound, for diagnostics.
     ///
     /// `drm` is the generic path — dumb allocation on a display-only driver,

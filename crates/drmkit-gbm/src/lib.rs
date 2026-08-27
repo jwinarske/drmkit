@@ -31,6 +31,14 @@ pub use device::GbmDevice;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum GbmError {
+    /// This device has no GBM surface backend.
+    ///
+    /// A display-only node gets Mesa's minimal backend: buffers yes, surfaces
+    /// no. See [`GbmDevice::supports_surfaces`] for why this is refused here
+    /// rather than discovered later.
+    #[error("this device has no render node, so GBM cannot make surfaces on it")]
+    NoSurfaceSupport,
+
     /// The device could not be opened as a GBM device.
     ///
     /// Every DRM node that can allocate anything supports this, so in practice

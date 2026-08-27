@@ -15,6 +15,7 @@ members = [
     "crates/drmkit-capture",
     "crates/drmkit-cursor",
     "crates/drmkit-gbm",
+    "crates/drmkit-scene-gbm",
     "crates/drmkit-input",
     "crates/drmkit-log",
     "crates/drmkit-modeset",
@@ -49,6 +50,7 @@ categories = ["graphics", "os::linux-apis", "no-std"]
 drmkit-core = { version = "0.0.0", path = "crates/drmkit-core" }
 drmkit-dumb = { version = "0.0.0", path = "crates/drmkit-dumb" }
 drmkit-gbm = { version = "0.0.0", path = "crates/drmkit-gbm" }
+drmkit-scene-gbm = { version = "0.0.0", path = "crates/drmkit-scene-gbm" }
 drmkit-capture = { version = "0.0.0", path = "crates/drmkit-capture" }
 drmkit-cursor = { version = "0.0.0", path = "crates/drmkit-cursor" }
 drmkit-testkit = { version = "0.0.0", path = "crates/drmkit-testkit" }

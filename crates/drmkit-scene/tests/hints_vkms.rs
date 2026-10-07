@@ -167,14 +167,28 @@ fn under_plane_pressure_the_placed_layers_outrank_the_dropped_ones_vkms() {
     // Priorities spread across the range and deliberately not in the order the
     // layers are added, so an allocator that simply kept the first few would
     // fail the ordering rather than pass by accident.
+    //
+    // A shuffle by a fixed stride: consecutive layers are far apart in
+    // priority, and the highest is not the first or the last. The stride has
+    // to be coprime with the count or the shuffle collapses -- with 7 layers a
+    // stride of 7 gave every layer the same priority, and the ordering
+    // assertion then failed on a tie.
+    // Bounded: count + 1 is always coprime with count.
+    let stride = (5..=count + 5)
+        .find(|candidate| gcd(*candidate, count) == 1)
+        .expect("count + 1 is coprime with count");
+    let step = u8::try_from(255 / count.max(1)).unwrap_or(1);
     let priorities: Vec<u8> = (0..count)
-        .map(|index| {
-            let step = u8::try_from(255 / count.max(1)).unwrap_or(1);
-            // A shuffle with a fixed stride: consecutive layers are far apart
-            // in priority, and the highest is not the first or the last.
-            step.wrapping_mul(u8::try_from((index * 7 + 3) % count).unwrap_or(0))
-        })
+        .map(|index| step.wrapping_mul(u8::try_from((index * stride + 3) % count).unwrap_or(0)))
         .collect();
+    let mut distinct = priorities.clone();
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert_eq!(
+        distinct.len(),
+        priorities.len(),
+        "the priorities have to differ, or the ordering below asserts nothing"
+    );
     let mut layers = Vec::new();
     for (index, priority) in priorities.iter().copied().enumerate() {
         let offset = i32::try_from(index).expect("a small index") * 8;
@@ -223,4 +237,8 @@ fn under_plane_pressure_the_placed_layers_outrank_the_dropped_ones_vkms() {
     }
 
     fx.teardown();
+}
+
+const fn gcd(a: usize, b: usize) -> usize {
+    if b == 0 { a } else { gcd(b, a % b) }
 }

@@ -218,8 +218,11 @@ pub struct TestCache {
 
 #[derive(Debug, Clone, Copy, Default)]
 struct Entry {
+    /// The latest verdict.
     passed: bool,
-    hits: u32,
+    /// How many times this combination has been rejected. Successes do not
+    /// increment it, so it is a penalty and not a visit tally.
+    failures: u32,
 }
 
 impl TestCache {
@@ -237,19 +240,29 @@ impl TestCache {
             .map(|entry| entry.passed)
     }
 
-    /// Record a verdict, counting repeat failures so scoring can back off.
+    /// Record a verdict, counting failures so scoring can back off.
     pub fn record(&mut self, plane_id: u32, property_hash: u64, passed: bool) {
         let entry = self.entries.entry((plane_id, property_hash)).or_default();
         entry.passed = passed;
-        entry.hits = entry.hits.saturating_add(1);
+        if !passed {
+            entry.failures = entry.failures.saturating_add(1);
+        }
     }
 
-    /// How many times this combination has been recorded.
+    /// How many times this combination has been rejected; zero while its
+    /// latest verdict is a pass.
+    ///
+    /// The score subtracts this. Counting every verdict instead -- what this
+    /// did until drm-cxx#267 -- decayed a plane the kernel keeps accepting as
+    /// fast as one it keeps rejecting, so the search walked away from the
+    /// plane that worked. Zero after a pass, so a combination rejected while
+    /// some other state was wrong stops being penalized once it succeeds.
     #[must_use]
-    pub fn hit_count(&self, plane_id: u32, property_hash: u64) -> u32 {
+    pub fn failure_count(&self, plane_id: u32, property_hash: u64) -> u32 {
         self.entries
             .get(&(plane_id, property_hash))
-            .map_or(0, |entry| entry.hits)
+            .filter(|entry| !entry.passed)
+            .map_or(0, |entry| entry.failures)
     }
 
     /// Drop everything.
@@ -981,7 +994,7 @@ impl Allocator {
                 held_last_frame,
                 failure_hits: self
                     .failure_cache
-                    .hit_count(plane.id, entry.layer.property_hash()),
+                    .failure_count(plane.id, entry.layer.property_hash()),
             },
         )
     }

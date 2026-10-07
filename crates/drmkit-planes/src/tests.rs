@@ -6,6 +6,7 @@
 //! built on.
 
 use super::*;
+use crate::scoring::independent_groups;
 use drmkit_fmt::{
     ARM_16X16_BLOCK_U_INTERLEAVED, BandwidthClass, FormatTable, Modifier, fourcc, mod_code, vendor,
 };
@@ -1085,9 +1086,9 @@ fn split_is_transitive() {
     assert_eq!(groups[0], vec![0, 1, 2]);
 }
 
-/// Group order must be deterministic and follow the caller's layer order --
-/// the caller consumes a shared plane pool, so order decides who wins
-/// contention. The C++ collects out of an `unordered_map` (drm-cxx#236).
+/// With equal priorities, group order follows the caller's layer order, every
+/// time -- the caller consumes a shared plane pool, so order decides who wins
+/// contention. Upstream's came out of an `unordered_map` until drm-cxx#236.
 #[test]
 fn split_group_order_is_deterministic() {
     let a = at(300, 0, 50, 50);
@@ -1110,6 +1111,76 @@ fn split_handles_empty_and_single_inputs() {
     assert!(split_independent_groups(&[]).is_empty());
     let only = at(0, 0, 10, 10);
     assert_eq!(split_independent_groups(&[&only]), vec![vec![0]]);
+}
+
+/// The layer-level half of drm-cxx#236: a lone high-priority layer's group
+/// goes ahead of groups listed before it, so it gets a contested plane first.
+#[test]
+fn split_puts_the_highest_priority_group_first() {
+    let low = at(0, 0, 50, 50);
+    let also_low = at(100, 0, 50, 50);
+    let mut high = at(200, 0, 50, 50);
+    high.set_app_priority(200);
+    let layers = [&low, &also_low, &high];
+
+    assert_eq!(
+        split_independent_groups(&layers),
+        vec![vec![2], vec![0], vec![1]]
+    );
+}
+
+/// `test_layer_groups.cpp`, on plain values: `overlaps` joins the listed pairs.
+fn overlaps(edges: &[(i32, i32)]) -> impl Fn(&i32, &i32) -> bool + '_ {
+    move |a, b| {
+        edges
+            .iter()
+            .any(|&(x, y)| (x, y) == (*a, *b) || (y, x) == (*a, *b))
+    }
+}
+
+/// Map indices back to the values, which is what upstream's cases compare.
+fn values(items: &[i32], groups: &[Vec<usize>]) -> Vec<Vec<i32>> {
+    groups
+        .iter()
+        .map(|group| group.iter().map(|&i| items[i]).collect())
+        .collect()
+}
+
+/// `LayerGroups.OverlapChainsFormOneGroup`
+#[test]
+fn layer_groups_overlap_chains_form_one_group() {
+    let items = [0, 1, 2, 3];
+    let groups = independent_groups(&items, overlaps(&[(0, 2), (2, 3)]), |_| 0);
+    assert_eq!(values(&items, &groups), vec![vec![0, 2, 3], vec![1]]);
+}
+
+/// `LayerGroups.TiesKeepInputOrder`
+#[test]
+fn layer_groups_ties_keep_input_order() {
+    let items = [5, 4, 3, 2, 1, 0];
+    let groups = independent_groups(&items, overlaps(&[(4, 0)]), |_| 0);
+    assert_eq!(
+        values(&items, &groups),
+        vec![vec![5], vec![4, 0], vec![3], vec![2], vec![1]]
+    );
+}
+
+/// `LayerGroups.HighestPriorityGroupFirst`: 3 is the video layer, and 1 and 3
+/// overlap.
+#[test]
+fn layer_groups_highest_priority_group_first() {
+    let items = [0, 1, 2, 3];
+    let groups = independent_groups(&items, overlaps(&[(1, 3)]), |&item| {
+        if item == 3 { 100 } else { 10 }
+    });
+    assert_eq!(values(&items, &groups), vec![vec![1, 3], vec![0], vec![2]]);
+}
+
+/// `LayerGroups.EmptyInput`
+#[test]
+fn layer_groups_empty_input() {
+    let items: [i32; 0] = [];
+    assert!(independent_groups(&items, overlaps(&[]), |_| 0).is_empty());
 }
 
 // --- Output ------------------------------------------------------------------
@@ -1265,4 +1336,52 @@ fn zpos_sort_treats_unset_as_zero_and_is_stable() {
         vec![first_unset, second_unset, above],
         "unset sorts as 0, and equal values keep insertion order"
     );
+}
+
+/// `TestCacheTest.SuccessesAreNotCountedAsFailures` (drm-cxx#267).
+///
+/// A plane the kernel keeps accepting must carry no penalty, however often it
+/// is used. Upstream measured the alternative on a display with one usable
+/// primary out of five: the accepted plane was chosen ten times and then never
+/// again while the search cycled the overlays, every one rejected.
+#[test]
+fn test_cache_does_not_count_successes_as_failures() {
+    let mut cache = TestCache::new();
+    for _ in 0..5 {
+        cache.record(97, 0x1234, true);
+    }
+    assert_eq!(cache.failure_count(97, 0x1234), 0);
+    assert_eq!(cache.lookup(97, 0x1234), Some(true));
+}
+
+/// `TestCacheTest.FailuresAccumulate`
+#[test]
+fn test_cache_failures_accumulate() {
+    let mut cache = TestCache::new();
+    cache.record(100, 0x1234, false);
+    assert_eq!(cache.failure_count(100, 0x1234), 1);
+    cache.record(100, 0x1234, false);
+    assert_eq!(cache.failure_count(100, 0x1234), 2);
+    assert_eq!(cache.lookup(100, 0x1234), Some(false));
+}
+
+/// `TestCacheTest.LatestVerdictWins`: a combination rejected while some other
+/// state was wrong stops being penalized once it succeeds.
+#[test]
+fn test_cache_latest_verdict_wins() {
+    let mut cache = TestCache::new();
+    cache.record(97, 0x1234, false);
+    cache.record(97, 0x1234, false);
+    assert_eq!(cache.failure_count(97, 0x1234), 2);
+    cache.record(97, 0x1234, true);
+    assert_eq!(cache.failure_count(97, 0x1234), 0);
+    assert_eq!(cache.lookup(97, 0x1234), Some(true));
+}
+
+/// `TestCacheTest.UnknownIsNotAFailure`
+#[test]
+fn test_cache_unknown_is_not_a_failure() {
+    let cache = TestCache::new();
+    assert_eq!(cache.failure_count(999, 0x1), 0);
+    assert_eq!(cache.lookup(999, 0x1), None);
 }

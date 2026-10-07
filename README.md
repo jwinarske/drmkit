@@ -18,7 +18,7 @@ composition, and scanout.
 >
 > The present spine, cross-output orchestration, GBM surface sources and
 > client-side decorations have since landed. Of the 107 test files upstream has
-> at v4.1.0, 68 are ported and 14 partial. Of the 22 pending, 7 arrived upstream
+> at v4.1.0, 69 are ported and 14 partial. Of the 21 pending, 6 arrived upstream
 > after the `4a0b64a` baseline and wait on porting its allocator and canvas
 > changes. The other 15 do **not** wait on unwritten crates — each waits on
 > hardware or a library this tree does not have: a working GPU render node, the

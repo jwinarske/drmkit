@@ -69,7 +69,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_external_dma_buf_pool.cpp` | `drmkit-scene-sources` `pool.rs` | partial | Lazy import, key reuse, failed-import hold, generation reset with deferred retirement, session pause. Bounded LRU eviction is upstream's own follow-up and is not ported |
 | `tests/unit/test_external_dma_buf_ring.cpp` | `drmkit-scene-sources` `ring.rs` + `presenter.rs` | ported | Per-slot import, idle-hold, release on supersede, fence forwarding, session pause |
 | `tests/unit/test_external_dma_buf_source.cpp` | `drmkit-scene-sources` `external.rs` + `tests.rs` | ported | Eleven of fourteen. The three `Accepts*LayoutValidation` cases make their point by handing `create` a device built from fd -1 and checking the error is `bad_file_descriptor` rather than `invalid_argument`; a `&Device` here is a live DRM device by construction, so the same distinction is drawn from the other side -- a valid NV12, YUV420 or tiled layout must not come back `Invalid`. `RejectsBadDeviceFd` and `RejectsNonDrmDeviceFd` have no counterpart for the same reason |
-| `tests/unit/test_format.cpp` | `drmkit-fmt` `src/tests.rs` | ported |  |
+| `tests/unit/test_format.cpp` | `drmkit-fmt` `src/tests.rs` | ported | Including `PackedYuvFormatsHaveNameAndBpp` from v4.1.0 (drm-cxx#234) |
 | `tests/unit/test_format_mod.cpp` | `drmkit-fmt` `src/tests.rs` | ported |  |
 | `tests/unit/test_frame_economy.cpp` | `drmkit-present` `frame_economy.rs` | ported | All five upstream cases, plus two the reference has no equivalent of: forcing full *before* the first frame consumes one flag rather than two — `first_` and `force_full_` share a branch there, so separating them would lose a force — and that `commits()` agrees with the variant. `FrameAction` is a three-variant enum rather than `{action, full}`, where `full` is meaningless on a skip and is set to `false` a caller can read and act on. |
 | `tests/unit/test_gbm.cpp` | `drmkit-gbm` | partial | Device open, allocation, geometry, dma-buf export, format refusal. `modifier` and the constrained path are pinned on the i.MX8M Plus and SA8155P rather than vkms, which has one layout (P-13, P-28); `DRMKIT_MIN_LAYOUTS` sets the per-board floor. Surface allocation is not ported |
@@ -81,7 +81,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_input.cpp` | `drmkit-input` `keyboard.rs`, `libinput_log.rs`, `seat.rs` | partial | The ten `KeyboardTest` cases, the log-routing ones, and `SeatTest` -- rewritten to assert what happens, since upstream's puts every assertion behind `has_value()` ([drm-cxx#248](https://github.com/jwinarske/drm-cxx/issues/248)). Plus a latching-modifier keymap and `lv(apostrophe)`, which upstream has no equivalent of ([drm-cxx#247](https://github.com/jwinarske/drm-cxx/issues/247)). Outstanding: the `PointerTest` accumulator and `EventDispatcherTest`, whose modules are not ported. The per-seat log sink is not ported -- see the crate docs |
 | `tests/unit/test_key_repeater.cpp` | `drmkit-input` `repeat.rs` + `repeater.rs` | ported | All fifteen, plus a backlog cap that reports what it dropped and a zero delay that still repeats. `RejectsNullKeyboard` has no counterpart: the repeater does not hold a keyboard, it is told whether the key repeats |
 | `tests/unit/test_layer.cpp` | `drmkit-planes` | ported | 4 |
-| `tests/unit/test_layer_groups.cpp` | _drmkit-planes_ | pending | Overlap groups ordered by their highest-priority member, ties by input order (upstream #330, answering #236) |
+| `tests/unit/test_layer_groups.cpp` | `drmkit-planes` `src/tests.rs` | ported | All four, against a generic `independent_groups` on plain values as upstream's are, plus a layer-level case that fails if `split_independent_groups` stops passing `keep_priority` (drm-cxx#236) |
 | `tests/unit/test_log.cpp` | `drmkit-log` `src/tests.rs` | ported |  |
 | `tests/unit/test_matching.cpp` | `drmkit-planes` | ported |  |
 | `tests/unit/test_mode.cpp` | `drmkit-modeset` `src/tests.rs` | ported |  |
@@ -91,7 +91,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_output.cpp` | `drmkit-planes` | ported |  |
 | `tests/unit/test_output_signaling.cpp` | `drmkit-scene` `signaling.rs` | ported | All thirty-two. The gamut ranking is the enum's own `Ord` rather than a separate rank function, so a variant added in the wrong place fails a test instead of mis-ranking silently. Adobe RGB is checked to differ from BT.709 in green alone, which is what says the table was not copied from the wrong row |
 | `tests/unit/test_page_flip.cpp` | `drmkit-modeset` `src/tests.rs` | ported | 3 |
-| `tests/unit/test_plane_allocator.cpp` | `drmkit-planes` | ported |  |
+| `tests/unit/test_plane_allocator.cpp` | `drmkit-planes` | ported | Including v4.1.0's four `TestCacheTest` cases: the score's penalty counts rejections, not visits (upstream #267) |
 | `tests/unit/test_plane_alpha.cpp` | _drmkit-planes_ | pending | Alpha rescaled onto each plane's advertised range rather than written as 16-bit (upstream #265) |
 | `tests/unit/test_playlist.cpp` | — (covers `examples/`, outside the ported `src/` surface) | n/a |  |
 | `tests/unit/test_property_store.cpp` | `drmkit-core` `src/tests.rs` | ported |  |

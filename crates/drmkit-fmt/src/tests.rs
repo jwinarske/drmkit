@@ -516,31 +516,32 @@ fn format_bpp_packed_high_bit_depth_yuv_is_32() {
     }
 }
 
-/// The 8-bit packed 4:2:2 formats are absent from the C++ `format_bpp` switch
-/// and so report 0 here too. Pinned deliberately: it is a parity choice, not an
-/// oversight, and the cost model charges them a conservative 32bpp either way.
+/// `FormatTest.PackedYuvFormatsHaveNameAndBpp`, and the cost half from
+/// `test_format_mod.cpp`: single-plane, so an exact depth rather than the
+/// planar 0 (drm-cxx#234). The cost is what the 0 got wrong -- the model fell
+/// back to 32bpp and charged a 4:2:2 layer twice its bandwidth.
 #[test]
-fn format_bpp_packed_8bit_yuv_matches_cxx_zero() {
-    for f in [
-        fourcc::YUYV,
-        fourcc::YVYU,
-        fourcc::UYVY,
-        fourcc::VYUY,
-        fourcc::AYUV,
+fn packed_8bit_yuv_formats_have_a_name_and_a_depth() {
+    for (f, name, bpp) in [
+        (fourcc::YUYV, "YUYV", 16),
+        (fourcc::YVYU, "YVYU", 16),
+        (fourcc::UYVY, "UYVY", 16),
+        (fourcc::VYUY, "VYUY", 16),
+        (fourcc::AYUV, "AYUV", 32),
     ] {
-        assert_eq!(format_bpp(f), 0);
+        assert_eq!(format_name(f), name);
+        assert_eq!(format_bpp(f), bpp, "{name}");
     }
-    let px = 64u64 * 32;
     assert_eq!(
         scanout_cost_bytes(
-            64,
-            32,
+            1920,
+            1080,
             fourcc::YUYV,
             BandwidthClass::Linear,
             DEFAULT_COMPRESSED_RATIO
         ),
-        px * 4,
-        "conservative 32bpp fallback, matching the C++"
+        1920 * 1080 * 2,
+        "2 bytes a pixel, not the 4 of the fallback"
     );
 }
 

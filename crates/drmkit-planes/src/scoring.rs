@@ -301,63 +301,64 @@ fn union_find_root(parent: &mut [usize], mut x: usize) -> usize {
 /// each group can be solved on its own — a much smaller search than the whole
 /// scene at once.
 ///
-/// # Deviation: deterministic group order
-///
-/// The C++ collects groups out of an `unordered_map` keyed by union-find root,
-/// so their order is unspecified. That matters because the caller consumes a
-/// **shared** plane pool: whichever group is processed first takes the
-/// contested planes. Groups here come back ordered by their lowest member
-/// index, which is stable, reproducible, and follows the caller's own layer
-/// order.
-///
-/// Note this only makes the order *deterministic*, not *prioritized*: cross-
-/// group order still does not consult [`keep_priority`]. Raised upstream as
-/// drm-cxx#236.
+/// The groups draw on one **shared** plane pool, so their order decides which
+/// group gets a contested plane. Highest [`keep_priority`] first, so the rule
+/// that holds inside a group (a video layer outranks a generic one) also holds
+/// between groups; ties in input order. Upstream's order was unspecified and
+/// ignored priority until drm-cxx#236.
 #[must_use]
 pub fn split_independent_groups(layers: &[&Layer]) -> Vec<Vec<usize>> {
-    if layers.is_empty() {
-        return Vec::new();
-    }
-    if layers.len() == 1 {
-        return vec![vec![0]];
-    }
+    independent_groups(
+        layers,
+        |a, b| layers_intersect(a, b),
+        |layer| keep_priority(layer),
+    )
+}
 
-    let mut parent: Vec<usize> = (0..layers.len()).collect();
-
-    for i in 0..layers.len() {
-        for j in (i + 1)..layers.len() {
-            if layers_intersect(layers[i], layers[j]) {
+/// Split `items` into groups connected by `intersect`, as indices into
+/// `items`, highest `priority` group first.
+///
+/// Port of upstream's `detail::independent_groups`: a group's priority is its
+/// highest member's; ties keep input order, by each group's first member; and
+/// members keep input order. Generic so the ordering can be pinned on plain
+/// values rather than layers.
+pub(crate) fn independent_groups<T, K: Ord>(
+    items: &[T],
+    intersect: impl Fn(&T, &T) -> bool,
+    priority: impl Fn(&T) -> K,
+) -> Vec<Vec<usize>> {
+    let mut parent: Vec<usize> = (0..items.len()).collect();
+    for i in 0..items.len() {
+        for j in (i + 1)..items.len() {
+            if intersect(&items[i], &items[j]) {
                 let (a, b) = (
                     union_find_root(&mut parent, i),
                     union_find_root(&mut parent, j),
                 );
+                // Root is the lowest index, so groups collect in order of
+                // their first member.
                 if a != b {
-                    parent[a] = b;
+                    parent[a.max(b)] = a.min(b);
                 }
             }
         }
     }
 
-    // Bucket by root, then order groups by their lowest member index so the
-    // result is deterministic and follows the caller's layer order.
-    let mut roots: Vec<(usize, usize)> = (0..layers.len())
-        .map(|i| (union_find_root(&mut parent, i), i))
-        .collect();
-    roots.sort_unstable();
-
     let mut groups: Vec<Vec<usize>> = Vec::new();
-    let mut current_root = None;
-    for (root, index) in roots {
-        if Some(root) == current_root
-            && let Some(group) = groups.last_mut()
-        {
-            group.push(index);
-        } else {
-            current_root = Some(root);
-            groups.push(vec![index]);
+    let mut slot = vec![usize::MAX; items.len()];
+    for i in 0..items.len() {
+        let root = union_find_root(&mut parent, i);
+        if slot[root] == usize::MAX {
+            slot[root] = groups.len();
+            groups.push(Vec::new());
         }
+        groups[slot[root]].push(i);
     }
 
-    groups.sort_by_key(|group| group[0]);
+    // Stable, so equal priorities keep first-member order; cached, so each
+    // group's priority is computed once rather than on every comparison.
+    groups.sort_by_cached_key(|group| {
+        std::cmp::Reverse(group.iter().map(|&i| priority(&items[i])).max())
+    });
     groups
 }

@@ -337,15 +337,10 @@ pub const fn format_name(format: u32) -> &'static str {
 /// [`crate::scanout_cost_bytes`], which expands those cases by chroma
 /// subsampling. A caller that reads `0` as "free" has misread the contract.
 ///
-/// # Parity note
-///
-/// The packed 4:2:2 formats `YUYV`/`YVYU`/`UYVY`/`VYUY` and `AYUV` also report
-/// `0`, because the C++ `format_bpp` switch does not list them. They are
-/// genuinely 16bpp and 32bpp respectively, so this under-reports them — but
-/// changing it would diverge from the reference implementation for a value
-/// that is public API on both sides. It costs nothing downstream: the cost
-/// model's fallback for an unlisted format is a conservative 32bpp, which is
-/// what the C++ already charges them.
+/// The packed 8-bit YUV formats are single-plane with an exact depth, so they
+/// do get one: 16 for the 4:2:2 `YUYV`/`YVYU`/`UYVY`/`VYUY`, 32 for `AYUV`.
+/// Upstream reported 0 for them until drm-cxx#234, which sent the cost model
+/// to its 32bpp fallback and charged a `YUYV` layer twice its bandwidth.
 ///
 /// ```
 /// use drmkit_fmt::{format_bpp, fourcc};
@@ -353,6 +348,7 @@ pub const fn format_name(format: u32) -> &'static str {
 /// assert_eq!(format_bpp(fourcc::RGB565), 16);
 /// assert_eq!(format_bpp(fourcc::ARGB16161616F), 64);
 /// assert_eq!(format_bpp(fourcc::Y210), 32, "packed 4:2:2 in u16 samples");
+/// assert_eq!(format_bpp(fourcc::YUYV), 16, "packed 4:2:2, 8-bit samples");
 /// assert_eq!(format_bpp(fourcc::NV12), 0, "planar: per-plane depth differs");
 /// ```
 #[must_use]
@@ -361,11 +357,11 @@ pub const fn format_bpp(format: u32) -> u32 {
         C8 | RGB332 | BGR233 => 8,
         XRGB4444 | XBGR4444 | RGBX4444 | BGRX4444 | ARGB4444 | ABGR4444 | RGBA4444 | BGRA4444
         | XRGB1555 | XBGR1555 | RGBX5551 | BGRX5551 | ARGB1555 | ABGR1555 | RGBA5551 | BGRA5551
-        | RGB565 | BGR565 => 16,
+        | RGB565 | BGR565 | YUYV | YVYU | UYVY | VYUY => 16,
         RGB888 | BGR888 => 24,
         XRGB8888 | XBGR8888 | RGBX8888 | BGRX8888 | ARGB8888 | ABGR8888 | RGBA8888 | BGRA8888
         | XRGB2101010 | XBGR2101010 | RGBX1010102 | BGRX1010102 | ARGB2101010 | ABGR2101010
-        | RGBA1010102 | BGRA1010102 | Y210 | Y212 | Y216 => 32,
+        | RGBA1010102 | BGRA1010102 | Y210 | Y212 | Y216 | AYUV => 32,
         XRGB16161616F | XBGR16161616F | ARGB16161616F | ABGR16161616F => 64,
         // Planar (NV*-family, P010/P012/P016, YUV*/YVU*) report 0: per-plane
         // bpp varies between the luma and chroma planes, so one image-level

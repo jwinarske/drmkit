@@ -25,7 +25,8 @@ composition, and scanout.
 > `vgem`, `vivid` or `vicodec` modules, or NVIDIA silicon for EGL streams.
 > [`TEST_PARITY.md`](TEST_PARITY.md) records
 > which, per file, and [`docs/parity-findings.md`](docs/parity-findings.md)
-> records the five findings still open, every one of them for that reason.
+> records the four findings still open: three wait on hardware, and P-24 on
+> porting upstream's canvas placement.
 > See [`plan.md`](plan.md) for the full porting plan.
 >
 > It has run on more than vkms. amdgpu and vc4 (Raspberry Pi 5) by hand, a

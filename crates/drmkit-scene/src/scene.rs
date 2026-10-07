@@ -460,6 +460,12 @@ pub enum SceneError {
     /// The allocator could not run because DRM master was lost mid-search.
     #[error("lost DRM master during allocation")]
     NotMaster,
+
+    /// A [`rebind`](LayerScene::rebind) to another CRTC left planes lit on the
+    /// old one, and they have not been turned off yet. Commit
+    /// [`commit_detach`](crate::commit_detach) first.
+    #[error("planes from the previous CRTC are still lit; commit the detach first")]
+    DetachPending,
 }
 
 /// One CRTC's layers and the commit machinery around them.
@@ -506,6 +512,23 @@ pub struct LayerScene {
     /// describes nothing -- so the first frame is never skipped, however
     /// quiet the sources are.
     committed_once: bool,
+    /// What a rebind to another CRTC left lit on the old one.
+    detach: Option<PendingDetach>,
+}
+
+/// Planes a scene left lit on the CRTC it moved away from.
+///
+/// The kernel will not move a plane from one CRTC to another in one commit
+/// ("switching CRTC directly"), so one both pipes can use has to be turned off
+/// in a commit of its own before the new CRTC can have it. And nothing else
+/// would turn them off: the baseline that recorded them describes the old
+/// output, and goes with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingDetach {
+    /// The CRTC the scene left.
+    pub crtc_id: u32,
+    /// The planes it had lit there.
+    pub planes: Vec<u32>,
 }
 
 impl std::fmt::Debug for LayerScene {
@@ -534,6 +557,7 @@ impl LayerScene {
             retiring: Vec::new(),
             topology_dirty: true,
             committed_once: false,
+            detach: None,
         }
     }
 
@@ -806,6 +830,9 @@ impl LayerScene {
     ) -> Result<FrameBuild, SceneError> {
         if self.lifecycle.is_suspended() {
             return Err(SceneError::Suspended);
+        }
+        if self.detach.is_some() {
+            return Err(SceneError::DetachPending);
         }
 
         // A changed hint affects plane scoring, so the warm start must go or
@@ -1330,6 +1357,21 @@ impl LayerScene {
         })
     }
 
+    /// What a rebind left lit on the CRTC the scene moved away from, until it
+    /// is committed.
+    #[must_use]
+    pub const fn pending_detach(&self) -> Option<&PendingDetach> {
+        self.detach.as_ref()
+    }
+
+    /// Record that the pending detach reached the kernel.
+    ///
+    /// [`commit_detach`](crate::commit_detach) calls this after a successful
+    /// commit; a caller committing the detach some other way must too.
+    pub fn detach_committed(&mut self) {
+        self.detach = None;
+    }
+
     /// Move this scene to another output, keeping its layers.
     ///
     /// For an output that changed underneath the caller: a mode set, a
@@ -1338,17 +1380,37 @@ impl LayerScene {
     /// to rebuild its layers would have to rebuild everything it knows about
     /// them too.
     ///
-    /// Everything cached about the previous output is dropped. A plane id
-    /// means nothing on another pipe, so both the assignment and the committed
-    /// baseline go: diffing the first frame against the old output's baseline
-    /// would suppress properties the new one has never been told, and the
-    /// layer would arrive half-programmed. The next commit is therefore a full
-    /// emit, and the caller must set the new mode with it.
+    /// Everything cached about the previous output is dropped -- the
+    /// assignment, the committed baseline, the failure cache -- and the next
+    /// commit is a full emit, with which the caller must set the new mode.
+    ///
+    /// **Moving to another CRTC leaves the old one's planes lit**, and the
+    /// scene cannot turn them off itself: it does not commit. They are queued
+    /// as a [`PendingDetach`], and until the caller commits it through
+    /// [`commit_detach`](crate::commit_detach), [`build_frame`](Self::build_frame)
+    /// refuses with [`SceneError::DetachPending`]. Two reasons it cannot be
+    /// skipped: the kernel will not move a plane from one CRTC to another in a
+    /// single commit, so a plane both pipes can use is rejected outright on the
+    /// new one; and a plane the new pipe cannot use would go on showing this
+    /// scene's last frame on the old output indefinitely. A rebind to the same
+    /// CRTC queues nothing. Upstream has the same defect (drm-cxx#340).
     ///
     /// Returns what will not fit. A layer whose destination lies outside the
     /// new mode is **not** dropped — the caller may be about to move it, and
     /// deciding on its behalf would be worse than saying so.
     pub fn rebind(&mut self, crtc_id: u32, width: u32, height: u32) -> RebindReport {
+        if crtc_id != self.crtc_id {
+            // Read before the baseline that records them is forgotten. A
+            // second rebind before the first detach landed keeps the first:
+            // those planes are still lit on that CRTC, not on this one.
+            let planes = self.allocator.lit_planes();
+            if self.detach.is_none() && !planes.is_empty() {
+                self.detach = Some(PendingDetach {
+                    crtc_id: self.crtc_id,
+                    planes,
+                });
+            }
+        }
         self.crtc_id = crtc_id;
         self.allocator.forget_output();
         // Everything has to be re-emitted against the new pipe, and the layer

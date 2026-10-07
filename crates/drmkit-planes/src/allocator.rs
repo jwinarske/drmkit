@@ -530,6 +530,23 @@ impl Allocator {
         })
     }
 
+    /// Every plane the kernel has a framebuffer on, as far as this allocator
+    /// committed it.
+    ///
+    /// What a scene leaving its CRTC has to turn off before the baseline that
+    /// records it is forgotten: nothing else knows these planes are lit.
+    #[must_use]
+    pub fn lit_planes(&self) -> Vec<u32> {
+        let mut planes: Vec<u32> = self
+            .last_committed
+            .keys()
+            .copied()
+            .filter(|plane_id| !self.plane_is_off(*plane_id))
+            .collect();
+        planes.sort_unstable();
+        planes
+    }
+
     /// Re-emit every property on every commit, for drivers that mishandle a
     /// partial write. Off by default; this is a quirk escape hatch, not a
     /// tuning knob -- it multiplies per-frame property traffic.

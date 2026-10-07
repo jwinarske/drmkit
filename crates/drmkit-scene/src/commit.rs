@@ -339,6 +339,50 @@ pub fn emit_disable(
     Ok(written)
 }
 
+/// Turn off what a [`rebind`](crate::LayerScene::rebind) left on the old CRTC.
+///
+/// One commit of its own, before the first frame on the new CRTC: every plane
+/// the scene had lit there is detached, and the old CRTC is switched off
+/// (`ACTIVE = 0`). It has to be separate because the kernel refuses to move a
+/// plane between CRTCs in one commit, and a plane both pipes can use is one
+/// the new frame may want. The CRTC goes off with its planes because some
+/// drivers reject an active CRTC whose primary is disarmed; `ACTIVE = 0` keeps
+/// its mode and connector, so a caller that wants the old output back sets it
+/// active again. Upstream has no equivalent yet (drm-cxx#340).
+///
+/// Returns whether there was anything to commit. On success the scene can
+/// build frames again; on failure the detach stays pending and
+/// [`build_frame`](crate::LayerScene::build_frame) goes on refusing.
+///
+/// # Errors
+///
+/// [`CoreError`] if a property cannot be found or the kernel rejects the
+/// commit.
+pub fn commit_detach(device: &Device, scene: &mut crate::LayerScene) -> Result<bool, CoreError> {
+    let Some(detach) = scene.pending_detach() else {
+        return Ok(false);
+    };
+    // Looked up here rather than through the caller's property map: a plane
+    // the map never learned would be skipped silently and stay lit, which is
+    // the defect this exists to fix.
+    let mut store = PropertyStore::new();
+    let mut request = drmkit_core::AtomicRequest::with_capacity(2 * detach.planes.len() + 1);
+    for &plane_id in &detach.planes {
+        store.cache_properties(device, plane_id, ObjectType::Plane)?;
+        request.add_property(plane_id, store.property_id(plane_id, "FB_ID")?, 0)?;
+        request.add_property(plane_id, store.property_id(plane_id, "CRTC_ID")?, 0)?;
+    }
+    store.cache_properties(device, detach.crtc_id, ObjectType::Crtc)?;
+    request.add_property(
+        detach.crtc_id,
+        store.property_id(detach.crtc_id, "ACTIVE")?,
+        0,
+    )?;
+    request.commit(device, AtomicCommitFlags::ALLOW_MODESET)?;
+    scene.detach_committed();
+    Ok(true)
+}
+
 /// A [`TestCommitter`] that issues real `TEST_ONLY` commits.
 ///
 /// Builds a fresh request per test that (a) disables every candidate plane not

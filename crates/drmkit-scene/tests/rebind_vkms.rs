@@ -57,6 +57,10 @@ fn a_no_op_rebind_keeps_the_layers_and_re_emits_everything_vkms() {
         fx.scene.layer(handle).is_some(),
         "the handle has to survive, or the caller's own state is orphaned"
     );
+    assert!(
+        fx.scene.pending_detach().is_none(),
+        "a rebind to the same CRTC has nothing to turn off"
+    );
 
     // Deliberately *not* re-stating the mode: this is a rebind to the same
     // CRTC, which is already lit, so the only thing that can inflate the write
@@ -184,6 +188,124 @@ fn a_layer_outside_the_new_mode_is_reported_not_dropped_vkms() {
          move it"
     );
     assert!(fx.scene.layer(on_screen).is_some());
+
+    fx.teardown();
+}
+
+/// A rebind to another CRTC hands a shared plane over, and leaves nothing lit.
+///
+/// The case a single CRTC cannot reach, and the one P-37 had backwards. The
+/// layer is pinned to a plane both pipes can use. The kernel will not move a
+/// plane between CRTCs in one commit ("switching CRTC directly"), so the
+/// rebind has to queue a detach, and the first frame on the new CRTC must
+/// wait for it -- without it that frame is rejected with `EINVAL`, and a plane
+/// the new pipe cannot use goes on showing the old frame. Everything asserted
+/// after the rebind is read back from the kernel.
+///
+/// Needs two connected outputs on different CRTCs and a plane both can use:
+/// `validation/vkms-two-crtc.sh` builds one. `DRMKIT_TEST_CONNECTORS` names
+/// the outputs on hardware, first the one to start on.
+#[test]
+#[ignore = "needs a DRM device, DRM master and two connected outputs"]
+fn a_rebind_to_another_crtc_hands_a_shared_plane_over_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some(mut fx) = fixture(device) else {
+        drmkit_testkit::skipped("no connected output");
+        return;
+    };
+    let Some(other) = fx.another_output() else {
+        drmkit_testkit::skipped("no second connected output on another CRTC");
+        return;
+    };
+    let Some(shared) = fx.a_plane_shared_with(&other) else {
+        drmkit_testkit::skipped("no plane both CRTCs can use");
+        return;
+    };
+    let Some(handle) = fx.add_layer(0, 0, LAYER_W, LAYER_H) else {
+        drmkit_testkit::skipped("no dumb buffer for a layer");
+        return;
+    };
+    fx.scene
+        .layer_mut(handle)
+        .expect("the layer")
+        .set_pinned_plane(Some(shared));
+
+    let old_crtc = fx.crtc_id();
+    fx.commit().expect("the cold frame on the first output");
+    fx.commit().expect("the steady frame");
+    assert_eq!(
+        fx.plane_property(shared, "CRTC_ID"),
+        Some(u64::from(old_crtc)),
+        "before the rebind the shared plane is on the first CRTC"
+    );
+
+    fx.switch_to(&other)
+        .expect("learn the second output's planes");
+    let (width, height) = fx.mode_size();
+    let report = fx.scene.rebind(fx.crtc_id(), width, height);
+    assert!(
+        report.is_empty(),
+        "a 64x64 layer at the origin fits any mode"
+    );
+
+    let detach = fx
+        .scene
+        .pending_detach()
+        .expect("moving off a CRTC with lit planes has to queue their detach")
+        .clone();
+    assert_eq!(detach.crtc_id, old_crtc, "the detach is for the CRTC left");
+    assert!(
+        detach.planes.contains(&shared),
+        "the shared plane is lit on the old CRTC, so it has to be in the detach"
+    );
+    let refused = fx.commit();
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|error| error.contains("still lit")),
+        "a frame built before the detach would be rejected by the kernel, so \
+         the scene has to refuse it first; got {refused:?}"
+    );
+
+    assert_eq!(fx.commit_detach(), Ok(true), "the detach commits");
+    assert!(fx.scene.pending_detach().is_none());
+    for plane_id in &detach.planes {
+        assert_eq!(
+            fx.plane_property(*plane_id, "CRTC_ID"),
+            Some(0),
+            "plane {plane_id} is still on the old CRTC after the detach"
+        );
+    }
+
+    let after = fx.commit().expect("the first frame on the second output");
+    assert!(
+        after.layers_assigned >= 1,
+        "the pinned layer has to be placed"
+    );
+    assert_eq!(
+        fx.plane_property(shared, "CRTC_ID"),
+        Some(u64::from(fx.crtc_id())),
+        "the plane did not follow the scene to the new CRTC"
+    );
+    assert!(
+        fx.plane_framebuffer(shared).is_some_and(|fb| fb != 0),
+        "the plane is on the new CRTC with nothing to scan out"
+    );
+    for (name, want) in [
+        ("CRTC_X", 0),
+        ("CRTC_Y", 0),
+        ("CRTC_W", u64::from(LAYER_W)),
+        ("CRTC_H", u64::from(LAYER_H)),
+        ("SRC_W", u64::from(LAYER_W) << 16),
+        ("SRC_H", u64::from(LAYER_H) << 16),
+    ] {
+        assert_eq!(
+            fx.plane_property(shared, name),
+            Some(want),
+            "{name} on the handed-over plane is not what the layer asked for"
+        );
+    }
 
     fx.teardown();
 }

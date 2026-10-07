@@ -86,7 +86,8 @@ pub use canvas::{
 };
 pub use commit::{
     DeviceCommitter, FenceAction, LayerWrites, Modeset, PlanePropertyMap, arm_acquire_fences,
-    classify, emit_disable, emit_frame, emit_frame_damaged, emit_layer, fence_action,
+    classify, commit_detach, emit_disable, emit_frame, emit_frame_damaged, emit_layer,
+    fence_action,
 };
 pub use display::{DisplayParams, Rect, to_16_16};
 pub use frame::{AcquireTally, CommitKind, FrameLifecycle, FrameOutcome, KernelResult};
@@ -94,8 +95,8 @@ pub use lower::{LoweringInput, lower_layer};
 pub use release::{Acquisition, ReleaseQueue, ReleaseReason, Released, ScenePendingFlip};
 pub use report::{CommitReport, LayerPlacement, Placement};
 pub use scene::{
-    FrameBuild, IncompatibilityReason, LayerHandle, LayerIncompatibility, LayerScene, PlanePlan,
-    RebindReport, SceneError, SceneLayer,
+    FrameBuild, IncompatibilityReason, LayerHandle, LayerIncompatibility, LayerScene,
+    PendingDetach, PlanePlan, RebindReport, SceneError, SceneLayer,
 };
 pub use signaling::{ColorPrimaries, OutputSignalling, derive_output_signalling, widest_gamut};
 pub use source::{

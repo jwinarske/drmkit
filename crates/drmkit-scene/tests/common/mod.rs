@@ -69,32 +69,90 @@ pub(crate) struct Fixture {
     connector_id: u32,
     mode: drmkit_core::Mode,
     needs_modeset: bool,
+    /// CRTCs a switch moved away from, still lit until teardown.
+    retired_crtcs: Vec<u32>,
+}
+
+/// An output the fixture can drive: a connected connector, a CRTC that can
+/// reach it, and the mode to light it with.
+pub(crate) struct Output {
+    connector_id: u32,
+    crtc: drm::control::crtc::Handle,
+    crtc_index: u32,
+    mode: drmkit_core::Mode,
+}
+
+/// The connector names `DRMKIT_TEST_CONNECTORS` asks for, in preference order.
+///
+/// A board can have connected outputs a test must not light -- a virtual one
+/// that forwards to another machine, a panel something else owns -- so the
+/// list is a whitelist when set, not a hint. Unset, every connected connector
+/// is a candidate, in resource order.
+fn wanted_connectors() -> Option<Vec<String>> {
+    let list = std::env::var("DRMKIT_TEST_CONNECTORS").ok()?;
+    Some(
+        list.split(',')
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty())
+            .collect(),
+    )
+}
+
+/// The first output not on `avoid_crtc` and not `avoid_connector`.
+fn find_output(
+    device: &Device,
+    resources: &drm::control::ResourceHandles,
+    avoid_crtc: Option<drm::control::crtc::Handle>,
+    avoid_connector: Option<u32>,
+) -> Option<Output> {
+    let candidates: Vec<_> = resources
+        .connectors()
+        .iter()
+        .filter_map(|handle| {
+            let connector = device.get_connector(*handle, false).ok()?;
+            let id = u32::from(*handle);
+            (connector.state() == drm::control::connector::State::Connected
+                && Some(id) != avoid_connector)
+                .then_some(connector)
+        })
+        .collect();
+    let name = |c: &drm::control::connector::Info| {
+        format!("{}-{}", c.interface().as_str(), c.interface_id())
+    };
+    let ordered: Vec<_> = match wanted_connectors() {
+        Some(wanted) => wanted
+            .iter()
+            .filter_map(|want| candidates.iter().find(|c| name(c) == *want))
+            .collect(),
+        None => candidates.iter().collect(),
+    };
+    ordered.into_iter().find_map(|connector| {
+        let mode = *connector.modes().first()?;
+        let crtc = connector.encoders().iter().find_map(|e| {
+            let encoder = device.get_encoder(*e).ok()?;
+            resources
+                .filter_crtcs(encoder.possible_crtcs())
+                .into_iter()
+                .find(|crtc| Some(*crtc) != avoid_crtc)
+        })?;
+        let crtc_index = u32::try_from(resources.crtcs().iter().position(|c| *c == crtc)?).ok()?;
+        Some(Output {
+            connector_id: u32::from(connector.handle()),
+            crtc,
+            crtc_index,
+            mode,
+        })
+    })
 }
 
 pub(crate) fn fixture(device: Device) -> Option<Fixture> {
     let resources = device.resource_handles().ok()?;
-    let (connector_id, crtc, mode) = resources.connectors().iter().find_map(|handle| {
-        let connector = device.get_connector(*handle, false).ok()?;
-        if connector.state() != drm::control::connector::State::Connected {
-            return None;
-        }
-        let mode = *connector.modes().first()?;
-        let encoder = connector
-            .encoders()
-            .iter()
-            .find_map(|e| device.get_encoder(*e).ok())?;
-        let crtc = resources
-            .filter_crtcs(encoder.possible_crtcs())
-            .first()
-            .copied()?;
-        Some((u32::from(*handle), crtc, mode))
-    })?;
-    let crtc_index = u32::try_from(resources.crtcs().iter().position(|c| *c == crtc)?).ok()?;
-    let crtc_id = u32::from(crtc);
+    let output = find_output(&device, &resources, None, None)?;
+    let crtc_id = u32::from(output.crtc);
 
     let registry = PlaneRegistry::probe(&device).ok()?;
     let mut map = PlanePropertyMap::new();
-    for plane in registry.for_crtc(crtc_index) {
+    for plane in registry.for_crtc(output.crtc_index) {
         map.learn_plane(&device, plane.id).ok()?;
     }
 
@@ -104,10 +162,11 @@ pub(crate) fn fixture(device: Device) -> Option<Fixture> {
         registry,
         map,
         crtc_id,
-        crtc_index,
-        connector_id,
-        mode,
+        crtc_index: output.crtc_index,
+        connector_id: output.connector_id,
+        mode: output.mode,
         needs_modeset: true,
+        retired_crtcs: Vec::new(),
     })
 }
 
@@ -231,6 +290,11 @@ impl Fixture {
     /// what the scene decided, and the point of asking is whether the decision
     /// reached hardware.
     pub(crate) fn plane_framebuffer(&self, plane_id: u32) -> Option<u32> {
+        u32::try_from(self.plane_property(plane_id, "FB_ID")?).ok()
+    }
+
+    /// What the kernel currently has in one of a plane's properties.
+    pub(crate) fn plane_property(&self, plane_id: u32, name: &str) -> Option<u64> {
         let handle = drm::control::plane::Handle::from(std::num::NonZeroU32::new(plane_id)?);
         let props = self.device.get_properties(handle).ok()?;
         let (handles, values) = props.as_props_and_values();
@@ -238,11 +302,64 @@ impl Fixture {
             let Ok(info) = self.device.get_property(*property) else {
                 continue;
             };
-            if info.name().to_string_lossy() == "FB_ID" {
-                return u32::try_from(*value).ok();
+            if info.name().to_string_lossy() == name {
+                return Some(*value);
             }
         }
         None
+    }
+
+    /// A second connected output, on a CRTC other than this one.
+    pub(crate) fn another_output(&self) -> Option<Output> {
+        let resources = self.device.resource_handles().ok()?;
+        let current = drm::control::crtc::Handle::from(std::num::NonZeroU32::new(self.crtc_id)?);
+        find_output(
+            &self.device,
+            &resources,
+            Some(current),
+            Some(self.connector_id),
+        )
+    }
+
+    /// A plane both this CRTC and `other` can use, preferring an overlay.
+    ///
+    /// The only plane a rebind can carry a baseline onto: a plane id from one
+    /// pipe's exclusive set means nothing on the other.
+    pub(crate) fn a_plane_shared_with(&self, other: &Output) -> Option<u32> {
+        let shared: Vec<_> = self
+            .registry
+            .for_crtc(self.crtc_index)
+            .filter(|plane| plane.compatible_with_crtc(other.crtc_index))
+            .filter(|plane| plane.plane_type != drmkit_planes::PlaneType::Cursor)
+            .collect();
+        shared
+            .iter()
+            .find(|plane| plane.plane_type == drmkit_planes::PlaneType::Overlay)
+            .or_else(|| shared.first())
+            .map(|plane| plane.id)
+    }
+
+    /// Commit what a rebind left lit on the old CRTC.
+    pub(crate) fn commit_detach(&mut self) -> Result<bool, String> {
+        drmkit_scene::commit_detach(&self.device, &mut self.scene)
+            .map_err(|error| format!("detaching: {error}"))
+    }
+
+    /// Drive `output` from the next commit on, leaving the old CRTC lit.
+    ///
+    /// What the scene does not do for the caller: learn the new pipe's planes
+    /// and set its mode. The rebind itself is the test's to call.
+    pub(crate) fn switch_to(&mut self, output: &Output) -> Option<()> {
+        for plane in self.registry.for_crtc(output.crtc_index) {
+            self.map.learn_plane(&self.device, plane.id).ok()?;
+        }
+        self.retired_crtcs.push(self.crtc_id);
+        self.crtc_id = u32::from(output.crtc);
+        self.crtc_index = output.crtc_index;
+        self.connector_id = output.connector_id;
+        self.mode = output.mode;
+        self.needs_modeset = true;
+        Some(())
     }
 
     /// The mode this fixture drives, in pixels.
@@ -267,15 +384,17 @@ impl Fixture {
     }
 
     pub(crate) fn teardown(&mut self) {
-        let _ = self.device.set_crtc(
-            drm::control::crtc::Handle::from(
-                std::num::NonZeroU32::new(self.crtc_id).expect("non-zero"),
-            ),
-            None,
-            (0, 0),
-            &[],
-            None,
-        );
+        for crtc_id in std::iter::once(self.crtc_id).chain(self.retired_crtcs.drain(..)) {
+            let _ = self.device.set_crtc(
+                drm::control::crtc::Handle::from(
+                    std::num::NonZeroU32::new(crtc_id).expect("non-zero"),
+                ),
+                None,
+                (0, 0),
+                &[],
+                None,
+            );
+        }
     }
 }
 

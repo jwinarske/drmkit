@@ -55,6 +55,11 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets --all-features
 
+      # The v1 GBM entry points are only built for a libgbm without the v2
+      # ones (the SA8155P's ships none). Nothing else compiles that path.
+      - name: clippy (GBM v1 entry points)
+        run: DRMKIT_GBM_NO_MODIFIERS2=1 cargo clippy -p drmkit-gbm -p drmkit-scene-gbm --all-targets
+
       # cargo-msrv reads `package.rust-version`, which a virtual workspace root
       # does not have. Verify each member against its own manifest instead.
       - name: cargo-msrv verify

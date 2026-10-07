@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 use std::os::fd::OwnedFd;
+use std::sync::Arc;
 
 use crate::{GbmDevice, GbmError};
 
@@ -22,6 +23,10 @@ pub enum MapAccess {
 /// A GBM-allocated buffer.
 pub struct GbmBuffer {
     inner: gbm::BufferObject<()>,
+    /// The device descriptor the buffer's GEM handle lives on. Declared after
+    /// `inner` so the buffer is freed while it is still open; see
+    /// [`GbmDevice`]'s field of the same name.
+    _fd: Arc<OwnedFd>,
 }
 
 impl std::fmt::Debug for GbmBuffer {
@@ -63,7 +68,10 @@ impl GbmBuffer {
                 gbm::BufferObjectFlags::SCANOUT | gbm::BufferObjectFlags::RENDERING,
             )
             .map_err(|e| GbmError::Allocation(e.to_string()))?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            _fd: device.fd(),
+        })
     }
 
     /// Allocate a scanout-capable buffer, constrained to `modifiers`.
@@ -76,15 +84,20 @@ impl GbmBuffer {
     /// framebuffer rather than here.
     ///
     /// An empty list means "no constraint" and falls back to
-    /// [`create`](Self::create). So does a driver with no
-    /// `gbm_bo_create_with_modifiers2`: the caller gets a buffer whose
-    /// `modifier` may be outside the list it asked for, which is why the
-    /// modifier is worth reading back rather than assumed.
+    /// [`create`](Self::create). So does a driver that refuses every modifier
+    /// offered: the caller gets a buffer whose `modifier` may be outside the
+    /// list it asked for, which is why the modifier is worth reading back
+    /// rather than assumed. Drivers substitute on their own too -- measured,
+    /// the SA8155P's GBM answers a tiled request with linear, and NXP's with
+    /// `INVALID` -- so the fallback is not the only way to get there.
+    ///
+    /// A libgbm without the v2 entry point is a build-time matter, not this
+    /// fallback: see `build.rs`.
     ///
     /// # Errors
     ///
-    /// [`GbmError::Allocation`] if the driver refuses the format, the size, or
-    /// every modifier offered.
+    /// [`GbmError::Allocation`] if the driver refuses the format or the size.
+    /// Refusing every modifier offered is not an error; see above.
     pub fn create_with_modifiers(
         device: &GbmDevice,
         width: u32,
@@ -97,6 +110,7 @@ impl GbmBuffer {
         }
         let format = gbm::Format::try_from(fourcc)
             .map_err(|_| GbmError::Allocation(format!("unsupported format {fourcc:#x}")))?;
+        #[cfg(not(drmkit_gbm_v1))]
         let result = device.raw().create_buffer_object_with_modifiers2::<()>(
             width,
             height,
@@ -104,12 +118,25 @@ impl GbmBuffer {
             modifiers.iter().copied().map(gbm::Modifier::from),
             gbm::BufferObjectFlags::SCANOUT | gbm::BufferObjectFlags::RENDERING,
         );
+        // v1 takes no usage and implies scanout and rendering, which is what
+        // v2 is asked for above. See `build.rs` for when this is built.
+        #[cfg(drmkit_gbm_v1)]
+        let result = device.raw().create_buffer_object_with_modifiers::<()>(
+            width,
+            height,
+            format,
+            modifiers.iter().copied().map(gbm::Modifier::from),
+        );
         match result {
-            Ok(inner) => Ok(Self { inner }),
-            // Not every driver implements the modifier entry point, and a
-            // build against an older libgbm has no symbol to call. Falling
-            // back is what keeps this usable there; reading the modifier back
-            // is what keeps it honest.
+            Ok(inner) => Ok(Self {
+                inner,
+                _fd: device.fd(),
+            }),
+            // Not every driver implements the modifier path, and one that
+            // does may still refuse every layout offered -- v3d refuses all
+            // but linear once scanout is asked for. Falling back is what keeps
+            // this usable there; reading the modifier back is what keeps it
+            // honest.
             Err(_) => Self::create(device, width, height, fourcc),
         }
     }

@@ -23,7 +23,7 @@ composition, and scanout.
 > have: a working GPU render node, the `vgem`, `vivid` or `vicodec` modules, or
 > NVIDIA silicon for EGL streams. [`TEST_PARITY.md`](TEST_PARITY.md) records
 > which, per file, and [`docs/parity-findings.md`](docs/parity-findings.md)
-> records the seven findings still open, every one of them for that reason.
+> records the five findings still open, every one of them for that reason.
 > See [`plan.md`](plan.md) for the full porting plan.
 >
 > It has run on more than vkms. amdgpu and vc4 (Raspberry Pi 5) by hand, a

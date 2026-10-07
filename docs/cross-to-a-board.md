@@ -130,6 +130,41 @@ passing and 6 ignored; with `DRMKIT_REQUIRE_MASTER=1` and
 `rp1-dsi`. That is the device suite running against a real display controller
 rather than vkms, which is what the whole exercise is for.
 
+## Boards that are not Debian
+
+The same recipe works elsewhere with three adjustments, each found the hard way.
+
+- **A Yocto image** (the i.MX8M Plus) keeps everything in `/usr/lib` with
+  `/lib` a symlink to it, and has `tar` but no `rsync`. Take the start files,
+  libc, libgcc and libgbm in one `tar` over SSH, `ln -sfn usr/lib lib` in the
+  sysroot, and point `-B` and `-L` at `usr/lib`.
+- **A vendor libgbm** is a front for a backend library with dependencies of its
+  own (NXP's `libgbm_viv.so` needs the whole Vivante HAL). The board resolves
+  them at run time, so link with `-C link-arg=-Wl,--allow-shlib-undefined`
+  rather than copying the HAL across.
+- **A libgbm without the v2 entry points** fails the link on
+  `gbm_bo_create_with_modifiers2`. Build with `DRMKIT_GBM_NO_MODIFIERS2=1`;
+  see `crates/drmkit-gbm/build.rs`. The SA8155P is one.
+
+The SA8155P's glibc is 2.31, older than any board here would lend. A Debian
+bullseye arm64 sysroot matches it, and its own Mesa 20.3 libgbm has no v2
+either, so nothing has to be taken from the board. Link with clang and lld,
+which also avoids a cross gcc whose spec adds libraries the sysroot lacks:
+
+```sh
+SR=/path/to/sysroot-bullseye-arm64
+export DRMKIT_GBM_NO_MODIFIERS2=1
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=clang
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-Dwarnings \
+-C link-arg=--target=aarch64-linux-gnu -C link-arg=--sysroot=$SR \
+-C link-arg=--gcc-toolchain=$SR/usr -C link-arg=-fuse-ld=lld \
+-C link-arg=-Wl,-rpath-link,$SR/lib/aarch64-linux-gnu:$SR/usr/lib/aarch64-linux-gnu"
+```
+
+Run it on the display card that drives a real connector, not the virtual one
+beside it, and leave the platform's compositor running: the GBM cases need no
+DRM master.
+
 ## Why not `cross`
 
 It works and pulls a container per target. This is for a workstation that

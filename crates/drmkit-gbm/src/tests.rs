@@ -94,6 +94,29 @@ fn a_buffer_exports_a_dma_buf() {
     );
 }
 
+/// A buffer keeps its device's descriptor open for as long as it lives.
+///
+/// A GEM handle belongs to the descriptor it was allocated on, and freeing the
+/// buffer closes the handle through it. Nothing ties a buffer's lifetime to the
+/// `GbmDevice` it came from, so if the device took the descriptor with it, every
+/// buffer still alive would free through a closed number -- `EBADF` and a leak,
+/// or, once the number is reused, a handle closed on some other file. Mesa
+/// keeps a descriptor of its own and passes regardless; the SA8155P's libgbm
+/// frees and exports through the caller's, and failed this case until each
+/// buffer held a share of it.
+#[test]
+fn a_buffer_outlives_its_device() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let gbm = GbmDevice::new(&device).expect("gbm device");
+    let buffer = GbmBuffer::create(&gbm, 64, 64, fourcc::ARGB8888).expect("allocate");
+    drop(gbm);
+
+    buffer
+        .export()
+        .expect("the buffer's descriptor must outlive the GbmDevice it came from");
+}
+
 /// The modifier travels with the buffer, consistently.
 ///
 /// A tiled or compressed buffer scanned out as though it were linear is not
@@ -104,9 +127,8 @@ fn a_buffer_exports_a_dma_buf() {
 /// **What this cannot prove on vkms.** Its buffers really are linear, so a
 /// `modifier()` that ignored the driver and returned zero would pass every
 /// assertion here — verified by injecting exactly that. Catching it needs a
-/// driver that reports something else, which is a GPU or vc4. Recorded in
-/// `docs/parity-findings.md` with the other cases vkms structurally cannot
-/// reach.
+/// driver with more than one layout, and is
+/// [`every_honored_layout_comes_back_as_asked`]'s job (P-13).
 #[test]
 fn a_buffer_reports_a_modifier() {
     let _guard = card_guard();
@@ -157,8 +179,9 @@ fn an_unknown_format_is_refused() {
 ///
 /// vkms allocates linear, and `LINEAR` is what the list asks for, so this
 /// confirms the constrained path reaches the driver and returns something
-/// usable rather than that the constraint was honoured against an alternative
-/// -- vkms has no second layout to pick.
+/// usable rather than that the constraint was honored against an alternative
+/// -- vkms has no second layout to pick. That is
+/// [`every_honored_layout_comes_back_as_asked`]'s job (P-28).
 #[test]
 fn a_constrained_allocation_comes_back_in_a_listed_modifier() {
     const LINEAR: u64 = 0;
@@ -219,4 +242,78 @@ fn an_unknown_format_is_refused_on_the_constrained_path() {
         matches!(refused, Err(GbmError::Allocation(_))),
         "the modifier fallback must not turn an unsupported format into a buffer"
     );
+}
+
+/// Every layout the driver honors comes back as the layout that was asked for.
+///
+/// This is the case vkms cannot fail and real allocators can (P-13, P-28). Each
+/// candidate is offered **alone**, so a buffer reporting that modifier is one
+/// the driver allocated in it -- not one it happened to pick from a list. An
+/// implementation that ignored the list would report the unconstrained default
+/// for every candidate, and one whose `modifier()` ignored the driver would
+/// report a constant; either collapses the honored set to at most one layout.
+///
+/// How many layouts a driver honors is a property of the board, so the floor
+/// is `DRMKIT_MIN_LAYOUTS` rather than a constant: measured, with
+/// `SCANOUT | RENDERING`, at 5 on the i.MX8M Plus (linear, three Vivante
+/// tilings and a vendor one) and 2 on the SA8155P (linear and UBWC). The Pi 5 is 1: v3d refuses
+/// every non-linear layout once `SCANOUT` is set, and UIF only appears without
+/// it. Unset, the set is printed and nothing beyond the per-candidate contract
+/// is asserted, which is all a single-layout driver like vkms supports.
+#[test]
+fn every_honored_layout_comes_back_as_asked() {
+    use drmkit_fmt::{mod_code, vendor};
+
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let gbm = GbmDevice::new(&device).expect("gbm device");
+
+    // Low bodies of every vendor: where each one keeps its plain tilings and
+    // compression. Broader parameterized families (AFBC, AMD) need a body
+    // built from fields, and the boards here do not offer them.
+    let mut candidates = vec![0];
+    for vendor in [
+        vendor::INTEL,
+        vendor::SAMSUNG,
+        vendor::QCOM,
+        vendor::VIVANTE,
+        vendor::BROADCOM,
+        vendor::ALLWINNER,
+    ] {
+        candidates.extend((1..=8).map(|body| mod_code(vendor, body)));
+    }
+
+    let mut honored = Vec::new();
+    let mut substituted = std::collections::BTreeSet::new();
+    for &asked in &candidates {
+        let Ok(buffer) = GbmBuffer::create_with_modifiers(&gbm, 64, 64, fourcc::ARGB8888, &[asked])
+        else {
+            continue;
+        };
+        let got = buffer.modifier();
+        if got == asked {
+            honored.push(asked);
+        } else {
+            // Not a refusal: the driver, or the fallback, handed back a buffer
+            // in some other layout. Legal, and exactly why the modifier is
+            // read back rather than assumed.
+            substituted.insert(got);
+        }
+    }
+    println!("note: honored layouts {honored:x?}, substitutes seen {substituted:x?}");
+
+    assert!(
+        honored.contains(&0),
+        "every driver can allocate linear, and asking for it alone must get it"
+    );
+    if let Ok(minimum) = std::env::var("DRMKIT_MIN_LAYOUTS") {
+        let minimum: usize = minimum.parse().expect("DRMKIT_MIN_LAYOUTS is a number");
+        assert!(
+            honored.len() >= minimum,
+            "{} layout(s) came back as asked and DRMKIT_MIN_LAYOUTS asks for {minimum}: \
+             either the modifier list is not reaching the driver or the modifier \
+             read back is not the driver's",
+            honored.len()
+        );
+    }
 }

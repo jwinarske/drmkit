@@ -106,7 +106,6 @@ pub enum SurfaceError {
 
 /// A GBM swap chain the scene can scan out of.
 pub struct GbmSurfaceSource {
-    gbm: drmkit_gbm::GbmDevice,
     surface: gbm::Surface<()>,
     format: SourceFormat,
     config: SurfaceConfig,
@@ -131,6 +130,11 @@ pub struct GbmSurfaceSource {
     /// Set by `on_session_paused`: the descriptor is gone, so the framebuffer
     /// ids must not be committed and must not be destroyed through it either.
     paused: bool,
+    /// Declared last, so it drops last. Fields drop in declaration order, and
+    /// the surface and the locked buffers free their GEM handles through this
+    /// device's descriptor -- a libgbm that keeps no descriptor of its own
+    /// (the SA8155P's) would otherwise free them through a closed one.
+    gbm: drmkit_gbm::GbmDevice,
 }
 
 impl std::fmt::Debug for GbmSurfaceSource {
@@ -183,7 +187,6 @@ impl GbmSurfaceSource {
                 width: config.width,
                 height: config.height,
             },
-            gbm,
             surface,
             config: *config,
             framebuffers: HashMap::new(),
@@ -192,6 +195,7 @@ impl GbmSurfaceSource {
             pending_fence: None,
             device_fd: device.raw_fd(),
             paused: false,
+            gbm,
         })
     }
 
@@ -449,10 +453,12 @@ impl LayerBufferSource for GbmSurfaceSource {
         let surface =
             Self::make_surface(&gbm, &self.config).map_err(|_| SourceError::Unsupported)?;
 
-        self.gbm = gbm;
-        self.surface = surface;
-        self.framebuffers.clear();
+        // Old buffers, then the old surface, then the old device: each frees
+        // through the descriptor the next one owns.
         self.locked.clear();
+        self.surface = surface;
+        self.gbm = gbm;
+        self.framebuffers.clear();
         self.device_fd = device.raw_fd();
         self.paused = false;
         Ok(())

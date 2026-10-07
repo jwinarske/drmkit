@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 use std::os::fd::{AsFd, OwnedFd};
+use std::sync::Arc;
 
 use drmkit_core::Device;
 
@@ -16,7 +17,15 @@ use crate::GbmError;
 /// open file description, so the GEM namespace is the one the DRM device sees:
 /// a buffer allocated here can be scanned out there.
 pub struct GbmDevice {
-    inner: gbm::Device<OwnedFd>,
+    inner: gbm::Device<Arc<OwnedFd>>,
+    /// The descriptor `inner` was opened on, shared with every buffer
+    /// allocated here.
+    ///
+    /// A GEM handle is freed through the descriptor it was allocated on, and a
+    /// buffer can outlive this device. Not every libgbm keeps a descriptor of
+    /// its own -- the SA8155P's frees through this one -- so each buffer holds
+    /// a clone, and the number stays open until the last of them is gone.
+    fd: Arc<OwnedFd>,
 }
 
 impl std::fmt::Debug for GbmDevice {
@@ -36,8 +45,9 @@ impl GbmDevice {
         let duped = device.as_fd().try_clone_to_owned().map_err(|e| {
             GbmError::Io(rustix::io::Errno::from_io_error(&e).unwrap_or(rustix::io::Errno::MFILE))
         })?;
-        let inner = gbm::Device::new(duped).map_err(|_| GbmError::NotGbmCapable)?;
-        Ok(Self { inner })
+        let fd = Arc::new(duped);
+        let inner = gbm::Device::new(Arc::clone(&fd)).map_err(|_| GbmError::NotGbmCapable)?;
+        Ok(Self { inner, fd })
     }
 
     /// Whether this device can make GBM **surfaces** at all.
@@ -102,6 +112,11 @@ impl GbmDevice {
     /// alone is how a driver ends up choosing a layout the other cannot use,
     /// and that failure surfaces at the atomic commit rather than here.
     ///
+    /// Unlike a [`GbmBuffer`](crate::GbmBuffer), the surface does not hold a
+    /// share of this device's descriptor, so the device has to outlive it and
+    /// every buffer locked from it: a libgbm that keeps no descriptor of its
+    /// own frees them through this one.
+    ///
     /// # Errors
     ///
     /// [`GbmError::Allocation`] if the format is not one GBM knows, or the
@@ -124,14 +139,29 @@ impl GbmDevice {
             .map_err(|_| GbmError::Allocation(format!("unsupported format {fourcc:#x}")))?;
         let usage = gbm::BufferObjectFlags::SCANOUT | gbm::BufferObjectFlags::RENDERING;
 
-        if !modifiers.is_empty()
-            && let Ok(surface) = self.raw().create_surface_with_modifiers2::<()>(
+        #[cfg(not(drmkit_gbm_v1))]
+        let constrained = || {
+            self.raw().create_surface_with_modifiers2::<()>(
                 width,
                 height,
                 format,
                 modifiers.iter().copied().map(gbm::Modifier::from),
                 usage,
             )
+        };
+        // v1 implies the same usage. See `build.rs` for when this is built.
+        #[cfg(drmkit_gbm_v1)]
+        let constrained = || {
+            self.raw().create_surface_with_modifiers::<()>(
+                width,
+                height,
+                format,
+                modifiers.iter().copied().map(gbm::Modifier::from),
+            )
+        };
+
+        if !modifiers.is_empty()
+            && let Ok(surface) = constrained()
         {
             // A driver with no modifier entry point falls through, the same as
             // `GbmBuffer::create_with_modifiers`. The caller reads the layout
@@ -154,7 +184,12 @@ impl GbmDevice {
         self.inner.backend_name().to_owned()
     }
 
-    pub(crate) const fn raw(&self) -> &gbm::Device<OwnedFd> {
+    pub(crate) const fn raw(&self) -> &gbm::Device<Arc<OwnedFd>> {
         &self.inner
+    }
+
+    /// A share of the descriptor, for anything that must outlive this device.
+    pub(crate) fn fd(&self) -> Arc<OwnedFd> {
+        Arc::clone(&self.fd)
     }
 }

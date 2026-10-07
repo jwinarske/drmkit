@@ -17,11 +17,13 @@ composition, and scanout.
 > tested.
 >
 > The present spine, cross-output orchestration, GBM surface sources and
-> client-side decorations have since landed. Of the 97 upstream test files, 67
-> are ported and 13 partial. The 15 still pending do **not** wait on unwritten
-> crates any more — each waits on hardware or a library this tree does not
-> have: a working GPU render node, the `vgem`, `vivid` or `vicodec` modules, or
-> NVIDIA silicon for EGL streams. [`TEST_PARITY.md`](TEST_PARITY.md) records
+> client-side decorations have since landed. Of the 107 test files upstream has
+> at v4.1.0, 68 are ported and 14 partial. Of the 22 pending, 7 arrived upstream
+> after the `4a0b64a` baseline and wait on porting its allocator and canvas
+> changes. The other 15 do **not** wait on unwritten crates — each waits on
+> hardware or a library this tree does not have: a working GPU render node, the
+> `vgem`, `vivid` or `vicodec` modules, or NVIDIA silicon for EGL streams.
+> [`TEST_PARITY.md`](TEST_PARITY.md) records
 > which, per file, and [`docs/parity-findings.md`](docs/parity-findings.md)
 > records the five findings still open, every one of them for that reason.
 > See [`plan.md`](plan.md) for the full porting plan.

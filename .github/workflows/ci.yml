@@ -124,15 +124,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # The linters compare against upstream, so upstream has to be present.
-      # Pinned to the plan's baseline: a moving reference would make this lane
-      # fail for reasons unrelated to the commit under test. Bumping the pin is
-      # a deliberate, reviewable change.
+      # Pinned to the tree TEST_PARITY.md tracks (its "Tracked tree" line): a
+      # moving reference would make this lane fail for reasons unrelated to the
+      # commit under test. Bumping the pin is a deliberate, reviewable change.
       - uses: actions/checkout@v4
         with:
           repository: jwinarske/drm-cxx
           # Full 40-character SHA: actions/checkout cannot resolve an
           # abbreviated one.
-          ref: dc2915b9f76856ea5791cb416e9facdef6262678
+          ref: f396e54f0b177f21f83c56d84917439897a17624
           path: .drm-cxx-ref
       - uses: Swatinem/rust-cache@v2
       - run: cargo xtask check --ref .drm-cxx-ref

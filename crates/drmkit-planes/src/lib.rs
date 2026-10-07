@@ -68,7 +68,7 @@ pub use output::Output;
 pub use prop::{NUM_PROPS, PropClass, PropTag};
 pub use registry::{
     BlendModeValues, ColorEncoding, ColorEncodingValues, ColorPipeline, ColorRange,
-    ColorRangeValues, PlaneCapabilities, PlaneRegistry, PlaneType,
+    ColorRangeValues, PlaneCapabilities, PlaneRegistry, PlaneType, rescale_alpha,
 };
 pub use scoring::{
     ScoreContext, WARM_STABILITY_BONUS, bandwidth_class_bonus, cost_bias, keep_priority,

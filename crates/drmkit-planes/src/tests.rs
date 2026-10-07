@@ -1385,3 +1385,72 @@ fn test_cache_unknown_is_not_a_failure() {
     assert_eq!(cache.failure_count(999, 0x1), 0);
     assert_eq!(cache.lookup(999, 0x1), None);
 }
+
+// --- Plane alpha (`test_plane_alpha.cpp`, drm-cxx#265) ----------------------
+
+const ALPHA_FULL: u64 = 0xFFFF;
+
+/// `PlaneAlphaTest.FullRangeIsIdentity`
+#[test]
+fn plane_alpha_full_range_is_identity() {
+    for value in [0, 0x4000, 0x8000, ALPHA_FULL] {
+        assert_eq!(rescale_alpha(value, ALPHA_FULL), value);
+    }
+}
+
+/// `PlaneAlphaTest.FullOpacityMapsOntoAdvertisedMaximum`
+#[test]
+fn plane_alpha_full_opacity_maps_onto_the_advertised_maximum() {
+    assert_eq!(rescale_alpha(ALPHA_FULL, 255), 255);
+    assert_eq!(rescale_alpha(ALPHA_FULL, 1023), 1023);
+    assert_eq!(rescale_alpha(ALPHA_FULL, 1), 1);
+}
+
+/// `PlaneAlphaTest.PartialAlphaKeepsItsFraction`: the reason this rescales
+/// rather than clamps.
+#[test]
+fn plane_alpha_partial_alpha_keeps_its_fraction() {
+    assert_eq!(rescale_alpha(0x8000, 255), 128);
+    assert_eq!(rescale_alpha(0x4000, 255), 64);
+    assert_eq!(rescale_alpha(0x8000, 1023), 512);
+    assert_eq!(rescale_alpha(0x4000, 1023), 256);
+}
+
+/// `PlaneAlphaTest.ZeroStaysZero`
+#[test]
+fn plane_alpha_zero_stays_zero() {
+    for max in [255, 1023, 1] {
+        assert_eq!(rescale_alpha(0, max), 0);
+    }
+}
+
+/// `PlaneAlphaTest.OversizedInputSaturatesRatherThanOverflowing`
+#[test]
+fn plane_alpha_oversized_input_saturates() {
+    assert_eq!(rescale_alpha(0x1_0000, 255), 255);
+    assert_eq!(rescale_alpha(0xFFFF_FFFF, 255), 255);
+    assert_eq!(rescale_alpha(0xFFFF_FFFF, ALPHA_FULL), ALPHA_FULL);
+}
+
+/// `PlaneAlphaTest.MonotonicNonDecreasing`
+#[test]
+fn plane_alpha_is_monotonic_and_bounded() {
+    for max in [1, 15, 255, 1023, 4095] {
+        let mut previous = 0;
+        for value in (0..=ALPHA_FULL).step_by(97) {
+            let got = rescale_alpha(value, max);
+            assert!(got >= previous, "max={max} value={value}");
+            assert!(got <= max, "max={max} value={value}");
+            previous = got;
+        }
+    }
+}
+
+/// `PlaneAlphaTest.RespectsEachPlanesOwnAdvertisedRange`
+#[test]
+fn plane_alpha_respects_each_planes_own_range() {
+    assert_eq!(rescale_alpha(ALPHA_FULL, 0x7FFF), 0x7FFF);
+    assert_eq!(rescale_alpha(0x8000, 0x7FFF), 0x4000);
+    assert_eq!(rescale_alpha(ALPHA_FULL / 2, 1), 0);
+    assert_eq!(rescale_alpha(ALPHA_FULL, 1), 1);
+}

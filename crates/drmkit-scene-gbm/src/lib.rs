@@ -263,21 +263,21 @@ impl GbmSurfaceSource {
             }
         })?;
         let modifier: u64 = buffer.modifier().into();
-        // LINEAR and the INVALID sentinel go as "no modifier" so the driver
-        // takes its default path, the same rule the external import follows.
-        let trivial = modifier == 0 || modifier == drmkit_fmt::Modifier::INVALID.0;
+        // The same rule every import follows; see
+        // `drmkit_core::framebuffer_modifier`.
+        let declared = drmkit_core::framebuffer_modifier(device, modifier);
         let layout = Layout {
             width: self.format.width,
             height: self.format.height,
             fourcc,
-            modifier: (!trivial).then_some(modifier),
+            modifier: declared,
             handle,
             pitch: buffer.stride(),
         };
-        let flags = if trivial {
-            FbCmd2Flags::empty()
-        } else {
+        let flags = if declared.is_some() {
             FbCmd2Flags::MODIFIERS
+        } else {
+            FbCmd2Flags::empty()
         };
 
         let fb = device

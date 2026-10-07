@@ -6,6 +6,8 @@
 //! Port of `src/modeset/atomic.{hpp,cpp}`.
 
 use std::os::fd::{FromRawFd as _, OwnedFd};
+use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use drm::control::{AtomicCommitFlags, Device as ControlDevice, atomic::AtomicModeReq};
 
@@ -159,9 +161,11 @@ impl AtomicRequest {
     pub fn test(&self, device: &Device, flags: AtomicCommitFlags) -> Result<()> {
         let test_flags =
             (flags - AtomicCommitFlags::PAGE_FLIP_EVENT) | AtomicCommitFlags::TEST_ONLY;
-        device
+        let result = device
             .atomic_commit(test_flags, self.build()?)
-            .map_err(|e| CoreError::from_io(&e))
+            .map_err(|e| CoreError::from_io(&e));
+        self.trace(device, &result, "test");
+        result
     }
 
     /// Apply the request.
@@ -171,11 +175,102 @@ impl AtomicRequest {
     /// [`CoreError::NotMaster`] if the caller is not DRM master — the one
     /// failure a scene suspends on (invariant 2) — otherwise [`CoreError::Io`].
     pub fn commit(&self, device: &Device, flags: AtomicCommitFlags) -> Result<()> {
-        device
+        let result = device
             .atomic_commit(flags, self.build()?)
-            .map_err(|e| CoreError::from_io(&e))
+            .map_err(|e| CoreError::from_io(&e));
+        self.trace(device, &result, "commit");
+        result
+    }
+
+    /// Log every write this request carries, property ids resolved to names.
+    ///
+    /// A rejected atomic request says only that the kernel disliked
+    /// *something*, and nothing in the error names which property. No-op
+    /// unless `DRM_ATOMIC_DEBUG` or `DRM_ALLOC_DEBUG` is set -- upstream's
+    /// switches, so one variable works on both implementations -- and then
+    /// routed through [`log_channel!`](drmkit_log::log_channel), since the
+    /// variable is already the opt-in. `why` labels the dump.
+    ///
+    /// [`test`](Self::test) and [`commit`](Self::commit) call it themselves on
+    /// a rejection, and on the first request accepted after one: a rejected
+    /// request beside an accepted one is what shows the difference, where a
+    /// rejection alone is read as whatever looks suspicious. Upstream wires
+    /// the same two dumps into its allocator and scene; here every request
+    /// goes through these two methods, so wiring them once covers the
+    /// allocator, the present backend and the cursor alike.
+    pub fn dump(&self, device: &Device, why: &str) {
+        if !*ATOMIC_DEBUG {
+            return;
+        }
+        let name_of = |property_id: u32| {
+            let handle = drm::control::property::Handle::from(
+                drm::control::RawResourceHandle::new(property_id)?,
+            );
+            let info = device.get_property(handle).ok()?;
+            Some(info.name().to_string_lossy().into_owned())
+        };
+        for line in self.dump_lines(why, name_of) {
+            drmkit_log::log_channel!(drmkit_log::LogLevel::Debug, "{line}");
+        }
+    }
+
+    /// The dump's text, with names supplied by `name_of`.
+    pub(crate) fn dump_lines(
+        &self,
+        why: &str,
+        name_of: impl Fn(u32) -> Option<String>,
+    ) -> Vec<String> {
+        let count = self.writes.len();
+        let mut lines = Vec::with_capacity(count + 1);
+        lines.push(format!(
+            "[atomic] {why}: {count} propert{} in this request",
+            if count == 1 { "y" } else { "ies" }
+        ));
+        for write in &self.writes {
+            let name = name_of(write.property_id).unwrap_or_else(|| "?".to_owned());
+            lines.push(format!(
+                "[atomic]   obj={:<4} {name:<24} = {}",
+                write.object_id, write.value
+            ));
+        }
+        lines
+    }
+
+    /// Dump a rejection, and the first acceptance that follows one.
+    fn trace(&self, device: &Device, result: &Result<()>, what: &str) {
+        if !*ATOMIC_DEBUG {
+            return;
+        }
+        match result {
+            Ok(()) => {
+                if SAW_REJECTION.swap(false, Ordering::Relaxed) {
+                    self.dump(
+                        device,
+                        &format!("{what} accepted (first after a rejection)"),
+                    );
+                }
+            }
+            // Losing master is not a property problem; the dump would only
+            // bury the one that is.
+            Err(CoreError::NotMaster) => {}
+            Err(error) => {
+                SAW_REJECTION.store(true, Ordering::Relaxed);
+                self.dump(device, &format!("{what} rejected ({error})"));
+            }
+        }
     }
 }
+
+/// Whether request dumps are on: `DRM_ATOMIC_DEBUG`, or `DRM_ALLOC_DEBUG`,
+/// which turns on both so the allocator's trace and the requests arrive
+/// together. Read once.
+static ATOMIC_DEBUG: LazyLock<bool> = LazyLock::new(|| {
+    std::env::var_os("DRM_ATOMIC_DEBUG").is_some() || std::env::var_os("DRM_ALLOC_DEBUG").is_some()
+});
+
+/// Set by a rejected request, cleared by the next accepted one, so that one
+/// can be dumped alongside it.
+static SAW_REJECTION: AtomicBool = AtomicBool::new(false);
 
 /// Commit `build`'s request and collect the CRTC's out-fence.
 ///

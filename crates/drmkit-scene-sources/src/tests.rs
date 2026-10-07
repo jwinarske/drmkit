@@ -2481,11 +2481,12 @@ fn a_cached_key_hits_until_its_shape_changes_vkms() {
 
 /// An explicit modifier reaches the kernel, and so does its absence.
 ///
-/// The two take different paths: a non-trivial modifier sets the `MODIFIERS`
-/// flag and is declared per plane, while `LINEAR` and the `INVALID` sentinel
-/// are passed as "no modifier" so the driver takes its default. Both have to
-/// produce a framebuffer, and a cache that conflated them would send one down
-/// the other's path.
+/// Which path each takes is `drmkit_core::framebuffer_modifier`'s call: the
+/// `INVALID` sentinel always goes as "no modifier", and `LINEAR` is declared
+/// exactly when the driver has `DRM_CAP_ADDFB2_MODIFIERS` -- upstream's rule
+/// since `be147be`, after LCDIF-class drivers refused the declared form even
+/// for linear. Both have to produce a framebuffer, and a cache that conflated
+/// them would send one down the other's path.
 #[test]
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn an_explicit_modifier_and_its_absence_both_import_vkms() {
@@ -2503,7 +2504,7 @@ fn an_explicit_modifier_and_its_absence_both_import_vkms() {
 
     let mut cache = DmaBufSourceCache::new();
 
-    // LINEAR is passed as "no modifier": the kernel takes its default path.
+    // LINEAR: declared where the driver takes modifiers, otherwise not.
     let implicit = cache
         .get_or_create(1, &device, pool_format(), &planes)
         .expect("import with no declared modifier");
@@ -2532,6 +2533,23 @@ fn an_explicit_modifier_and_its_absence_both_import_vkms() {
         "two keys are two imports, whatever they say about modifiers"
     );
     assert_eq!(cache.len(), 2);
+
+    // GETFB2 is Linux 5.7; on an older kernel there is nothing to read back.
+    let declared = |fb_id: u32| {
+        let handle = drm::control::framebuffer::Handle::from(
+            std::num::NonZeroU32::new(fb_id).expect("non-zero"),
+        );
+        drm::control::Device::get_planar_framebuffer(&device, handle)
+            .ok()
+            .map(|info| info.modifier().map(u64::from))
+    };
+    match declared(implicit_fb) {
+        None => println!("note: no GETFB2 on this kernel; the readback is skipped"),
+        Some(modifier) if drmkit_core::supports_framebuffer_modifiers(&device) => {
+            assert_eq!(modifier, Some(0), "a LINEAR import is LINEAR");
+        }
+        Some(_) => {}
+    }
 }
 
 /// The pool lends its acquired import's descriptors, like the other two.

@@ -43,7 +43,7 @@ const DEFAULT_COLOR_RANGE: &str = "YCbCr limited range";
 #[derive(Debug, Default)]
 pub struct PlanePropertyMap {
     /// `plane_id` to its resolved tag ids.
-    planes: HashMap<u32, HashMap<PropTag, u32>>,
+    pub(crate) planes: HashMap<u32, HashMap<PropTag, u32>>,
     /// Properties the kernel marks immutable, which a commit must never write.
     ///
     /// Writing one is rejected with `EINVAL` whatever the value, so a single
@@ -68,6 +68,9 @@ pub struct PlanePropertyMap {
     /// with `EINVAL` -- taking the whole frame down with it, every correctly
     /// programmed layer included.
     pub(crate) zpos_range: HashMap<u32, (u64, u64)>,
+    /// The largest `alpha` each plane advertises, where it is not the full 16
+    /// bits. Layers carry 16-bit alpha; see [`drmkit_planes::rescale_alpha`].
+    pub(crate) alpha_max: HashMap<u32, u64>,
     /// Planes whose colorimetry the kernel has already taken.
     ///
     /// These properties are sticky across clients, so they have to be written
@@ -127,6 +130,9 @@ impl PlanePropertyMap {
 
         if let Ok(Some(range)) = store.range(plane_id, PropTag::Zpos.name()) {
             self.zpos_range.insert(plane_id, range);
+        }
+        if let Ok(Some((_, max))) = store.range(plane_id, PropTag::Alpha.name()) {
+            self.alpha_max.insert(plane_id, max);
         }
 
         if let Ok(id) = store.property_id(plane_id, "FB_DAMAGE_CLIPS") {
@@ -229,22 +235,25 @@ pub fn emit_layer(
         let Some(property_id) = map.property_id(plane_id, tag) else {
             continue;
         };
-        // Before the baseline check, so the diff compares what the kernel will
-        // be told rather than what the caller asked for.
-        let value = if tag == PropTag::Zpos {
-            map.clamp_zpos(plane_id, value)
-        } else {
-            value
-        };
         // An externally bound layer's FB_ID is set up by the producer's
         // extension stack. Writing it from here fights that, so suppress it
         // even if something has stuffed one into the property bag.
         if layer.is_externally_bound() && tag == PropTag::FbId {
             continue;
         }
+        // The diff compares what the caller asked for, because that is what
+        // the baseline records; the plane's own range is applied to what goes
+        // out. The mapping is fixed per plane, so equal requests always mean
+        // equal writes -- and comparing a rescaled value against a raw
+        // baseline would rewrite alpha on every frame of an 8-bit plane.
         if !needs_write(tag, value, baseline) {
             continue;
         }
+        let value = match tag {
+            PropTag::Zpos => map.clamp_zpos(plane_id, value),
+            PropTag::Alpha => map.rescale_alpha(plane_id, value),
+            _ => value,
+        };
         request.add_property(plane_id, property_id, value)?;
         written.properties += 1;
         if tag == PropTag::FbId {
@@ -269,6 +278,19 @@ pub struct LayerWrites {
 }
 
 impl PlanePropertyMap {
+    /// A layer's 16-bit alpha, on the scale this plane advertises.
+    ///
+    /// Every write of a layer's properties goes through
+    /// [`emit_layer`], so this one call covers the allocator's tests, the real
+    /// commit and a pinned layer alike -- upstream needed two fixes to reach
+    /// all three.
+    #[must_use]
+    pub fn rescale_alpha(&self, plane_id: u32, value: u64) -> u64 {
+        self.alpha_max
+            .get(&plane_id)
+            .map_or(value, |&max| drmkit_planes::rescale_alpha(value, max))
+    }
+
     /// Bring a derived zpos inside what the plane will actually take.
     ///
     /// Only zpos is clamped, and only against an unsigned range. Every other

@@ -389,3 +389,29 @@ impl PlaneRegistry {
         self.planes.is_empty()
     }
 }
+
+/// Map a 16-bit layer alpha onto the range a plane advertises.
+///
+/// Layers carry a 16-bit alpha because that is what the DRM documentation
+/// describes, but the range is the driver's to declare: vendor drivers ship
+/// 8-bit alpha advertising `[0, 255]`, and writing `0xFFFF` to one of those
+/// fails the whole atomic commit with `EINVAL` -- which a `TEST_ONLY` reports
+/// only as "this assignment does not fit", so it surfaces as a dropped layer
+/// that mentions nothing about alpha (drm-cxx#265).
+///
+/// Rescaled rather than clamped: alpha is a fraction of full opacity, so half
+/// alpha must become half of `alpha_max`. Clamping would turn every partially
+/// transparent layer opaque on an 8-bit plane, and would agree with this on
+/// exactly one value, full opacity, which is the one value most testing uses.
+/// Rounds to nearest, so full opacity lands exactly on `alpha_max`; the
+/// identity for a plane advertising the full 16 bits; saturates an oversized
+/// input rather than scaling past the maximum.
+#[must_use]
+pub const fn rescale_alpha(value: u64, alpha_max: u64) -> u64 {
+    const FULL: u64 = 0xFFFF;
+    let clamped = if value < FULL { value } else { FULL };
+    if alpha_max >= FULL {
+        return clamped;
+    }
+    (clamped * alpha_max + FULL / 2) / FULL
+}

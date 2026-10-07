@@ -531,3 +531,55 @@ fn signed_ranges_are_not_reported_as_ranges_vkms() {
         "CRTC_X is a signed range and must not be reported as an unsigned one"
     );
 }
+
+/// A request dump names every write, so a rejection can be read rather than
+/// bisected.
+///
+/// An `EINVAL` from an atomic commit names no property; upstream lost three
+/// sessions to one out-of-range value before it had this (`eb065b2`). An id
+/// the device cannot name is shown as `?` rather than dropped, since the
+/// unnameable one may be the culprit.
+#[test]
+fn a_request_dump_names_every_write() {
+    let mut request = AtomicRequest::new();
+    request.add_property(55, 10, 74).expect("write");
+    request.add_property(55, 11, 66).expect("write");
+    let names = |id: u32| match id {
+        10 => Some("FB_ID".to_owned()),
+        _ => None,
+    };
+
+    let lines = request.dump_lines("test rejected", names);
+
+    assert_eq!(
+        lines[0],
+        "[atomic] test rejected: 2 properties in this request"
+    );
+    assert!(
+        lines[1].contains("obj=55") && lines[1].contains("FB_ID") && lines[1].ends_with("= 74")
+    );
+    assert!(lines[2].contains('?') && lines[2].ends_with("= 66"));
+    assert_eq!(
+        AtomicRequest::new().dump_lines("empty", names)[0],
+        "[atomic] empty: 0 properties in this request"
+    );
+}
+
+/// Which modifier a framebuffer registration declares (upstream `be147be`).
+///
+/// `INVALID` never: it means "not saying". `LINEAR` only where the driver takes
+/// modifiers -- i.MX LCDIF and tilcdc refuse the declared form even for the
+/// linear layout that is their only one. Anything else always, and the
+/// capability is not even asked about.
+#[test]
+fn which_modifier_a_framebuffer_declares() {
+    use crate::device::declared_modifier;
+    const INVALID: u64 = (1 << 56) - 1;
+    const TILED: u64 = 0x0600_0000_0000_0001;
+    let never = || -> bool { panic!("only LINEAR depends on the capability") };
+
+    assert_eq!(declared_modifier(INVALID, never), None);
+    assert_eq!(declared_modifier(TILED, never), Some(TILED));
+    assert_eq!(declared_modifier(0, || true), Some(0));
+    assert_eq!(declared_modifier(0, || false), None);
+}

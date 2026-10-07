@@ -47,7 +47,7 @@ mod error;
 mod property;
 
 pub use atomic::{AtomicRequest, PropertyWrite, commit_with_out_fence};
-pub use device::{Device, PropertyBlob};
+pub use device::{Device, PropertyBlob, framebuffer_modifier, supports_framebuffer_modifiers};
 pub use error::{CoreError, Result};
 pub use property::{ObjectType, PropertyInfo, PropertyStore};
 

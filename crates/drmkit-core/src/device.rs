@@ -285,3 +285,47 @@ impl AsFd for Device {
 
 impl drm::Device for Device {}
 impl drm::control::Device for Device {}
+
+/// The modifier to declare when registering a framebuffer, or `None` to
+/// take the legacy path, which leaves the layout to the driver.
+///
+/// Port of upstream's `addfb2_needs_modifiers` (`be147be`), so every
+/// import agrees on it:
+/// * `INVALID` never declares: it means "no explicit modifier", and passing
+///   it with `DRM_MODE_FB_MODIFIERS` is ill-formed.
+/// * `LINEAR` declares only when the driver took `DRM_CAP_ADDFB2_MODIFIERS`.
+///   Drivers without it (i.MX LCDIF, tilcdc) reject the flag outright, even
+///   for linear -- which is exactly their implicit layout, so the legacy
+///   path imports the same buffer. Where the cap exists it is declared,
+///   because "no modifier" there means the driver's default, and that is
+///   not promised to be linear.
+/// * Anything else always declares. A driver without the cap cannot scan
+///   it out either way, and the kernel says so.
+#[must_use]
+pub fn framebuffer_modifier(device: &impl drm::Device, modifier: u64) -> Option<u64> {
+    declared_modifier(modifier, || supports_framebuffer_modifiers(device))
+}
+
+/// [`framebuffer_modifier`]'s rule, with the capability supplied. Asked only
+/// for `LINEAR`, the one case it decides.
+pub(crate) fn declared_modifier(
+    modifier: u64,
+    takes_modifiers: impl FnOnce() -> bool,
+) -> Option<u64> {
+    const LINEAR: u64 = 0;
+    const INVALID: u64 = (1 << 56) - 1;
+    match modifier {
+        INVALID => None,
+        LINEAR => takes_modifiers().then_some(LINEAR),
+        _ => Some(modifier),
+    }
+}
+
+/// Whether the driver accepts `DRM_MODE_FB_MODIFIERS`
+/// (`DRM_CAP_ADDFB2_MODIFIERS`).
+#[must_use]
+pub fn supports_framebuffer_modifiers(device: &impl drm::Device) -> bool {
+    device
+        .get_driver_capability(drm::DriverCapability::AddFB2Modifiers)
+        .is_ok_and(|value| value != 0)
+}

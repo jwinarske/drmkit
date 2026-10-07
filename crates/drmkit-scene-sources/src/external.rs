@@ -235,23 +235,22 @@ impl ExternalDmaBufSource {
             pitches[index] = plane.pitch;
         }
 
-        // A non-trivial modifier must be declared; LINEAR and the INVALID
-        // sentinel are passed as "no modifier" so the kernel takes its default
-        // path rather than being told the buffer is explicitly linear.
-        let trivial = format.modifier == 0 || format.modifier == drmkit_fmt_invalid();
+        // Which path the modifier takes is the device's to decide; see
+        // `drmkit_core::framebuffer_modifier`.
+        let declared = drmkit_core::framebuffer_modifier(device, format.modifier);
         let layout = ImportedLayout {
             width: format.width,
             height: format.height,
             fourcc,
-            modifier: (!trivial).then_some(format.modifier),
+            modifier: declared,
             handles,
             offsets,
             pitches,
         };
-        let flags = if trivial {
-            FbCmd2Flags::empty()
-        } else {
+        let flags = if declared.is_some() {
             FbCmd2Flags::MODIFIERS
+        } else {
+            FbCmd2Flags::empty()
         };
 
         let fb = device
@@ -412,12 +411,6 @@ impl Drop for ExternalDmaBufSource {
         // slot that will never come back.
         self.fire_on_release_once();
     }
-}
-
-/// The `DRM_FORMAT_MOD_INVALID` sentinel, which is treated as linear.
-const fn drmkit_fmt_invalid() -> u64 {
-    // `fourcc_mod_code(NONE, (1 << 56) - 1)`.
-    (1 << 56) - 1
 }
 
 /// Minimal adapter so `Drop` can issue one ioctl without holding a `&Device`.

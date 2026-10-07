@@ -1756,3 +1756,70 @@ fn a_far_corner_past_i32_saturates_rather_than_wrapping() {
 fn no_damage_converts_to_no_rectangles() {
     assert!(crate::commit::damage_rects(&[]).is_empty());
 }
+
+/// A plane with an 8-bit alpha range, as `emit_layer` sees it.
+fn eight_bit_alpha_plane() -> PlanePropertyMap {
+    let mut map = PlanePropertyMap::new();
+    map.planes.insert(
+        7,
+        [(PropTag::FbId, 101), (PropTag::Alpha, 102)]
+            .into_iter()
+            .collect(),
+    );
+    map.alpha_max.insert(7, 255);
+    map
+}
+
+fn alpha_layer(alpha: u64) -> drmkit_planes::Layer {
+    let mut layer = drmkit_planes::Layer::new();
+    layer
+        .set_property(PropTag::FbId, 5)
+        .set_property(PropTag::Alpha, alpha);
+    layer
+}
+
+/// Alpha reaches the wire on the plane's own scale (drm-cxx#265).
+///
+/// Measured upstream on a vendor driver advertising `alpha [0, 255]`: the
+/// layer's `0xFFFF` failed every commit with `EINVAL`, and the frame surfaced
+/// as a dropped layer. Half alpha must stay half, not clamp to opaque.
+#[test]
+fn alpha_is_written_on_the_planes_scale() {
+    let map = eight_bit_alpha_plane();
+    for (asked, sent) in [(0xFFFF, 255), (0x8000, 128), (0, 0)] {
+        let mut request = drmkit_core::AtomicRequest::with_capacity(4);
+        emit_layer(&mut request, &map, 7, &alpha_layer(asked), None).expect("emit");
+        let alpha = request
+            .writes()
+            .iter()
+            .find(|write| write.property_id == 102)
+            .map(|write| write.value);
+        assert_eq!(alpha, Some(sent), "alpha {asked:#x} on an 8-bit plane");
+    }
+}
+
+/// A steady frame on an 8-bit plane does not rewrite alpha.
+///
+/// The baseline records what the layer asked for, not what was sent, so the
+/// diff has to compare like with like. Comparing the rescaled 255 against a
+/// recorded 0xFFFF would find a change on every frame.
+#[test]
+fn a_steady_frame_does_not_rewrite_rescaled_alpha() {
+    let map = eight_bit_alpha_plane();
+    let layer = alpha_layer(0xFFFF);
+    let baseline = layer.snapshot();
+    let mut request = drmkit_core::AtomicRequest::with_capacity(4);
+    let written = emit_layer(&mut request, &map, 7, &layer, Some(&baseline)).expect("emit");
+    assert_eq!(
+        written.properties, 1,
+        "only FB_ID, which is written every frame by contract"
+    );
+}
+
+/// A plane advertising no alpha range gets the layer's value as it stands.
+#[test]
+fn alpha_on_a_plane_without_a_range_is_left_alone() {
+    let mut map = eight_bit_alpha_plane();
+    map.alpha_max.clear();
+    assert_eq!(map.rescale_alpha(7, 0x8000), 0x8000);
+}

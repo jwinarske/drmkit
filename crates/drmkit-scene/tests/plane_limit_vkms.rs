@@ -33,6 +33,14 @@ fn the_canvas_counts_against_the_plane_limit_vkms() {
         drmkit_testkit::skipped("no canvas");
         return;
     }
+    if fx.eligible_planes() <= LIMIT {
+        drmkit_testkit::skipped(&format!(
+            "{} plane(s) on this CRTC: a limit of {LIMIT} cannot bite",
+            fx.eligible_planes()
+        ));
+        fx.teardown();
+        return;
+    }
     let (w, h) = fx.mode_size();
 
     // A background and three disjoint tiles, each its own color.
@@ -75,9 +83,12 @@ fn the_canvas_counts_against_the_plane_limit_vkms() {
         "the settled frame should hold at one warm-start test: {second:?}"
     );
     for (index, ((x, y), color)) in probes.into_iter().zip(colors).enumerate() {
+        let Some(pixel) = fx.pixel_at(x, y) else {
+            println!("note: the CRTC cannot be read back; pixels unchecked");
+            break;
+        };
         assert_eq!(
-            fx.pixel_at(x, y),
-            color,
+            pixel, color,
             "layer {index} is missing from the committed frame"
         );
     }

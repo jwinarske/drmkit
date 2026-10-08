@@ -1696,3 +1696,111 @@ fn the_stack_skips_what_it_cannot_rank() {
     assert_eq!(e[1].written, None);
     assert_eq!(e[2].written, Some(0));
 }
+
+// --- plane order (drm-cxx 03bc1d7) -------------------------------------------
+
+use crate::plane_order::{Choice, PlaneOrder, Position, plane_order_consistent};
+
+/// Five layers, three planes that take anything, a canvas anywhere: two
+/// placed, and the canvas sits between the run and the layers above it.
+#[test]
+fn plane_order_leaves_a_canvas_plane_for_the_run() {
+    let order = PlaneOrder::new(5, 3, |_, _| true);
+    let hosts = |_: usize| true;
+    let choice = order
+        .choose(5, None, Some(&hosts), |_| 1)
+        .expect("a split exists");
+    assert_eq!(
+        choice,
+        Choice {
+            run: 0..3,
+            canvas: Some(0)
+        }
+    );
+    assert_eq!(order.plane_of(3, &choice), Some(1));
+    assert_eq!(order.plane_of(4, &choice), Some(2));
+    assert_eq!(order.plane_of(1, &choice), None);
+}
+
+/// Without a canvas the run needs no plane of its own, so one more layer fits.
+#[test]
+fn plane_order_without_a_canvas_drops_the_run() {
+    let order = PlaneOrder::new(5, 3, |_, _| true);
+    let choice = order.choose(5, None, None, |_| 1).expect("a split exists");
+    assert_eq!(choice.run.len(), 2);
+    assert_eq!(choice.canvas, None);
+}
+
+/// A forced-composited layer has to be inside the run, whatever it costs.
+#[test]
+fn plane_order_runs_cover_the_forced_layers() {
+    let order = PlaneOrder::new(4, 4, |i, _| i != 3);
+    let hosts = |_: usize| true;
+    let choice = order
+        .choose(4, Some(&(1..2)), Some(&hosts), |i| {
+            if i == 1 { 1000 } else { 1 }
+        })
+        .expect("a split exists");
+    assert!(
+        choice.run.contains(&1) && choice.run.contains(&3),
+        "{choice:?}"
+    );
+}
+
+/// No host between the halves: fewer placed rather than a canvas out of
+/// order.
+#[test]
+fn plane_order_needs_a_host_between_the_halves() {
+    let order = PlaneOrder::new(4, 3, |_, _| true);
+    // Only the top plane hosts the canvas, so the run must reach the top.
+    let hosts = |j: usize| j == 2;
+    let choice = order
+        .choose(4, None, Some(&hosts), |_| 1)
+        .expect("a split exists");
+    assert_eq!(
+        choice,
+        Choice {
+            run: 2..4,
+            canvas: Some(2)
+        }
+    );
+}
+
+const fn stacked_at(zpos: u64, plane: Option<u32>, on_canvas: bool) -> Position {
+    Position {
+        zpos,
+        plane,
+        on_canvas,
+    }
+}
+
+#[test]
+fn plane_order_consistency() {
+    // In order, with the run on a canvas in between.
+    assert!(plane_order_consistent(&[
+        stacked_at(0, Some(31), false),
+        stacked_at(1, Some(32), true),
+        stacked_at(2, Some(32), true),
+        stacked_at(3, Some(33), false),
+    ]));
+    // Restacked: the cached planes now invert it.
+    assert!(!plane_order_consistent(&[
+        stacked_at(1, Some(31), false),
+        stacked_at(0, Some(32), false),
+    ]));
+    // Two different zpos on one plane only work inside the canvas.
+    assert!(!plane_order_consistent(&[
+        stacked_at(0, Some(32), false),
+        stacked_at(1, Some(32), true),
+    ]));
+    // Composited with nowhere to stack it.
+    assert!(!plane_order_consistent(&[
+        stacked_at(0, None, true),
+        stacked_at(1, Some(32), false),
+    ]));
+    // Equal zpos ask for no order.
+    assert!(plane_order_consistent(&[
+        stacked_at(1, Some(33), false),
+        stacked_at(1, Some(31), false),
+    ]));
+}

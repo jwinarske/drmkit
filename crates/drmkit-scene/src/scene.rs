@@ -1071,6 +1071,21 @@ impl LayerScene {
         let reserved = canvas_reservation(self.canvas.is_some(), refs, registry, crtc_index);
         let already_claimed = !reserved.is_empty();
         self.allocator.set_reserved_planes(&reserved);
+        // Where planes stack by id the allocator picks the canvas plane
+        // itself, so it has to know which ones can carry it, and arms it in
+        // its tests.
+        let hosts: Vec<u32> = self.canvas.as_ref().map_or_else(Vec::new, |canvas| {
+            registry
+                .force_disable_candidates(crtc_index)
+                .filter(|plane| plane.supports_format(canvas.fourcc()))
+                .map(|plane| plane.id)
+                .collect()
+        });
+        let canvas_layer = self
+            .canvas
+            .as_ref()
+            .and_then(|canvas| lower_canvas(canvas, self.crtc_id, self.canvas_zpos()));
+        self.allocator.set_canvas(&hosts, canvas_layer.as_ref());
 
         let mut allocation = match self
             .allocator
@@ -1084,7 +1099,14 @@ impl LayerScene {
             Err(TestFailure::Rejected) => drmkit_planes::Allocation::default(),
         };
 
-        if self.canvas.is_none() || already_claimed || allocation.composited.is_empty() {
+        // Planes stacked by id: the allocator left the canvas the one plane
+        // between the run's neighbors, and already tested with it armed there.
+        // A spare held back here would sit wherever its id puts it.
+        if self.canvas.is_none()
+            || already_claimed
+            || allocation.composited.is_empty()
+            || drmkit_planes::stacks_by_plane_id(registry, crtc_index)
+        {
             return Ok(allocation);
         }
         let Some(spare) = registry
@@ -1161,10 +1183,25 @@ impl LayerScene {
         // A plane the assignment did not take. Cursor planes are excluded for
         // the same reason they are never force-disabled: they belong to the
         // cursor path.
-        let plane_id = registry
-            .force_disable_candidates(crtc_index)
-            .map(|plane| plane.id)
-            .find(|id| allocation.assignment.get(*id).is_none())?;
+        //
+        // Where planes stack by id, the allocator's pick is the only plane
+        // that stacks the canvas between its neighbors; without one, the
+        // topmost free plane is the closest to "above every layer".
+        let free = |id: &u32| allocation.assignment.get(*id).is_none();
+        let plane_id = if drmkit_planes::stacks_by_plane_id(registry, crtc_index) {
+            self.allocator.canvas_plane().filter(free).or_else(|| {
+                registry
+                    .force_disable_candidates(crtc_index)
+                    .map(|plane| plane.id)
+                    .filter(free)
+                    .max()
+            })?
+        } else {
+            registry
+                .force_disable_candidates(crtc_index)
+                .map(|plane| plane.id)
+                .find(free)?
+        };
 
         // Above every layer that did get a plane, and above anything the
         // composited layers themselves asked for. A canvas that lands at the
@@ -1666,7 +1703,9 @@ pub(crate) fn canvas_reservation(
     registry: &PlaneRegistry,
     crtc_index: u32,
 ) -> Vec<u32> {
-    if !has_canvas {
+    // Planes stacked by id: the allocator places the canvas itself, between
+    // the layers it carries.
+    if !has_canvas || drmkit_planes::stacks_by_plane_id(registry, crtc_index) {
         return Vec::new();
     }
     let candidates: Vec<&drmkit_planes::PlaneCapabilities> =

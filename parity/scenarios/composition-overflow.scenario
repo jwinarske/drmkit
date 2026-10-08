@@ -1,13 +1,13 @@
 # T7-006 -- more layers than planes
 #
 # *** This scenario does NOT diff clean, and is not part of the clean set. ***
-# It is drm-cxx#240: on a driver whose planes have no settable zpos, the
-# composition canvas is placed below the layers it carries. Both sides get it
-# wrong and they get it wrong differently -- upstream puts the canvas on
-# plane[1], under all eight overlays; the port puts it on plane[8], above
-# l1..l7 but still under l8 on plane[9]. One plane too low. The scenario is
-# kept because it is the reproduction, and it is what will show the fix when
-# upstream decides. run.sh will report it dirty until then.
+# It was the reproduction for drm-cxx#240: on a driver whose planes have no
+# settable zpos, the composition canvas was placed below the layers it
+# carries. drm-cxx 03bc1d7 fixed that and the port follows: both sides now
+# composite the bottom run (bg, l1..l3) on plane[0], under l4..l11. What still
+# differs is the canvas rework not yet ported -- upstream's second TEST_ONLY
+# with the canvas armed (#332), and its warm start keeping the canvas after
+# the `del` (6e58d23) where the port retires it. See P-42.
 #
 # Not a corner of the fleet: 773 of 1001 atomic devices in the drmdb corpus
 # (77%) have no plane whose zpos can be written -- i915 358, amdgpu 211,

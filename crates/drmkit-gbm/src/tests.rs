@@ -10,6 +10,9 @@ use drmkit_fmt::fourcc;
 
 use super::{GbmBuffer, GbmDevice, GbmError};
 
+/// `DRM_FORMAT_MOD_INVALID`: the driver not saying which layout it chose.
+const INVALID_MODIFIER: u64 = (1 << 56) - 1;
+
 /// DRM master is per open file description, so card-dependent cases serialize.
 static CARD_LOCK: Mutex<()> = Mutex::new(());
 
@@ -192,10 +195,13 @@ fn a_constrained_allocation_comes_back_in_a_listed_modifier() {
     let buffer = GbmBuffer::create_with_modifiers(&gbm, 64, 64, fourcc::ARGB8888, &[LINEAR])
         .expect("allocate LINEAR");
 
-    assert_eq!(
-        buffer.modifier(),
-        LINEAR,
-        "the driver was offered one layout and reported another"
+    // INVALID is the driver not saying, which is not the same as reporting
+    // another layout: Mesa's fallback on a device it could not load a driver
+    // for (the CI lane's vkms) reports it for every buffer, constrained or not.
+    assert!(
+        matches!(buffer.modifier(), LINEAR | INVALID_MODIFIER),
+        "the driver was offered LINEAR and reported {:#x}",
+        buffer.modifier()
     );
     assert_eq!(buffer.width(), 64);
     assert_eq!(buffer.height(), 64);
@@ -285,12 +291,16 @@ fn every_honored_layout_comes_back_as_asked() {
 
     let mut honored = Vec::new();
     let mut substituted = std::collections::BTreeSet::new();
+    let mut linear_reported = None;
     for &asked in &candidates {
         let Ok(buffer) = GbmBuffer::create_with_modifiers(&gbm, 64, 64, fourcc::ARGB8888, &[asked])
         else {
             continue;
         };
         let got = buffer.modifier();
+        if asked == 0 {
+            linear_reported = Some(got);
+        }
         if got == asked {
             honored.push(asked);
         } else {
@@ -302,10 +312,18 @@ fn every_honored_layout_comes_back_as_asked() {
     }
     println!("note: honored layouts {honored:x?}, substitutes seen {substituted:x?}");
 
-    assert!(
-        honored.contains(&0),
-        "every driver can allocate linear, and asking for it alone must get it"
-    );
+    // Every driver can allocate linear, so asking for it alone must get it --
+    // unless the driver reports no modifiers at all (INVALID, as Mesa's
+    // fallback does in the CI lane), in which case nothing here can be read
+    // and only the DRMKIT_MIN_LAYOUTS floor below says anything.
+    match linear_reported {
+        Some(INVALID_MODIFIER) => println!("note: this driver reports no modifiers"),
+        reported => assert_eq!(
+            reported,
+            Some(0),
+            "every driver can allocate linear, and asking for it alone must get it"
+        ),
+    }
     if let Ok(minimum) = std::env::var("DRMKIT_MIN_LAYOUTS") {
         let minimum: usize = minimum.parse().expect("DRMKIT_MIN_LAYOUTS is a number");
         assert!(

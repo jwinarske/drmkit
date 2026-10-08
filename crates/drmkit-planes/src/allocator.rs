@@ -118,6 +118,19 @@ pub trait TestCommitter {
 
     /// Stop arming the plane set by [`TestCommitter::set_extra_plane`].
     fn clear_extra_plane(&mut self) {}
+
+    /// The planes the kernel has lit on `crtc_id` right now, whoever lit
+    /// them; `None` when the committer cannot tell.
+    ///
+    /// A scene asks this while it does not yet know what the kernel holds --
+    /// before its first commit lands, after a rebind or a resume -- so the
+    /// frame can turn off a plane another client left armed, as every test
+    /// already does. `None`, the default, makes the scene turn off every plane
+    /// it does not use instead, which is right but writes more.
+    fn lit_planes(&mut self, crtc_id: u32) -> Option<Vec<u32>> {
+        let _ = crtc_id;
+        None
+    }
 }
 
 /// A committer that accepts everything. For tests that care about which
@@ -384,8 +397,10 @@ pub struct Allocator {
     canvas_plane: Option<u32>,
     previous_canvas_plane: Option<u32>,
     /// The layers the last full search left unplaced, which the cached paths
-    /// composite again rather than treat as new.
+    /// composite again rather than treat as new, and the planes it had free
+    /// when it decided that.
     previous_composited: Vec<LayerId>,
+    previous_free: Vec<u32>,
 }
 
 impl Default for Allocator {
@@ -418,6 +433,7 @@ impl Allocator {
             canvas_plane: None,
             previous_canvas_plane: None,
             previous_composited: Vec::new(),
+            previous_free: Vec::new(),
         }
     }
 
@@ -483,6 +499,7 @@ impl Allocator {
         self.canvas_plane = None;
         self.previous_canvas_plane = None;
         self.previous_composited.clear();
+        self.previous_free.clear();
         self.last_committed.clear();
         self.failure_cache = TestCache::default();
     }
@@ -833,6 +850,7 @@ impl Allocator {
         self.previous_valid = !assignment.is_empty();
         self.previous_canvas_plane = self.canvas_plane;
         self.previous_composited.clone_from(&composited);
+        self.previous_free = self.free_planes(&self.previous, layers, registry, crtc_index);
 
         Ok(Allocation {
             assignment,
@@ -847,7 +865,8 @@ impl Allocator {
 
     /// Whether a layer present this frame needs a full search to have a
     /// fair shot at a plane: the previous frame did not place it, and either
-    /// did not composite it either, or a plane has come free for it.
+    /// did not composite it either, or something the last search decided on
+    /// has changed in a way that could let it place more.
     ///
     /// Both cached paths iterate the *previous* assignment to decide what to
     /// emit, so neither can place a layer that is not already in it:
@@ -857,13 +876,15 @@ impl Allocator {
     ///
     /// A layer composited last frame is not new (drm-cxx `6e58d23`): counting
     /// it as one forced a full search on every frame composition was active.
-    /// The cached paths composite it again -- unless a plane is free that a
-    /// full search could put one of them on. Upstream keeps the run on the
-    /// canvas there, so a scene that shrinks back under the plane count goes
-    /// on blending forever (drm-cxx#341). The search can do better whenever
-    /// more than one compatible plane is free (one for a layer, one for the
-    /// canvas), or one is free and the canvas carries a single layer, which
-    /// can take that plane itself.
+    /// The cached paths composite it again, on the last search's verdict --
+    /// unless a composited layer has gone, which can leave the rest few enough
+    /// to fit, or a plane has come free that the search did not have. Upstream
+    /// keeps the run on the canvas either way, so a scene that shrinks back
+    /// under the plane count goes on blending forever (drm-cxx#341).
+    ///
+    /// A free plane alone is no reason: on a controller that lights fewer
+    /// planes than it offers (RK3566 VOP2: three eligible, two usable) the
+    /// search composited those layers with that plane free, and would again.
     fn has_new_layer(
         &self,
         placeable: &[LayerRef<'_>],
@@ -871,7 +892,7 @@ impl Allocator {
         registry: &PlaneRegistry,
         crtc_index: u32,
     ) -> bool {
-        let mut unplaced: Vec<&Layer> = Vec::new();
+        let mut unplaced = 0;
         for entry in placeable {
             if self.previous.get_plane_of(entry.id).is_some() {
                 continue;
@@ -879,29 +900,42 @@ impl Allocator {
             if !self.previous_composited.contains(&entry.id) {
                 return true;
             }
-            unplaced.push(entry.layer);
+            unplaced += 1;
         }
-        if unplaced.is_empty() {
+        if unplaced == 0 {
             return false;
         }
+        unplaced < self.previous_composited.len()
+            || self
+                .free_planes(&self.previous, layers, registry, crtc_index)
+                .iter()
+                .any(|plane| !self.previous_free.contains(plane))
+    }
+
+    /// The planes on `crtc_index` a search could still use beside
+    /// `assignment`: not a cursor, not reserved, not a pinned layer's.
+    fn free_planes(
+        &self,
+        assignment: &PlaneAssignment,
+        layers: &[LayerRef<'_>],
+        registry: &PlaneRegistry,
+        crtc_index: u32,
+    ) -> Vec<u32> {
         let pinned: Vec<u32> = layers
             .iter()
             .filter(|entry| entry.layer.is_pinned())
             .filter_map(|entry| entry.layer.assigned_plane())
             .collect();
-        let free = registry
+        registry
             .for_crtc(crtc_index)
             .filter(|plane| {
                 plane.plane_type != PlaneType::Cursor
                     && !self.reserved.contains(&plane.id)
                     && !pinned.contains(&plane.id)
-                    && self.previous.get(plane.id).is_none()
-                    && unplaced
-                        .iter()
-                        .any(|layer| plane_statically_compatible(plane, layer, crtc_index))
+                    && assignment.get(plane.id).is_none()
             })
-            .count();
-        !(free == 0 || (free == 1 && unplaced.len() >= 2))
+            .map(|plane| plane.id)
+            .collect()
     }
 
     /// Whether every layer in the cached assignment is still present.

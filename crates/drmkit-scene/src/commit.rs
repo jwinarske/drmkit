@@ -476,6 +476,21 @@ impl<'a> DeviceCommitter<'a> {
 }
 
 impl TestCommitter for DeviceCommitter<'_> {
+    fn lit_planes(&mut self, crtc_id: u32) -> Option<Vec<u32>> {
+        let mut store = drmkit_core::PropertyStore::new();
+        let mut lit = Vec::new();
+        for &plane_id in &self.candidates {
+            store
+                .cache_properties(self.device, plane_id, drmkit_core::ObjectType::Plane)
+                .ok()?;
+            let value = |name| store.property_value(plane_id, name).ok();
+            if value("FB_ID").unwrap_or(0) != 0 && value("CRTC_ID") == Some(u64::from(crtc_id)) {
+                lit.push(plane_id);
+            }
+        }
+        Some(lit)
+    }
+
     fn test_assignment(&mut self, assignment: &[(u32, LayerRef<'_>)]) -> Result<(), TestFailure> {
         self.commits += 1;
         let mut request = drmkit_core::AtomicRequest::new();

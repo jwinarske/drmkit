@@ -5,10 +5,10 @@
 # settable zpos, the composition canvas was placed below the layers it
 # carries. drm-cxx 03bc1d7 fixed that and the port follows: both sides now
 # composite the bottom run (bg, l1..l3) on plane[0], under l4..l11. What still
-# differs is upstream's second TEST_ONLY with the canvas armed (#332, not yet
-# ported), and after the `del` its warm start keeping the canvas while planes
-# sit free (drm-cxx#341, a regression in 03bc1d7) where the port retires it.
-# See P-42.
+# differs is upstream's second TEST_ONLY, its canvas probe (893a938), where
+# the port tests once with the canvas already armed -- by design -- and after
+# the `del` its warm start keeping the canvas while planes sit free
+# (drm-cxx#341, a regression in 03bc1d7) where the port retires it. See P-42.
 #
 # Not a corner of the fleet: 773 of 1001 atomic devices in the drmdb corpus
 # (77%) have no plane whose zpos can be written -- i915 358, amdgpu 211,

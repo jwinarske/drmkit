@@ -13,7 +13,6 @@
 mod common;
 
 use common::{Fixture, card_guard, fixture, open_card};
-use drmkit_dumb::MapAccess;
 use drmkit_scene::{LayerHandle, Placement};
 
 /// Side of every layer: all of them are stacked on one spot at screen center.
@@ -35,47 +34,23 @@ fn stack(fx: &mut Fixture, count: u32) -> Option<Vec<LayerHandle>> {
     let mut handles = Vec::new();
     for index in 0..count {
         let handle = fx.add_layer(x, y, SIDE, SIDE)?;
-        paint(fx, handle, color(index))?;
-        set_zpos(fx, handle, u64::from(index) + 3);
+        fx.paint(handle, color(index))?;
+        fx.set_zpos(handle, u64::from(index) + 3);
         handles.push(handle);
     }
     Some(handles)
 }
 
-fn paint(fx: &mut Fixture, handle: LayerHandle, xrgb: u32) -> Option<()> {
-    let layer = fx.scene.layer_mut(handle)?;
-    let mut mapping = layer.source_mut().map(MapAccess::Write).ok()?;
-    let stride = mapping.stride() as usize;
-    let width = mapping.width() as usize;
-    for row in mapping.pixels_mut().chunks_mut(stride) {
-        for pixel in row[..width * 4].chunks_exact_mut(4) {
-            pixel.copy_from_slice(&(0xFF00_0000 | xrgb).to_le_bytes());
-        }
-    }
-    Some(())
-}
-
-fn set_zpos(fx: &mut Fixture, handle: LayerHandle, zpos: u64) {
-    let layer = fx.scene.layer_mut(handle).expect("the layer");
-    let mut display = *layer.display();
-    display.zpos = Some(zpos);
-    layer.set_display(display);
-}
-
-/// The color at the screen center, alpha dropped.
+/// The color at the screen center.
 fn center(fx: &Fixture) -> u32 {
-    let image = drmkit_capture::snapshot(&fx.device, fx.crtc_id()).expect("snapshot");
-    let (x, y) = (image.width() / 2, image.height() / 2);
-    image.pixels()[(y * image.width() + x) as usize] & 0x00FF_FFFF
+    let (w, h) = fx.mode_size();
+    fx.pixel_at(w / 2, h / 2)
 }
 
 /// A fixture with a full-screen canvas.
 fn composing_fixture() -> Option<Fixture> {
     let mut fx = fixture(open_card()?)?;
-    let (w, h) = fx.mode_size();
-    let device = &fx.device;
-    let canvas = fx.scene.enable_composition(device, w, h);
-    canvas.ok()?;
+    fx.enable_full_screen_composition()?;
     Some(fx)
 }
 
@@ -171,7 +146,7 @@ fn a_restack_reaches_the_screen_vkms() {
     assert_eq!(center(&fx), color(2), "before the restack");
 
     for (index, handle) in (0u64..).zip(&handles) {
-        set_zpos(&mut fx, *handle, 5 - index);
+        fx.set_zpos(*handle, 5 - index);
     }
     fx.commit().expect("the restacked frame");
     assert_eq!(

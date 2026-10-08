@@ -108,6 +108,7 @@ fn probe_plane(
         has_format_modifiers,
         zpos_min,
         zpos_max,
+        multirect_parent: multirect_parent(device, properties, id),
         rotation_bits: properties.bitmask_bits(device, id, "rotation").unwrap_or(0),
         supports_rotation: present("rotation"),
         // Every atomic plane has SRC_W, and KMS exposes no capability that
@@ -161,6 +162,17 @@ fn in_formats(device: &Device, properties: &PropertyStore, id: u32) -> FormatTab
         .property_blob(blob_id)
         .map(|blob| FormatTable::from_blob(&blob))
         .unwrap_or_default()
+}
+
+/// The plane's multirect parent, from the driver-private `capabilities`
+/// blob. Only its multirect marker is consumed.
+fn multirect_parent(device: &Device, properties: &PropertyStore, id: u32) -> Option<u32> {
+    let blob_id = properties.property_value(id, "capabilities").ok()?;
+    if blob_id == 0 {
+        return None;
+    }
+    let blob = device.property_blob(blob_id).ok()?;
+    crate::parse_multirect_parent(&blob)
 }
 
 fn io_errno(error: &std::io::Error) -> rustix::io::Errno {

@@ -794,3 +794,156 @@ fn the_canvas_plane_turns_off_when_composition_stops_vkms() {
     );
     fx.teardown();
 }
+
+/// Refuses, the way msm does, any test that arms a multirect virtual plane
+/// without its parent, and counts them. vkms has no such planes, so the pair
+/// is declared in the registry and imposed here.
+struct Multirect<'a> {
+    inner: DeviceCommitter<'a>,
+    child: u32,
+    parent: u32,
+    extra: Option<u32>,
+    orphans: usize,
+}
+
+impl drmkit_planes::TestCommitter for Multirect<'_> {
+    fn test_assignment(
+        &mut self,
+        assignment: &[(u32, drmkit_planes::LayerRef<'_>)],
+    ) -> Result<(), drmkit_planes::TestFailure> {
+        let armed = |id: u32| self.extra == Some(id) || assignment.iter().any(|(p, _)| *p == id);
+        if armed(self.child) && !armed(self.parent) {
+            self.orphans += 1;
+            return Err(drmkit_planes::TestFailure::Rejected);
+        }
+        self.inner.test_assignment(assignment)
+    }
+
+    fn set_extra_plane(&mut self, plane_id: u32, layer: drmkit_planes::Layer) {
+        self.extra = Some(plane_id);
+        self.inner.set_extra_plane(plane_id, layer);
+    }
+
+    fn clear_extra_plane(&mut self) {
+        self.extra = None;
+        self.inner.clear_extra_plane();
+    }
+}
+
+/// The canvas is never held on a multirect virtual plane (drm-cxx `4b366b5`).
+///
+/// The first overlay, where the canvas would go first, is declared the second
+/// rectangle of the last one, and that parent is given a format nothing here
+/// uses, so nothing ever arms it. Held for the canvas -- by the overflow
+/// reservation or by the second pass's spare -- the virtual plane is armed in
+/// every test the search runs, each one is refused, and the layers it was
+/// meant to rescue are all composited.
+#[test]
+#[ignore = "needs a DRM device"]
+fn the_canvas_is_never_held_on_a_virtual_plane_vkms() {
+    let _guard = card_guard();
+    for claim in [true, false] {
+        // More layers than planes, which reserves a plane up front; then
+        // three with the top one sent to the canvas, which reserves nothing
+        // and leaves the canvas to the second pass.
+        for overflow in [true, false] {
+            let Some(fx) = fixture_claiming_zpos(claim) else {
+                return;
+            };
+            if !canvas_avoids_the_virtual_plane(fx, overflow) {
+                return;
+            }
+        }
+    }
+}
+
+/// One frame of [`the_canvas_is_never_held_on_a_virtual_plane_vkms`] with
+/// two more layers than planes, or three with the top one force-composited.
+/// False when the CRTC is too small to say.
+fn canvas_avoids_the_virtual_plane(mut fx: Fixture, overflow: bool) -> bool {
+    let overlays: Vec<u32> = fx
+        .registry
+        .force_disable_candidates(fx.crtc_index)
+        .filter(|plane| plane.plane_type == PlaneType::Overlay)
+        .map(|plane| plane.id)
+        .collect();
+    if overlays.len() < 2 || fx.planes < 3 {
+        drmkit_testkit::skipped("needs two overlays and a third plane");
+        return false;
+    }
+    let (child, parent) = (overlays[0], overlays[overlays.len() - 1]);
+    let capabilities = fx
+        .registry
+        .all()
+        .iter()
+        .cloned()
+        .map(|mut plane| {
+            if plane.id == child {
+                plane.multirect_parent = Some(parent);
+            }
+            if plane.id == parent {
+                // Derived from `formats` only while empty.
+                plane.formats = vec![fourcc::NV12];
+                plane.format_table = drmkit_fmt::FormatTable::default();
+            }
+            plane
+        })
+        .collect();
+    fx.registry = PlaneRegistry::from_capabilities(capabilities);
+
+    let layers = if overflow { fx.planes + 2 } else { 3 };
+    fill(&mut fx, layers);
+    if !overflow {
+        let top = fx.scene.handles().last().expect("a layer");
+        fx.scene
+            .layer_mut(top)
+            .expect("the top layer")
+            .set_force_composited(true);
+    }
+    let mut committer = Multirect {
+        inner: DeviceCommitter::new(
+            &fx.device,
+            &fx.map,
+            &fx.registry,
+            fx.crtc_index,
+            AtomicCommitFlags::empty(),
+            None,
+        ),
+        child,
+        parent,
+        extra: None,
+        orphans: 0,
+    };
+    let build = fx
+        .scene
+        .build_frame(
+            &fx.registry,
+            fx.crtc_index,
+            CommitKind::Real { arms_flip: false },
+            &mut committer,
+        )
+        .expect("build");
+    let orphans = committer.orphans;
+    let report = build.report().clone();
+    let planes_used: Vec<u32> = build.plan().iter().map(|entry| entry.plane_id).collect();
+    fx.scene.finalize_frame(build, KernelResult::Ok);
+    println!(
+        "note: {layers} layers, virtual {child} of {parent}, planes {planes_used:?}, \
+         assigned={} composited={} orphaned tests={orphans}",
+        report.layers_assigned, report.layers_composited
+    );
+
+    assert_eq!(orphans, 0, "a test armed {child} without {parent}");
+    assert!(
+        !planes_used.contains(&child),
+        "the frame arms {child} without {parent}: {planes_used:?}"
+    );
+    assert!(report.layers_composited > 0, "{report:?}");
+    assert_eq!(
+        report.layers_assigned + report.layers_composited,
+        layers,
+        "every layer reaches the screen: {report:?}"
+    );
+    fx.scene.drain();
+    true
+}

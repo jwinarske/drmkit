@@ -65,6 +65,10 @@ struct Committer {
     extra: Option<u32>,
     extras_seen: Vec<Option<u32>>,
     count_extra: bool,
+    /// `(virtual, parent)` multirect pairs: like the kernel, refuse a test
+    /// that arms the virtual plane without its parent, and count it.
+    multirect: Vec<(u32, u32)>,
+    orphans_tested: usize,
 }
 
 impl TestCommitter for Committer {
@@ -72,9 +76,14 @@ impl TestCommitter for Committer {
         self.calls += 1;
         let mut planes: Vec<u32> = assignment.iter().map(|(id, _)| *id).collect();
         planes.sort_unstable();
-        self.seen.push(planes);
+        self.seen.push(planes.clone());
         self.extras_seen.push(self.extra);
         let armed = assignment.len() + usize::from(self.count_extra && self.extra.is_some());
+        let orphaned = self
+            .multirect
+            .iter()
+            .any(|(child, parent)| planes.contains(child) && !planes.contains(parent));
+        self.orphans_tested += usize::from(orphaned);
 
         if let Some(failure) = self.fail_with {
             return Err(failure);
@@ -82,7 +91,7 @@ impl TestCommitter for Committer {
         if self.calls <= self.reject_first {
             return Err(TestFailure::Rejected);
         }
-        if self.max_planes.is_some_and(|max| armed > max) {
+        if orphaned || self.max_planes.is_some_and(|max| armed > max) {
             return Err(TestFailure::Rejected);
         }
         Ok(())
@@ -1253,4 +1262,134 @@ fn a_held_canvas_plane_goes_back_to_the_layers_once_they_fit() {
     assert!(shrunk.composited.is_empty(), "{:?}", shrunk.composited);
     assert_eq!(shrunk.assignment.len(), 4);
     assert_eq!(allocator.canvas_plane(), None);
+}
+
+// --- multirect ---------------------------------------------------------------
+
+/// The SA8155P's shape: plane 118 is the second rectangle of 115's pipe.
+fn sde_plane(id: u32, formats: &[u32], parent: Option<u32>) -> PlaneCapabilities {
+    PlaneCapabilities {
+        formats: formats.to_vec(),
+        multirect_parent: parent,
+        ..plane(id, PlaneType::Overlay, Some((0, 10)))
+    }
+}
+
+fn argb_layer(zpos: u64) -> Layer {
+    let mut layer = layer_at(0, 0, 640, 480, zpos);
+    layer.set_property(PropTag::PixelFormat, u64::from(fourcc::ARGB8888));
+    layer
+}
+
+/// A layer only a virtual plane can take is composited, not placed there
+/// alone: the kernel refuses the virtual plane without its parent, but the
+/// test committer here accepts anything, so only the allocator can say no.
+#[test]
+fn a_virtual_plane_is_never_placed_without_its_parent() {
+    let registry = PlaneRegistry::from_capabilities(vec![
+        sde_plane(115, &[fourcc::XRGB8888], None),
+        sde_plane(118, &[fourcc::ARGB8888], Some(115)),
+    ]);
+    let layers = vec![(LayerId(1), argb_layer(1))];
+    let mut allocator = Allocator::new();
+    let mut committer = Committer::default();
+
+    let result = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut committer)
+        .expect("allocate");
+
+    assert!(result.assignment.is_empty(), "{:?}", result.assignment);
+    assert_eq!(result.composited, vec![LayerId(1)]);
+}
+
+/// With its parent armed the virtual plane is an ordinary plane, even listed
+/// first.
+#[test]
+fn a_virtual_plane_is_placed_beside_its_parent() {
+    let registry = PlaneRegistry::from_capabilities(vec![
+        sde_plane(114, &[fourcc::XRGB8888, fourcc::ARGB8888], Some(115)),
+        sde_plane(115, &[fourcc::XRGB8888, fourcc::ARGB8888], None),
+    ]);
+    let layers = vec![
+        (LayerId(1), layer_at(0, 0, 640, 480, 1)),
+        (LayerId(2), layer_at(0, 0, 640, 480, 2)),
+    ];
+    let mut allocator = Allocator::new();
+    let mut committer = Committer {
+        multirect: vec![(114, 115)],
+        ..Committer::default()
+    };
+
+    let result = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut committer)
+        .expect("allocate");
+
+    assert_eq!(result.assignment.len(), 2, "{:?}", result.assignment);
+    assert!(result.composited.is_empty());
+    assert_eq!(committer.orphans_tested, 0, "{:?}", committer.seen);
+}
+
+/// Backtracking off a parent takes its virtual plane with it, rather than
+/// testing the orphan the kernel would refuse. Two layers, the pair of planes,
+/// one plane lit at a time: the preseed puts the video layer on the parent and
+/// is refused, which rules those two pairings out, so the greedy pass puts the
+/// low-priority layer on the parent, and backtracking drops it first.
+#[test]
+fn dropping_a_parent_drops_its_virtual_plane() {
+    let registry = PlaneRegistry::from_capabilities(vec![
+        sde_plane(115, &[fourcc::XRGB8888], None),
+        sde_plane(118, &[fourcc::XRGB8888], Some(115)),
+    ]);
+    let mut video = layer_at(0, 0, 640, 480, 2);
+    video.set_content_type(ContentType::Video);
+    let layers = vec![
+        (LayerId(1), video),
+        (LayerId(2), layer_at(0, 0, 640, 480, 1)),
+    ];
+    let mut allocator = Allocator::new();
+    // One plane at a time, so the pair is refused and the search backtracks.
+    let mut committer = Committer {
+        max_planes: Some(1),
+        multirect: vec![(118, 115)],
+        ..Committer::default()
+    };
+
+    let result = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut committer)
+        .expect("allocate");
+
+    assert_eq!(committer.orphans_tested, 0, "{:?}", committer.seen);
+    assert!(result.assignment.is_empty(), "{:?}", result.assignment);
+}
+
+/// Where planes stack by id the search places layers in plane order, which a
+/// virtual plane would break: its parent would have to be armed too, at
+/// whatever place its own id gives it. It is left out.
+#[test]
+fn plane_order_leaves_virtual_planes_out() {
+    let registry = PlaneRegistry::from_capabilities(vec![
+        plane(31, PlaneType::Primary, None),
+        PlaneCapabilities {
+            multirect_parent: Some(33),
+            ..plane(32, PlaneType::Overlay, None)
+        },
+        plane(33, PlaneType::Overlay, None),
+    ]);
+    let layers = vec![
+        (LayerId(1), layer_at(0, 0, 640, 480, 0)),
+        (LayerId(2), layer_at(0, 0, 640, 480, 1)),
+    ];
+    let mut allocator = Allocator::new();
+    let mut committer = Committer {
+        multirect: vec![(32, 33)],
+        ..Committer::default()
+    };
+
+    let result = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut committer)
+        .expect("allocate");
+
+    assert_eq!(committer.orphans_tested, 0, "{:?}", committer.seen);
+    assert_eq!(result.assignment.get(31), Some(LayerId(1)));
+    assert_eq!(result.assignment.get(33), Some(LayerId(2)));
 }

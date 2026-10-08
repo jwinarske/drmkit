@@ -1197,8 +1197,12 @@ impl LayerScene {
         {
             return Ok(allocation);
         }
+        // Not a multirect virtual plane: held, it is armed in every test of
+        // the second pass, and the search may give its parent away.
         let Some(spare) = canvas_plane_order(&hosts, registry, crtc_index, self.last_canvas_plane)
-            .find(|id| allocation.assignment.get(*id).is_none())
+            .find(|id| {
+                allocation.assignment.get(*id).is_none() && !is_multirect_virtual(registry, *id)
+            })
         else {
             return Ok(allocation);
         };
@@ -1387,7 +1391,16 @@ impl LayerScene {
         // Where planes stack by id, the allocator's pick is the only plane
         // that stacks the canvas between its neighbors; without one, the
         // topmost free plane is the closest to "above every layer".
-        let free = |id: &u32| allocation.assignment.get(*id).is_none();
+        // A multirect virtual plane can carry the canvas only alongside its
+        // parent, so only when the assignment armed the parent.
+        let free = |id: &u32| {
+            allocation.assignment.get(*id).is_none()
+                && registry.by_id(*id).is_none_or(|plane| {
+                    drmkit_planes::multirect_pairing_ok(plane.multirect_parent, |parent| {
+                        allocation.assignment.get(parent).is_some()
+                    })
+                })
+        };
         let plane_id = if drmkit_planes::stacks_by_plane_id(registry, crtc_index) {
             self.allocator.canvas_plane().filter(free).or_else(|| {
                 registry
@@ -1971,13 +1984,26 @@ pub(crate) fn canvas_reservation(
         .filter(|plane| crate::canvas_format_for_plane(plane).is_some())
         .map(|plane| plane.id)
         .collect();
+    // Not a multirect virtual plane: reserved, it stays armed through the
+    // allocator's tests while the allocator gives its parent away, so every
+    // test fails (drm-cxx `4b366b5`). Left free, the canvas is re-picked each
+    // frame.
     if refs.len() > hosts.len() {
         canvas_plane_order(&hosts, registry, crtc_index, previous)
-            .take(1)
+            .find(|id| !is_multirect_virtual(registry, *id))
+            .into_iter()
             .collect()
     } else {
         Vec::new()
     }
+}
+
+/// Whether `plane_id` is a multirect virtual plane, valid only alongside its
+/// parent.
+fn is_multirect_virtual(registry: &PlaneRegistry, plane_id: u32) -> bool {
+    registry
+        .by_id(plane_id)
+        .is_some_and(|plane| plane.multirect_parent.is_some())
 }
 
 /// The planes the canvas prefers, best first: `previous`, the plane it had

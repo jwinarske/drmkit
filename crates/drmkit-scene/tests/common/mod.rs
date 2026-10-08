@@ -331,7 +331,11 @@ impl Fixture {
         let mut mapping = layer.source_mut().map(drmkit_dumb::MapAccess::Write).ok()?;
         let stride = mapping.stride() as usize;
         let width = mapping.width() as usize;
-        for row in mapping.pixels_mut().chunks_mut(stride) {
+        let height = mapping.height() as usize;
+        // `height` rows, not every stride-sized chunk: a driver may allocate
+        // past `stride * height` (msm pads 320x180 by 3072 bytes), and the
+        // tail is shorter than a row.
+        for row in mapping.pixels_mut().chunks_mut(stride).take(height) {
             for pixel in row[..width * 4].chunks_exact_mut(4) {
                 pixel.copy_from_slice(&(0xFF00_0000 | xrgb).to_le_bytes());
             }

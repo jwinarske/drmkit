@@ -2038,6 +2038,12 @@ pub(crate) fn canvas_plane_order<'a>(
         .chain(of_type(drmkit_planes::PlaneType::Primary))
 }
 
+/// A 16.16 value rounded to the nearest whole pixel.
+pub(crate) const fn round_16_16(value: u32) -> u32 {
+    // Half rounds up: the bit below the binary point.
+    (value >> 16) + ((value >> 15) & 1)
+}
+
 /// Blend each target's source into the canvas, and say how many landed.
 ///
 /// A source that cannot be CPU-read, or whose format the blend does not
@@ -2072,20 +2078,30 @@ fn blend_targets(
             drm_fourcc: format.fourcc,
             plane_alpha: display.alpha.unwrap_or(u16::MAX),
         };
+        // The canvas samples whole pixels, so a sub-pixel crop rounds to the
+        // nearest one.
+        let src_rect = display
+            .src_rect_fixed
+            .map_or(display.src_rect, |fixed| Rect {
+                x: round_16_16(fixed.x).cast_signed(),
+                y: round_16_16(fixed.y).cast_signed(),
+                w: round_16_16(fixed.w),
+                h: round_16_16(fixed.h),
+            });
         canvas.blend(
             &src,
             CompositeRect {
-                x: display.src_rect.x,
-                y: display.src_rect.y,
-                w: if display.src_rect.w == 0 {
+                x: src_rect.x,
+                y: src_rect.y,
+                w: if src_rect.w == 0 {
                     format.width
                 } else {
-                    display.src_rect.w
+                    src_rect.w
                 },
-                h: if display.src_rect.h == 0 {
+                h: if src_rect.h == 0 {
                     format.height
                 } else {
-                    display.src_rect.h
+                    src_rect.h
                 },
             },
             CompositeRect {

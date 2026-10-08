@@ -83,20 +83,35 @@ pub fn lower_layer(input: &LoweringInput, dst: &mut PlaneLayer) {
     dst.set_property(PropTag::CrtcW, u64::from(display.dst_rect.w));
     dst.set_property(PropTag::CrtcH, u64::from(display.dst_rect.h));
 
-    let src_w = if display.src_rect.w == 0 {
-        format.width
+    if let Some(fixed) = display.src_rect_fixed {
+        // Already 16.16: written as given, so a sub-pixel crop survives.
+        let extent = |value: u32, full: u32| {
+            if value == 0 {
+                to_16_16(full)
+            } else {
+                u64::from(value)
+            }
+        };
+        dst.set_property(PropTag::SrcX, u64::from(fixed.x));
+        dst.set_property(PropTag::SrcY, u64::from(fixed.y));
+        dst.set_property(PropTag::SrcW, extent(fixed.w, format.width));
+        dst.set_property(PropTag::SrcH, extent(fixed.h, format.height));
     } else {
-        display.src_rect.w
-    };
-    let src_h = if display.src_rect.h == 0 {
-        format.height
-    } else {
-        display.src_rect.h
-    };
-    dst.set_property(PropTag::SrcX, to_16_16(display.src_rect.x.cast_unsigned()));
-    dst.set_property(PropTag::SrcY, to_16_16(display.src_rect.y.cast_unsigned()));
-    dst.set_property(PropTag::SrcW, to_16_16(src_w));
-    dst.set_property(PropTag::SrcH, to_16_16(src_h));
+        let src_w = if display.src_rect.w == 0 {
+            format.width
+        } else {
+            display.src_rect.w
+        };
+        let src_h = if display.src_rect.h == 0 {
+            format.height
+        } else {
+            display.src_rect.h
+        };
+        dst.set_property(PropTag::SrcX, to_16_16(display.src_rect.x.cast_unsigned()));
+        dst.set_property(PropTag::SrcY, to_16_16(display.src_rect.y.cast_unsigned()));
+        dst.set_property(PropTag::SrcW, to_16_16(src_w));
+        dst.set_property(PropTag::SrcH, to_16_16(src_h));
+    }
 
     // Format and modifier let the allocator screen planes statically before any
     // test commit. These are internal hints on the property bag, not KMS plane

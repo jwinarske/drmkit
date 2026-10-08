@@ -89,7 +89,7 @@ pub use commit::{
     classify, commit_detach, emit_disable, emit_frame, emit_frame_damaged, emit_layer,
     fence_action,
 };
-pub use display::{DisplayParams, Rect, to_16_16};
+pub use display::{DisplayParams, FixedRect, Rect, to_16_16};
 pub use frame::{AcquireTally, CommitKind, FrameLifecycle, FrameOutcome, KernelResult};
 pub use lower::{LoweringInput, lower_layer};
 pub use release::{Acquisition, ReleaseQueue, ReleaseReason, Released, ScenePendingFlip};

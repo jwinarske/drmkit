@@ -383,6 +383,9 @@ pub struct Allocator {
     /// cached with `previous`.
     canvas_plane: Option<u32>,
     previous_canvas_plane: Option<u32>,
+    /// The layers the last full search left unplaced, which the cached paths
+    /// composite again rather than treat as new.
+    previous_composited: Vec<LayerId>,
 }
 
 impl Default for Allocator {
@@ -414,6 +417,7 @@ impl Allocator {
             canvas_layer: None,
             canvas_plane: None,
             previous_canvas_plane: None,
+            previous_composited: Vec::new(),
         }
     }
 
@@ -478,6 +482,7 @@ impl Allocator {
         self.previous_valid = false;
         self.canvas_plane = None;
         self.previous_canvas_plane = None;
+        self.previous_composited.clear();
         self.last_committed.clear();
         self.failure_cache = TestCache::default();
     }
@@ -752,18 +757,8 @@ impl Allocator {
         // (drm-cxx#239).
         let order_holds = !by_plane_id || self.plane_order_holds(&stacked);
 
-        // A layer present this frame that the previous frame did not place.
-        //
-        // Both cached paths below iterate the *previous* assignment to decide
-        // what to emit, so neither can place a layer that is not already in it:
-        // warm-start would succeed with the old set, the new layer would be
-        // composited, and the cached assignment would never grow -- so the same
-        // fate would hit every subsequent frame. Detecting it here forces a
-        // full search, giving the new layer a real shot at a plane.
-        let has_new_layer = self.previous_valid
-            && placeable
-                .iter()
-                .any(|entry| self.previous.get_plane_of(entry.id).is_none());
+        let has_new_layer =
+            self.previous_valid && self.has_new_layer(&placeable, layers, registry, crtc_index);
 
         // --- invariant 4: the FB-only fast path ---------------------------
         if self.previous_valid && !has_new_layer && order_holds && self.is_fb_only_frame(layers) {
@@ -837,6 +832,7 @@ impl Allocator {
         self.previous = assignment.clone();
         self.previous_valid = !assignment.is_empty();
         self.previous_canvas_plane = self.canvas_plane;
+        self.previous_composited.clone_from(&composited);
 
         Ok(Allocation {
             assignment,
@@ -847,6 +843,65 @@ impl Allocator {
                 budget_exhausted: self.budget_exhausted_this_frame,
             },
         })
+    }
+
+    /// Whether a layer present this frame needs a full search to have a
+    /// fair shot at a plane: the previous frame did not place it, and either
+    /// did not composite it either, or a plane has come free for it.
+    ///
+    /// Both cached paths iterate the *previous* assignment to decide what to
+    /// emit, so neither can place a layer that is not already in it:
+    /// warm-start would succeed with the old set, the new layer would be
+    /// composited, and the cached assignment would never grow -- so the same
+    /// fate would hit every subsequent frame.
+    ///
+    /// A layer composited last frame is not new (drm-cxx `6e58d23`): counting
+    /// it as one forced a full search on every frame composition was active.
+    /// The cached paths composite it again -- unless a plane is free that a
+    /// full search could put one of them on. Upstream keeps the run on the
+    /// canvas there, so a scene that shrinks back under the plane count goes
+    /// on blending forever (drm-cxx#341). The search can do better whenever
+    /// more than one compatible plane is free (one for a layer, one for the
+    /// canvas), or one is free and the canvas carries a single layer, which
+    /// can take that plane itself.
+    fn has_new_layer(
+        &self,
+        placeable: &[LayerRef<'_>],
+        layers: &[LayerRef<'_>],
+        registry: &PlaneRegistry,
+        crtc_index: u32,
+    ) -> bool {
+        let mut unplaced: Vec<&Layer> = Vec::new();
+        for entry in placeable {
+            if self.previous.get_plane_of(entry.id).is_some() {
+                continue;
+            }
+            if !self.previous_composited.contains(&entry.id) {
+                return true;
+            }
+            unplaced.push(entry.layer);
+        }
+        if unplaced.is_empty() {
+            return false;
+        }
+        let pinned: Vec<u32> = layers
+            .iter()
+            .filter(|entry| entry.layer.is_pinned())
+            .filter_map(|entry| entry.layer.assigned_plane())
+            .collect();
+        let free = registry
+            .for_crtc(crtc_index)
+            .filter(|plane| {
+                plane.plane_type != PlaneType::Cursor
+                    && !self.reserved.contains(&plane.id)
+                    && !pinned.contains(&plane.id)
+                    && self.previous.get(plane.id).is_none()
+                    && unplaced
+                        .iter()
+                        .any(|layer| plane_statically_compatible(plane, layer, crtc_index))
+            })
+            .count();
+        !(free == 0 || (free == 1 && unplaced.len() >= 2))
     }
 
     /// Whether every layer in the cached assignment is still present.

@@ -985,3 +985,82 @@ fn zpos_is_written_densely_and_the_baseline_keeps_what_was_written() {
     scene.flip_landed();
     scene.drain();
 }
+
+/// Commit one frame with a layer per display in `displays`, and return their
+/// handles.
+fn commit_layers(
+    scene: &mut LayerScene,
+    log: &Rc<RefCell<SourceLog>>,
+    displays: &[DisplayParams],
+) -> Vec<drmkit_scene::LayerHandle> {
+    let handles: Vec<_> = displays
+        .iter()
+        .map(|display| {
+            let handle = scene.add_layer(Box::new(TestSource::new(log)));
+            scene
+                .layer_mut(handle)
+                .expect("layer")
+                .set_display(*display);
+            handle
+        })
+        .collect();
+    let build = scene
+        .build_frame(&registry(), 0, real(), &mut Accepting::default())
+        .expect("frame");
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+    handles
+}
+
+/// A plane a replaced layer left armed is turned off, not left on screen
+/// under or over the new stack (drm-cxx `d895c8d`). Upstream skipped the
+/// disable pass whenever the warm start was gone, which a replaced layer set
+/// always makes it.
+#[test]
+fn a_plane_left_by_replaced_layers_is_turned_off() {
+    let log = Rc::new(RefCell::new(SourceLog::default()));
+    let mut scene = LayerScene::new(1);
+    let mut top = full_screen();
+    top.zpos = Some(1);
+    let old = commit_layers(&mut scene, &log, &[full_screen(), top]);
+
+    for handle in old {
+        scene.remove_layer(handle);
+    }
+    let handle = scene.add_layer(Box::new(TestSource::new(&log)));
+    scene
+        .layer_mut(handle)
+        .expect("layer")
+        .set_display(full_screen());
+    let build = scene
+        .build_frame(&registry(), 0, real(), &mut Accepting::default())
+        .expect("frame with the replacement");
+
+    let used: Vec<u32> = build.plan().iter().map(|entry| entry.plane_id).collect();
+    assert_eq!(used.len(), 1, "{used:?}");
+    let left = if used[0] == 31 { 32 } else { 31 };
+    assert_eq!(build.disables(), [left], "the old layer's plane goes off");
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+}
+
+/// A scene emptied of layers keeps its planes: the last frame stays up, and an
+/// active CRTC's only primary cannot be disabled on some controllers (i.MX
+/// LCDIF), so turning it off would get the commit refused (drm-cxx
+/// `d895c8d`).
+#[test]
+fn an_emptied_scene_keeps_its_planes() {
+    let log = Rc::new(RefCell::new(SourceLog::default()));
+    let mut scene = LayerScene::new(1);
+    let old = commit_layers(&mut scene, &log, &[full_screen()]);
+
+    for handle in old {
+        scene.remove_layer(handle);
+    }
+    let build = scene
+        .build_frame(&registry(), 0, real(), &mut Accepting::default())
+        .expect("empty frame");
+    assert!(build.disables().is_empty(), "{:?}", build.disables());
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+}

@@ -283,3 +283,43 @@ fn the_kernel_takes_a_damage_blob_in_the_layout_we_build_vkms() {
          the previous frame's damage"
     );
 }
+
+/// A scene emptied of its layers writes nothing: no disable either, so the
+/// last frame stays up and the commit lands.
+///
+/// Port of the rule in drm-cxx `d895c8d`. An active CRTC's only primary cannot
+/// be disabled on some controllers (the i.MX8M Plus's LCDIF, one plane on its
+/// HDMI CRTC): a scene that turned off the plane its last layer had left gets
+/// that commit refused.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn an_emptied_scene_writes_nothing_and_keeps_its_last_frame_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some(mut fx) = fixture(device) else {
+        drmkit_testkit::skipped("no connected output");
+        return;
+    };
+    let (w, h) = fx.mode_size();
+    let Some(handle) = fx.add_layer(0, 0, w, h) else {
+        drmkit_testkit::skipped("no dumb buffer for a layer");
+        return;
+    };
+    let first = fx.commit().expect("the frame with a layer");
+    let plane = first
+        .placements
+        .iter()
+        .find_map(|entry| entry.plane_id)
+        .unwrap_or_else(|| panic!("the layer has a plane: {first:?}"));
+
+    fx.scene.remove_layer(handle);
+    let empty = fx.commit().expect("the emptied scene's commit must land");
+
+    assert_eq!(empty.layers_total, 0, "{empty:?}");
+    assert_eq!(empty.properties_written, 0, "{empty:?}");
+    assert!(
+        fx.plane_framebuffer(plane).is_some_and(|fb| fb != 0),
+        "plane {plane} was turned off"
+    );
+    fx.teardown();
+}

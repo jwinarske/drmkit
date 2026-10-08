@@ -942,6 +942,14 @@ impl LayerScene {
             &pinned,
         );
         self.disable_foreign(&mut disables, &plan, registry, crtc_index, committer);
+        // A scene with no layers keeps its planes, and the last frame stays
+        // up: an active CRTC's only primary cannot be disabled on some
+        // controllers (i.MX LCDIF), so turning it off would get the commit
+        // refused (drm-cxx `d895c8d`). A scene whose layers were replaced
+        // still turns off the planes they left.
+        if self.is_empty() {
+            disables.clear();
+        }
         let disables = if let Some(composition) = canvas_plane {
             let plane_id = composition.plane_id;
             plan.push(PlanePlan {

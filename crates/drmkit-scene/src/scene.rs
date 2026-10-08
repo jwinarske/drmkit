@@ -533,6 +533,10 @@ pub struct LayerScene {
     /// canvas's first preference this frame (drm-cxx `6d787f9`). Forgotten on
     /// a frame that composites nothing, and on rebind and resume.
     last_canvas_plane: Option<u32>,
+    /// What the kernel said about each pin it was asked about, so a pin is
+    /// tested once per layer, plane and geometry (drm-cxx `c766e97`).
+    /// Forgotten on rebind and resume.
+    pin_verdicts: Vec<PinVerdict>,
     /// What a rebind to another CRTC left lit on the old one.
     detach: Option<PendingDetach>,
 }
@@ -580,6 +584,7 @@ impl LayerScene {
             committed_once: false,
             planes_unknown: true,
             last_canvas_plane: None,
+            pin_verdicts: Vec::new(),
             detach: None,
         }
     }
@@ -629,10 +634,11 @@ impl LayerScene {
     ///
     /// Whoever held the CRTC meanwhile may have left planes lit, so the next
     /// frame turns off every plane it does not use.
-    pub const fn resume(&mut self) {
+    pub fn resume(&mut self) {
         self.lifecycle.resume();
         self.planes_unknown = true;
         self.last_canvas_plane = None;
+        self.pin_verdicts.clear();
     }
 
     /// Add a layer backed by `source`.
@@ -792,7 +798,9 @@ impl LayerScene {
                         continue;
                     };
                     starved.push(layer_id);
-                    let (lowered, pin) = lower(layer, fb_id, self.crtc_id, registry, crtc_index);
+                    let (mut lowered, pin) =
+                        lower(layer, fb_id, self.crtc_id, registry, crtc_index);
+                    let pin = revoke_refused_pin(&self.pin_verdicts, layer_id, &mut lowered, pin);
                     match pin {
                         PinOutcome::Refused => pins_unhonored += 1,
                         PinOutcome::Honoured(plane_id) => pinned.push((layer_id, plane_id)),
@@ -810,8 +818,9 @@ impl LayerScene {
             };
             tally.record(true);
 
-            let (plane_layer, pin) =
+            let (mut plane_layer, pin) =
                 lower(layer, acquired.fb_id, self.crtc_id, registry, crtc_index);
+            let pin = revoke_refused_pin(&self.pin_verdicts, layer_id, &mut plane_layer, pin);
             match pin {
                 PinOutcome::Refused => pins_unhonored += 1,
                 PinOutcome::Honoured(plane_id) => pinned.push((layer_id, plane_id)),
@@ -882,23 +891,23 @@ impl LayerScene {
             plane_layers,
             frame_damage,
             pins_unhonored,
-            pinned,
+            mut pinned,
         } = self.acquire_every_layer(registry, crtc_index, &mut tally)?;
         let mut plane_layers = plane_layers;
-        lower_bottom_layer_to_primary_slot(&mut plane_layers, registry, crtc_index);
-
-        let refs: Vec<LayerRef<'_>> = plane_layers
-            .iter()
-            .map(|(id, layer)| LayerRef { id: *id, layer })
-            .collect();
-
-        let allocation = match self.allocate_with_canvas(&refs, registry, crtc_index, committer) {
-            Ok(allocation) => allocation,
+        let (allocation, refused) = match self.allocate_frame(
+            &mut plane_layers,
+            &mut pinned,
+            registry,
+            crtc_index,
+            committer,
+        ) {
+            Ok(allocated) => allocated,
             Err(error) => {
                 self.release_all(acquisitions);
                 return Err(error);
             }
         };
+        let pins_unhonored = pins_unhonored + refused;
 
         // Rescue what the allocator dropped, before the plan is built: the
         // canvas takes a plane, and a plane carrying the canvas must not also
@@ -1227,6 +1236,123 @@ impl LayerScene {
             Err(TestFailure::Rejected) => {}
         }
         Ok(allocation)
+    }
+
+    /// Allocate planes, then test the pins: the allocation, and how many
+    /// pins the kernel refused.
+    fn allocate_frame<C: TestCommitter>(
+        &mut self,
+        plane_layers: &mut [(LayerId, PlaneLayer)],
+        pinned: &mut Vec<(LayerId, u32)>,
+        registry: &PlaneRegistry,
+        crtc_index: u32,
+        committer: &mut C,
+    ) -> Result<(drmkit_planes::Allocation, usize), SceneError> {
+        lower_bottom_layer_to_primary_slot(plane_layers, registry, crtc_index);
+        let refs: Vec<LayerRef<'_>> = plane_layers
+            .iter()
+            .map(|(id, layer)| LayerRef { id: *id, layer })
+            .collect();
+        let mut allocation = self.allocate_with_canvas(&refs, registry, crtc_index, committer)?;
+        drop(refs);
+        let refused = self.test_pins(&mut allocation, plane_layers, pinned, committer)?;
+        Ok((allocation, refused))
+    }
+
+    /// Test each pin the kernel has not been asked about, once per layer,
+    /// plane and geometry, and say how many it refused (drm-cxx `c766e97`).
+    ///
+    /// A pin the static checks accept can still be one the driver will not
+    /// drive -- a plane it refuses on this CRTC -- and the allocator's tests
+    /// leave pinned planes off, so nothing else would find out before the real
+    /// commit failed whole. Each pin is tested with the assignment and the
+    /// pins already proven. A refused one is composited this frame, and from
+    /// the next is not honoured, so the layer takes normal allocation.
+    fn test_pins<C: TestCommitter>(
+        &mut self,
+        allocation: &mut drmkit_planes::Allocation,
+        plane_layers: &mut [(LayerId, PlaneLayer)],
+        pinned: &mut Vec<(LayerId, u32)>,
+        committer: &mut C,
+    ) -> Result<usize, SceneError> {
+        let (refused, tests) = self.ask_about_pins(allocation, plane_layers, pinned, committer)?;
+        allocation.diagnostics.test_commits_issued += tests;
+        if refused.is_empty() {
+            return Ok(0);
+        }
+        // Composited this frame; from the next the pin is not honoured and the
+        // layer takes normal allocation.
+        for (layer_id, plane_layer) in plane_layers.iter_mut() {
+            if refused.contains(layer_id) {
+                plane_layer.set_pinned(false).set_assigned_plane(None);
+            }
+        }
+        pinned.retain(|(layer_id, _)| !refused.contains(layer_id));
+        allocation.composited.extend(refused.iter().copied());
+        self.allocator.invalidate_allocation();
+        Ok(refused.len())
+    }
+
+    /// The pins `test_pins` refused this frame, and how many tests it took.
+    fn ask_about_pins<C: TestCommitter>(
+        &mut self,
+        allocation: &drmkit_planes::Allocation,
+        plane_layers: &[(LayerId, PlaneLayer)],
+        pinned: &[(LayerId, u32)],
+        committer: &mut C,
+    ) -> Result<(Vec<LayerId>, usize), SceneError> {
+        let layer_of = |id: LayerId| {
+            plane_layers
+                .iter()
+                .find(|(layer_id, _)| *layer_id == id)
+                .map(|(_, layer)| layer)
+        };
+        let mut pairs: Vec<(u32, LayerRef<'_>)> = allocation
+            .assignment
+            .entries()
+            .iter()
+            .filter_map(|(plane_id, id)| {
+                layer_of(*id).map(|layer| (*plane_id, LayerRef { id: *id, layer }))
+            })
+            .collect();
+        let mut untested = Vec::new();
+        for (id, plane_id) in pinned {
+            let Some(layer) = layer_of(*id) else {
+                continue;
+            };
+            match pin_verdict(&self.pin_verdicts, *id, *plane_id, layer.property_hash()) {
+                Some(true) => pairs.push((*plane_id, LayerRef { id: *id, layer })),
+                // Revoked when lowered; not here.
+                Some(false) => {}
+                None => untested.push((*id, *plane_id, layer)),
+            }
+        }
+
+        let mut refused = Vec::new();
+        let mut tests = 0;
+        for (id, plane_id, layer) in untested {
+            pairs.push((plane_id, LayerRef { id, layer }));
+            tests += 1;
+            let accepted = match committer.test_assignment(&pairs) {
+                Ok(()) => true,
+                Err(TestFailure::NotMaster) => return Err(SceneError::NotMaster),
+                Err(TestFailure::Rejected) => false,
+            };
+            remember_pin(
+                &mut self.pin_verdicts,
+                PinVerdict {
+                    layer: id,
+                    plane: plane_id,
+                    hash: layer.property_hash(),
+                    accepted,
+                },
+            );
+            if !accepted {
+                pairs.pop();
+                refused.push(id);
+            }
+        }
+        Ok((refused, tests))
     }
 
     /// Where the canvas sits in the allocator's tests: above every layer.
@@ -1577,6 +1703,7 @@ impl LayerScene {
         self.committed_once = false;
         self.planes_unknown = true;
         self.last_canvas_plane = None;
+        self.pin_verdicts.clear();
         for handle in self.handles().collect::<Vec<_>>() {
             if let Some(layer) = self.layer_mut(handle) {
                 layer.hints_dirty = true;
@@ -2084,6 +2211,54 @@ enum PinOutcome {
     Honoured(u32),
     /// The plane cannot take this layer, so it goes through normal allocation.
     Refused,
+}
+
+/// The kernel's answer to one pin: this layer on this plane with this
+/// geometry (`Layer::property_hash`, which leaves content out).
+#[derive(Debug, Clone, Copy)]
+struct PinVerdict {
+    layer: LayerId,
+    plane: u32,
+    hash: u64,
+    accepted: bool,
+}
+
+/// What the kernel said about this pin, if it was asked.
+fn pin_verdict(verdicts: &[PinVerdict], layer: LayerId, plane: u32, hash: u64) -> Option<bool> {
+    verdicts
+        .iter()
+        .find(|v| v.layer == layer && v.plane == plane && v.hash == hash)
+        .map(|v| v.accepted)
+}
+
+/// Keep `verdict`. Bounded: a pinned layer whose geometry keeps changing adds
+/// one entry per geometry, so past the bound the cache starts over.
+fn remember_pin(verdicts: &mut Vec<PinVerdict>, verdict: PinVerdict) {
+    const MAX_PIN_VERDICTS: usize = 64;
+    if verdicts.len() >= MAX_PIN_VERDICTS {
+        verdicts.clear();
+    }
+    verdicts.push(verdict);
+}
+
+/// A pin the kernel refused is not honoured again: the layer is unpinned and
+/// takes normal allocation, and the refusal is counted.
+fn revoke_refused_pin(
+    verdicts: &[PinVerdict],
+    layer_id: LayerId,
+    plane_layer: &mut PlaneLayer,
+    pin: PinOutcome,
+) -> PinOutcome {
+    match pin {
+        PinOutcome::Honoured(plane_id)
+            if pin_verdict(verdicts, layer_id, plane_id, plane_layer.property_hash())
+                == Some(false) =>
+        {
+            plane_layer.set_pinned(false).set_assigned_plane(None);
+            PinOutcome::Refused
+        }
+        other => other,
+    }
 }
 
 /// Whether a plane can actually take the layer pinned to it.

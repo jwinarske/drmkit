@@ -1064,3 +1064,99 @@ fn an_emptied_scene_keeps_its_planes() {
     scene.finalize_frame(build, KernelResult::Ok);
     scene.flip_landed();
 }
+
+/// Refuses any test that arms `plane`, the way a driver refuses a plane it
+/// will not drive on this CRTC.
+#[derive(Debug, Default)]
+struct RefusingPlane {
+    plane: u32,
+    calls: usize,
+}
+
+impl TestCommitter for RefusingPlane {
+    fn test_assignment(&mut self, assignment: &[(u32, LayerRef<'_>)]) -> Result<(), TestFailure> {
+        self.calls += 1;
+        if assignment
+            .iter()
+            .any(|(plane_id, _)| *plane_id == self.plane)
+        {
+            Err(TestFailure::Rejected)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// A pin the driver refuses is tested before it is committed, not committed
+/// untested to fail the frame whole (drm-cxx `c766e97`). The refused layer is
+/// left off its plane and counted, and from the next frame takes normal
+/// allocation, without asking the kernel about that pin again.
+#[test]
+fn a_pin_the_driver_refuses_is_caught_before_the_commit() {
+    let log = Rc::new(RefCell::new(SourceLog::default()));
+    let mut scene = LayerScene::new(1);
+    let handle = scene.add_layer(Box::new(TestSource::new(&log)));
+    let layer = scene.layer_mut(handle).expect("layer");
+    layer.set_display(full_screen());
+    layer.set_pinned_plane(Some(32));
+    let mut committer = RefusingPlane {
+        plane: 32,
+        ..RefusingPlane::default()
+    };
+
+    let build = scene
+        .build_frame(&registry(), 0, real(), &mut committer)
+        .expect("the frame with the refused pin");
+    assert!(
+        build.plan().iter().all(|entry| entry.plane_id != 32),
+        "the refused plane is not programmed: {:?}",
+        build.plan()
+    );
+    let report = scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+    assert_eq!(report.pin_requests_unhonored, 1, "{report:?}");
+    assert!(report.accounting_balances(), "{report:?}");
+
+    // From the next frame the layer is unpinned: every test is the
+    // allocator's own search for it, and none is the pin asked again.
+    let tests_before = committer.calls;
+    let build = scene
+        .build_frame(&registry(), 0, real(), &mut committer)
+        .expect("the next frame");
+    let report = scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+    assert_eq!(
+        report.pin_requests_unhonored, 1,
+        "still counted: {report:?}"
+    );
+    assert!(report.accounting_balances(), "{report:?}");
+    assert_eq!(
+        committer.calls - tests_before,
+        report.test_commits_issued,
+        "the refused pin is not tested again"
+    );
+}
+
+/// A pin the driver takes is tested once; a steady frame does not ask again.
+#[test]
+fn an_accepted_pin_is_tested_once() {
+    let log = Rc::new(RefCell::new(SourceLog::default()));
+    let mut scene = LayerScene::new(1);
+    let handle = scene.add_layer(Box::new(TestSource::new(&log)));
+    let layer = scene.layer_mut(handle).expect("layer");
+    layer.set_display(full_screen());
+    layer.set_pinned_plane(Some(32));
+    let mut committer = Accepting::default();
+
+    for frame in 0..3 {
+        let build = scene
+            .build_frame(&registry(), 0, real(), &mut committer)
+            .expect("frame");
+        let placed: Vec<u32> = build.plan().iter().map(|entry| entry.plane_id).collect();
+        assert_eq!(placed, [32], "frame {frame}");
+        let report = scene.finalize_frame(build, KernelResult::Ok);
+        scene.flip_landed();
+        assert_eq!(report.pin_requests_unhonored, 0, "{report:?}");
+    }
+    assert_eq!(committer.calls, 1, "one test, for the pin");
+}

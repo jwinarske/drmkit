@@ -27,6 +27,15 @@ allow = [
 ]
 confidence-threshold = 0.93
 
+# jpeg-encoder is "(MIT OR Apache-2.0) AND IJG": its DCT derives from the
+# Independent JPEG Group's code. IJG is permissive, but asks a binary
+# distribution's documentation to credit the IJG. Scoped to that crate, which
+# only the optional `jpeg` feature of drmkit-capture pulls in, rather than
+# allowed everywhere.
+[[licenses.exceptions]]
+crate = "jpeg-encoder"
+allow = ["IJG"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

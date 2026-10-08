@@ -18,6 +18,22 @@
 
 pub use drmkit_planes::Rect;
 
+/// A source rectangle in 16.16 fixed point: the kernel's own `SRC_*`
+/// encoding, for a crop at sub-pixel precision. A Wayland viewport's source
+/// rectangle, for one, is in 1/256ths of a pixel, and rounding it moves the
+/// image by up to half a pixel and changes its scale. 1.0 is `0x10000`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FixedRect {
+    /// Left edge.
+    pub x: u32,
+    /// Top edge.
+    pub y: u32,
+    /// Width; zero means the buffer's full width.
+    pub w: u32,
+    /// Height; zero means the buffer's full height.
+    pub h: u32,
+}
+
 /// How a layer should be displayed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DisplayParams {
@@ -26,6 +42,14 @@ pub struct DisplayParams {
     /// A zero width or height means "the buffer's full extent" — see
     /// [`lower_layer`](crate::lower_layer), where that resolution happens.
     pub src_rect: Rect,
+
+    /// The source crop at sub-pixel precision.
+    ///
+    /// When set it takes precedence over [`src_rect`](Self::src_rect) and is
+    /// written to `SRC_X`/`Y`/`W`/`H` as given; a zero width or height still
+    /// means the buffer's full extent. The composition fallback, which
+    /// samples whole pixels, rounds it. `None`: `src_rect` applies.
+    pub src_rect_fixed: Option<FixedRect>,
 
     /// Region of the **CRTC** to show it on.
     ///

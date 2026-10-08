@@ -507,10 +507,6 @@ impl Layer {
     /// `SRC_*` are 16.16 fixed point; `CRTC_*` are whole pixels. A layer
     /// missing any of the four is treated as unscaled, matching the C++.
     #[must_use]
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "SRC_* are 16.16 fixed point; the integer part is a 32-bit field"
-    )]
     pub const fn requires_scaling(&self) -> bool {
         let (Some(src_w), Some(crtc_w), Some(src_h), Some(crtc_h)) = (
             self.property(PropTag::SrcW),
@@ -520,7 +516,10 @@ impl Layer {
         ) else {
             return false;
         };
-        (src_w >> 16) as u32 != crtc_w as u32 || (src_h >> 16) as u32 != crtc_h as u32
+        // SRC_* are 16.16, so compare at that precision. Truncating to whole
+        // pixels, as drm-cxx does, reads 800.25 source pixels onto 800 as 1:1
+        // (drm-cxx#348).
+        src_w != (crtc_w << 16) || src_h != (crtc_h << 16)
     }
 }
 

@@ -860,6 +860,85 @@ fn a_one_to_one_layer_does_not_read_as_scaled() {
     assert!(scaled.requires_scaling());
 }
 
+/// `SceneDisplayParams.FixedSrcRectScalesOnItsExactSize`: a 16.16 source
+/// rectangle scales exactly when its size, not rounded to whole pixels,
+/// differs from the destination's. Here through the lowered properties, which
+/// are what the allocator reads; there is no `needs_scaling` on the params.
+#[test]
+fn a_fixed_source_rectangle_scales_on_its_exact_size() {
+    let scaled = |fixed: Option<FixedRect>| {
+        let mut input = lowering_input();
+        input.display.src_rect = Rect {
+            x: 0,
+            y: 0,
+            w: 10,
+            h: 10,
+        }; // ignored once the fixed rect is set
+        input.display.dst_rect = Rect {
+            x: 0,
+            y: 0,
+            w: 800,
+            h: 600,
+        };
+        input.display.src_rect_fixed = fixed;
+        let mut plane_layer = PlaneLayer::new();
+        lower_layer(&input, &mut plane_layer);
+        plane_layer.requires_scaling()
+    };
+    let rect = |x, w| {
+        Some(FixedRect {
+            x,
+            y: 0,
+            w,
+            h: 600 << 16,
+        })
+    };
+    assert!(
+        !scaled(rect(0x8000, 800 << 16)),
+        "a half-pixel offset alone is no scale"
+    );
+    assert!(scaled(rect(0, (800 << 16) - 0x8000)), "799.5 px onto 800");
+    assert!(scaled(None), "back to the whole-pixel rect, 10 onto 800");
+    // Beyond upstream: a fraction *above* the destination size scales too.
+    // drm-cxx truncates SRC_W to whole pixels there and reads 800.25 as 1:1.
+    assert!(scaled(rect(0, (800 << 16) + 0x4000)), "800.25 px onto 800");
+}
+
+/// A fixed source rectangle goes to `SRC_*` as given, and a zero size still
+/// means the buffer's full extent.
+#[test]
+fn a_fixed_source_rectangle_is_written_as_given() {
+    let mut input = lowering_input();
+    input.display.src_rect_fixed = Some(FixedRect {
+        x: 0x8000,
+        y: 0x0040,
+        w: (320 << 16) + 0x100,
+        h: 0,
+    });
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&input, &mut plane_layer);
+
+    assert_eq!(plane_layer.property(PropTag::SrcX), Some(0x8000));
+    assert_eq!(plane_layer.property(PropTag::SrcY), Some(0x0040));
+    assert_eq!(
+        plane_layer.property(PropTag::SrcW),
+        Some((320 << 16) + 0x100)
+    );
+    assert_eq!(plane_layer.property(PropTag::SrcH), Some(to_16_16(1080)));
+}
+
+/// The canvas samples whole pixels, so it rounds a fixed rectangle to the
+/// nearest one, half up.
+#[test]
+fn the_canvas_rounds_a_fixed_rectangle_to_whole_pixels() {
+    use crate::scene::round_16_16;
+    assert_eq!(round_16_16(0), 0);
+    assert_eq!(round_16_16(0x7fff), 0);
+    assert_eq!(round_16_16(0x8000), 1);
+    assert_eq!(round_16_16((799 << 16) + 0x8000), 800);
+    assert_eq!(round_16_16(u32::MAX), 0x1_0000);
+}
+
 // --- frame lifecycle: what a commit does to scene state ----------------------
 
 fn real_commit() -> CommitKind {

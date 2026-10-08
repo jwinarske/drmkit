@@ -60,6 +60,11 @@ struct Committer {
     max_planes: Option<usize>,
     fail_with: Option<TestFailure>,
     seen: Vec<Vec<u32>>,
+    /// The plane armed beside each test's assignment, and whether it counts
+    /// against `max_planes` the way a plane-limited controller counts it.
+    extra: Option<u32>,
+    extras_seen: Vec<Option<u32>>,
+    count_extra: bool,
 }
 
 impl TestCommitter for Committer {
@@ -68,6 +73,8 @@ impl TestCommitter for Committer {
         let mut planes: Vec<u32> = assignment.iter().map(|(id, _)| *id).collect();
         planes.sort_unstable();
         self.seen.push(planes);
+        self.extras_seen.push(self.extra);
+        let armed = assignment.len() + usize::from(self.count_extra && self.extra.is_some());
 
         if let Some(failure) = self.fail_with {
             return Err(failure);
@@ -75,10 +82,18 @@ impl TestCommitter for Committer {
         if self.calls <= self.reject_first {
             return Err(TestFailure::Rejected);
         }
-        if self.max_planes.is_some_and(|max| assignment.len() > max) {
+        if self.max_planes.is_some_and(|max| armed > max) {
             return Err(TestFailure::Rejected);
         }
         Ok(())
+    }
+
+    fn set_extra_plane(&mut self, plane_id: u32, _layer: Layer) {
+        self.extra = Some(plane_id);
+    }
+
+    fn clear_extra_plane(&mut self) {
+        self.extra = None;
     }
 }
 
@@ -1151,4 +1166,91 @@ fn a_plane_limit_verdict_holds_while_its_planes_stay_free() {
         "one warm-start test"
     );
     assert_eq!(second.assignment.entries(), first.assignment.entries());
+}
+
+/// A primary and three overlays, every one taking a settable `zpos`.
+fn zpos_registry() -> PlaneRegistry {
+    PlaneRegistry::from_capabilities(vec![
+        plane(31, PlaneType::Primary, Some((0, 0))),
+        plane(32, PlaneType::Overlay, Some((1, 8))),
+        plane(33, PlaneType::Overlay, Some((1, 8))),
+        plane(34, PlaneType::Overlay, Some((1, 8))),
+    ])
+}
+
+/// Where planes take a `zpos`, a plane held for the canvas is armed in every
+/// test, so a controller that lights fewer planes than it offers is asked
+/// about the frame it will get. The tests used to leave it out and the frame
+/// committed one plane over the limit (the SA8155P: three armed on two).
+/// The warm start then re-tests the pair, once, rather than searching again.
+#[test]
+fn a_held_canvas_plane_is_tested_with_the_layers_and_kept_with_them() {
+    let registry = zpos_registry();
+    let layers = stacked_layers(3);
+    let mut allocator = Allocator::new();
+    allocator.set_canvas(&[32, 33, 34], Some(&Layer::new()));
+    let mut committer = Committer {
+        max_planes: Some(2),
+        count_extra: true,
+        ..Committer::default()
+    };
+
+    allocator.set_reserved_planes(&[34]);
+    allocator.hold_canvas_plane(Some(34));
+    let first = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut committer)
+        .expect("allocate");
+    assert_eq!(first.assignment.len(), 1, "{:?}", first.assignment);
+    assert_eq!(first.composited.len(), 2);
+    assert_eq!(allocator.canvas_plane(), Some(34));
+    assert!(
+        committer.extras_seen.iter().all(|extra| *extra == Some(34)),
+        "every test arms the canvas: {:?}",
+        committer.extras_seen
+    );
+
+    // The next frame holds nothing up front, as the scene's first pass does.
+    allocator.set_reserved_planes(&[]);
+    allocator.hold_canvas_plane(None);
+    committer.extras_seen.clear();
+    let second = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut committer)
+        .expect("allocate");
+    assert_eq!(
+        second.diagnostics.test_commits_issued, 1,
+        "one warm-start test"
+    );
+    assert_eq!(committer.extras_seen, [Some(34)], "with the canvas armed");
+    assert_eq!(second.assignment.entries(), first.assignment.entries());
+    assert_eq!(allocator.canvas_plane(), Some(34));
+}
+
+/// Once the layers fit, the plane the canvas held goes back to them (drm-cxx
+/// `8e73f82`): a reused scene that shrank is not held in composition by the
+/// canvas's own plane.
+#[test]
+fn a_held_canvas_plane_goes_back_to_the_layers_once_they_fit() {
+    let registry = zpos_registry();
+    let mut layers = stacked_layers(5);
+    let mut allocator = Allocator::new();
+    allocator.set_canvas(&[32, 33, 34], Some(&Layer::new()));
+
+    allocator.set_reserved_planes(&[34]);
+    allocator.hold_canvas_plane(Some(34));
+    let first = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+    assert_eq!(first.composited.len(), 2, "{:?}", first.composited);
+
+    let gone = first.composited[0];
+    layers.retain(|(id, _)| *id != gone);
+    allocator.set_reserved_planes(&[]);
+    allocator.hold_canvas_plane(None);
+    let shrunk = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    assert!(shrunk.composited.is_empty(), "{:?}", shrunk.composited);
+    assert_eq!(shrunk.assignment.len(), 4);
+    assert_eq!(allocator.canvas_plane(), None);
 }

@@ -725,6 +725,80 @@ fn the_plane_a_removed_layer_held_is_disabled() {
     );
 }
 
+/// Until a real commit lands, every plane the frame does not use is turned
+/// off, whatever the allocator's baseline says.
+///
+/// The baseline knows only what this scene lit. Another client -- the session
+/// it took over from, a compositor that held the CRTC while it was suspended
+/// -- can leave a plane armed, and every `TEST_ONLY` disables that plane, so
+/// the frame the kernel accepted is one without it. Leaving it out of the real
+/// commit puts it on screen and, on a controller that lights fewer planes than
+/// it offers, over the limit the tests were held to. Once the scene's own
+/// commit has landed it is the authority again, and a resume makes it not.
+#[test]
+fn until_a_commit_lands_every_unused_plane_is_turned_off() {
+    let log = Rc::new(RefCell::new(SourceLog::default()));
+    let mut scene = LayerScene::new(1);
+    let registry = registry();
+    let mut committer = Accepting::default();
+
+    // An empty frame keeps whatever is there: an active CRTC's only primary
+    // cannot be disabled on some controllers.
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("empty frame");
+    assert!(build.disables().is_empty(), "{:?}", build.disables());
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+
+    let handle = scene.add_layer(Box::new(TestSource::new(&log)));
+    scene
+        .layer_mut(handle)
+        .expect("layer")
+        .set_display(full_screen());
+    let unused = |build: &drmkit_scene::FrameBuild| -> Vec<u32> {
+        let mut planes: Vec<u32> = registry
+            .force_disable_candidates(0)
+            .map(|plane| plane.id)
+            .filter(|id| !build.plan().iter().any(|entry| entry.plane_id == *id))
+            .collect();
+        planes.sort_unstable();
+        planes
+    };
+    let sorted = |build: &drmkit_scene::FrameBuild| -> Vec<u32> {
+        let mut planes = build.disables().to_vec();
+        planes.sort_unstable();
+        planes
+    };
+
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("first frame with a layer");
+    assert!(!unused(&build).is_empty(), "the case needs a spare plane");
+    assert_eq!(
+        sorted(&build),
+        unused(&build),
+        "the first commit clears the CRTC"
+    );
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("settled frame");
+    assert!(build.disables().is_empty(), "{:?}", build.disables());
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+
+    scene.resume();
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("frame after a resume");
+    assert_eq!(sorted(&build), unused(&build), "a resume clears it again");
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+}
+
 // --- EAGAIN flow control -----------------------------------------------------
 
 /// A starved layer keeps its plane, and the report still balances.

@@ -517,6 +517,18 @@ pub struct LayerScene {
     /// describes nothing -- so the first frame is never skipped, however
     /// quiet the sources are.
     committed_once: bool,
+    /// Whether the kernel may hold planes on this CRTC that the scene did not
+    /// light: until a real commit lands, and again after a rebind or a
+    /// resume.
+    ///
+    /// Another client -- the session the scene took over from, a splash, a
+    /// compositor that held the CRTC while the scene was suspended -- can
+    /// leave a plane armed, and the allocator's baseline, knowing nothing of
+    /// it, reports it off. Every `TEST_ONLY` disables it, so the frame the
+    /// kernel accepts is one without it; without this the real commit leaves
+    /// it lit, on screen over or under the scene and counted against a
+    /// controller's plane limit.
+    planes_unknown: bool,
     /// What a rebind to another CRTC left lit on the old one.
     detach: Option<PendingDetach>,
 }
@@ -562,6 +574,7 @@ impl LayerScene {
             retiring: Vec::new(),
             topology_dirty: true,
             committed_once: false,
+            planes_unknown: true,
             detach: None,
         }
     }
@@ -608,8 +621,12 @@ impl LayerScene {
     }
 
     /// Lift a suspension after the session resumes.
+    ///
+    /// Whoever held the CRTC meanwhile may have left planes lit, so the next
+    /// frame turns off every plane it does not use.
     pub const fn resume(&mut self) {
         self.lifecycle.resume();
+        self.planes_unknown = true;
     }
 
     /// Add a layer backed by `source`.
@@ -908,7 +925,7 @@ impl LayerScene {
         self.topology_dirty = false;
         self.committed_once = true;
 
-        let (mut plan, disables) = build_plan(
+        let (mut plan, mut disables) = build_plan(
             &self.allocator,
             &allocation,
             &plane_layers,
@@ -917,6 +934,7 @@ impl LayerScene {
             &frame_damage,
             &pinned,
         );
+        self.disable_foreign(&mut disables, &plan, registry, crtc_index, committer);
         let disables = if let Some(composition) = canvas_plane {
             let plane_id = composition.plane_id;
             plan.push(PlanePlan {
@@ -960,6 +978,42 @@ impl LayerScene {
             kind,
             finalized: false,
         })
+    }
+
+    /// Turn off the planes another client left lit, while the scene does not
+    /// yet know what the kernel holds (see `planes_unknown`).
+    ///
+    /// Asks the committer what is lit on this CRTC; one that cannot tell gets
+    /// every plane the frame does not use turned off, as every test does. Not
+    /// for an empty frame: that keeps whatever is there, since an active
+    /// CRTC's only primary cannot be disabled on some controllers (i.MX
+    /// LCDIF), the rule upstream's `d895c8d` keeps too.
+    fn disable_foreign<C: TestCommitter>(
+        &self,
+        disables: &mut Vec<u32>,
+        plan: &[PlanePlan],
+        registry: &PlaneRegistry,
+        crtc_index: u32,
+        committer: &mut C,
+    ) {
+        if !self.planes_unknown || plan.is_empty() {
+            return;
+        }
+        let candidates: Vec<u32> = registry
+            .force_disable_candidates(crtc_index)
+            .map(|plane| plane.id)
+            .collect();
+        let lit = committer
+            .lit_planes(self.crtc_id)
+            .unwrap_or_else(|| candidates.clone());
+        for plane_id in lit {
+            if candidates.contains(&plane_id)
+                && !disables.contains(&plane_id)
+                && !plan.iter().any(|entry| entry.plane_id == plane_id)
+            {
+                disables.push(plane_id);
+            }
+        }
     }
 
     /// Give the scene a composition canvas.
@@ -1327,6 +1381,10 @@ impl LayerScene {
                 .filter_map(|entry| entry.zpos.map(|zpos| (entry.plane_id, zpos)))
                 .collect();
             self.allocator.record_commit_stacked(&applied, &stacked);
+            // An empty frame swept nothing, so it settles nothing.
+            if !plan.is_empty() {
+                self.planes_unknown = false;
+            }
         }
 
         // Which layers asked for the release fence, decided before the
@@ -1480,6 +1538,7 @@ impl LayerScene {
         // set is effectively new to it.
         self.topology_dirty = true;
         self.committed_once = false;
+        self.planes_unknown = true;
         for handle in self.handles().collect::<Vec<_>>() {
             if let Some(layer) = self.layer_mut(handle) {
                 layer.hints_dirty = true;

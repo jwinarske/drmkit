@@ -1120,3 +1120,35 @@ fn a_scene_back_under_the_plane_count_retires_the_canvas() {
     );
     assert_eq!(allocator.canvas_plane(), None);
 }
+
+/// On a controller that lights fewer planes than it offers, the search
+/// composites with planes free -- and a free plane alone must not send every
+/// later frame back to search, or the settled scene pays the whole descent
+/// each frame to reach the same answer (drm-cxx `893a938`'s steady state).
+#[test]
+fn a_plane_limit_verdict_holds_while_its_planes_stay_free() {
+    let registry = fixed_order_registry();
+    let layers = stacked_layers(3);
+    let mut allocator = Allocator::new();
+    allocator.set_canvas(&[31, 32, 33, 34], Some(&Layer::new()));
+    // One plane besides the canvas, which this committer does not count.
+    let mut committer = Committer {
+        max_planes: Some(1),
+        ..Committer::default()
+    };
+
+    let first = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut committer)
+        .expect("allocate");
+    assert_eq!(first.assignment.len(), 1);
+    assert_eq!(first.composited.len(), 2);
+
+    let second = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut committer)
+        .expect("allocate");
+    assert_eq!(
+        second.diagnostics.test_commits_issued, 1,
+        "one warm-start test"
+    );
+    assert_eq!(second.assignment.entries(), first.assignment.entries());
+}

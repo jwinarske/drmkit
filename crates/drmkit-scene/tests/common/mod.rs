@@ -200,6 +200,22 @@ impl Fixture {
 
     /// Build and issue one real commit.
     pub(crate) fn commit(&mut self) -> Result<CommitReport, String> {
+        self.commit_within(None).map(|(report, _)| report)
+    }
+
+    /// Build and issue one real commit on a CRTC that lights at most `limit`
+    /// planes at once, as some controllers do while advertising more (RK3566
+    /// VOP2: three eligible, two usable).
+    ///
+    /// vkms has no such limit, so it is imposed: every allocator `TEST_ONLY`
+    /// that would arm more is refused, and so is the real commit -- counted
+    /// against what the kernel has now plus what the request writes. Returns
+    /// the report and how many tests the limit refused.
+    pub(crate) fn commit_limited(&mut self, limit: usize) -> Result<(CommitReport, usize), String> {
+        self.commit_within(Some(limit))
+    }
+
+    fn commit_within(&mut self, limit: Option<usize>) -> Result<(CommitReport, usize), String> {
         let modeset = if self.needs_modeset {
             Some(
                 Modeset::learn(&self.device, self.crtc_id, self.connector_id, &self.mode)
@@ -213,14 +229,19 @@ impl Fixture {
             flags |= AtomicCommitFlags::ALLOW_MODESET;
         }
 
-        let mut committer = DeviceCommitter::new(
-            &self.device,
-            &self.map,
-            &self.registry,
-            self.crtc_index,
-            AtomicCommitFlags::empty(),
-            modeset.as_ref(),
-        );
+        let mut committer = PlaneLimit {
+            inner: DeviceCommitter::new(
+                &self.device,
+                &self.map,
+                &self.registry,
+                self.crtc_index,
+                AtomicCommitFlags::empty(),
+                modeset.as_ref(),
+            ),
+            limit,
+            extra: None,
+            refused: 0,
+        };
         let mut build = self
             .scene
             .build_frame(
@@ -230,6 +251,7 @@ impl Fixture {
                 &mut committer,
             )
             .map_err(|error| format!("building: {error}"))?;
+        let refused = committer.refused;
 
         let mut request = AtomicRequest::with_capacity(64);
         let (_, _damage_blobs) = emit_frame_damaged(
@@ -244,6 +266,15 @@ impl Fixture {
             .map_err(|error| format!("fences: {error}"))?;
 
         let programmed: Vec<u32> = build.plan().iter().map(|entry| entry.plane_id).collect();
+        if let Some(limit) = limit {
+            let armed = self.armed_after(&request);
+            if armed > limit {
+                self.scene.finalize_frame(build, KernelResult::Rejected);
+                return Err(format!(
+                    "committing: the frame arms {armed} planes on a CRTC that lights {limit}"
+                ));
+            }
+        }
         match request.commit(&self.device, flags) {
             Ok(()) => {
                 // Colorimetry is restated until the kernel has taken it once.
@@ -253,13 +284,74 @@ impl Fixture {
                     self.map.note_color_committed(plane_id);
                 }
                 self.needs_modeset = false;
-                Ok(self.scene.finalize_frame(build, KernelResult::Ok))
+                Ok((self.scene.finalize_frame(build, KernelResult::Ok), refused))
             }
             Err(error) => {
                 self.scene.finalize_frame(build, KernelResult::Rejected);
                 Err(format!("committing: {error}"))
             }
         }
+    }
+
+    /// Planes armed on this CRTC once `request` applies on top of what the
+    /// kernel has now.
+    fn armed_after(&self, request: &AtomicRequest) -> usize {
+        self.registry
+            .for_crtc(self.crtc_index)
+            .filter(|plane| {
+                let written = |tag| {
+                    let property = self.map.property_id(plane.id, tag)?;
+                    request
+                        .writes()
+                        .iter()
+                        .rev()
+                        .find(|w| w.object_id == plane.id && w.property_id == property)
+                        .map(|w| w.value)
+                };
+                let fb = written(drmkit_planes::PropTag::FbId)
+                    .or_else(|| self.plane_property(plane.id, "FB_ID"))
+                    .unwrap_or(0);
+                let crtc = written(drmkit_planes::PropTag::CrtcId)
+                    .or_else(|| self.plane_property(plane.id, "CRTC_ID"))
+                    .unwrap_or(0);
+                fb != 0 && crtc == u64::from(self.crtc_id)
+            })
+            .count()
+    }
+
+    /// Give the scene a canvas the size of the mode.
+    pub(crate) fn enable_full_screen_composition(&mut self) -> Option<()> {
+        let (w, h) = self.mode_size();
+        self.scene.enable_composition(&self.device, w, h).ok()
+    }
+
+    /// Fill a layer's buffer with one opaque `xrgb` color.
+    pub(crate) fn paint(&mut self, handle: LayerHandle, xrgb: u32) -> Option<()> {
+        let layer = self.scene.layer_mut(handle)?;
+        let mut mapping = layer.source_mut().map(drmkit_dumb::MapAccess::Write).ok()?;
+        let stride = mapping.stride() as usize;
+        let width = mapping.width() as usize;
+        for row in mapping.pixels_mut().chunks_mut(stride) {
+            for pixel in row[..width * 4].chunks_exact_mut(4) {
+                pixel.copy_from_slice(&(0xFF00_0000 | xrgb).to_le_bytes());
+            }
+        }
+        Some(())
+    }
+
+    /// Ask for a layer's zpos, leaving everything else about it alone.
+    pub(crate) fn set_zpos(&mut self, handle: LayerHandle, zpos: u64) {
+        let layer = self.scene.layer_mut(handle).expect("the layer");
+        let mut display = *layer.display();
+        display.zpos = Some(zpos);
+        layer.set_display(display);
+    }
+
+    /// The color on screen at `(x, y)`, read back from the CRTC, alpha
+    /// dropped.
+    pub(crate) fn pixel_at(&self, x: u32, y: u32) -> u32 {
+        let image = drmkit_capture::snapshot(&self.device, self.crtc_id).expect("snapshot");
+        image.pixels()[(y * image.width() + x) as usize] & 0x00FF_FFFF
     }
 
     /// How many planes on this CRTC the allocator may place a layer on.
@@ -403,3 +495,37 @@ impl Fixture {
     reason = "not every test file in this crate picks a CRTC"
 )]
 pub(crate) use drmkit_testkit::crtc::pick_crtc;
+
+/// A committer for a CRTC that lights at most `limit` planes: any test that
+/// would arm more is refused before it reaches the kernel. The canvas counts,
+/// which is the whole point -- it is the plane that tips such a frame over.
+struct PlaneLimit<'a> {
+    inner: DeviceCommitter<'a>,
+    limit: Option<usize>,
+    extra: Option<u32>,
+    refused: usize,
+}
+
+impl drmkit_planes::TestCommitter for PlaneLimit<'_> {
+    fn test_assignment(
+        &mut self,
+        assignment: &[(u32, drmkit_planes::LayerRef<'_>)],
+    ) -> Result<(), drmkit_planes::TestFailure> {
+        let planes = assignment.len() + usize::from(self.extra.is_some());
+        if self.limit.is_some_and(|limit| planes > limit) {
+            self.refused += 1;
+            return Err(drmkit_planes::TestFailure::Rejected);
+        }
+        self.inner.test_assignment(assignment)
+    }
+
+    fn set_extra_plane(&mut self, plane_id: u32, layer: drmkit_planes::Layer) {
+        self.extra = Some(plane_id);
+        self.inner.set_extra_plane(plane_id, layer);
+    }
+
+    fn clear_extra_plane(&mut self) {
+        self.extra = None;
+        self.inner.clear_extra_plane();
+    }
+}

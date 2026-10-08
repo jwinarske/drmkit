@@ -72,6 +72,12 @@ reports it dirty in the meantime.
 Everything without such a header is expected to diff clean, and a dirty result
 there is a real finding.
 
+One exception, on a host whose fbdev client restores the console framebuffer
+to the primary between clients (vkms does): the port's first commit turns that
+plane off and upstream's does not, so each scenario that leaves the primary
+unused differs by one `FB_ID = 0` / `CRTC_ID = 0` pair on `plane[0]`. That is
+drm-cxx#342, the port being right; see P-43.
+
 ## Adding a scenario
 
 Scenario grammar, and `#` comments. Both runners parse it independently; keep

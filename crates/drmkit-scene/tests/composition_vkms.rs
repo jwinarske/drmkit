@@ -106,6 +106,18 @@ struct Fixture {
 }
 
 fn fixture() -> Option<Fixture> {
+    fixture_claiming_zpos(false)
+}
+
+/// As [`fixture`], but with a registry that says every plane takes a written
+/// `zpos`, which vkms's do not.
+///
+/// vkms stacks planes by id, so on it the allocator takes the plane-order
+/// path, and the path every driver with a settable `zpos` takes -- the scene's
+/// canvas reservation and its spare-plane second pass -- would otherwise never
+/// run against a device. The claim only steers the search: a plane with no
+/// `zpos` property has none to write, so nothing reaches the kernel for it.
+fn fixture_claiming_zpos(claim: bool) -> Option<Fixture> {
     use drm::control::Device as _;
 
     let device = open_card_or_skip()?;
@@ -152,6 +164,8 @@ fn fixture() -> Option<Fixture> {
             plane_type,
             formats: vec![fourcc::ARGB8888],
             supports_scaling: true,
+            zpos_min: claim.then_some(0),
+            zpos_max: claim.then_some(15),
             ..PlaneCapabilities::default()
         });
     }
@@ -510,6 +524,21 @@ impl drmkit_planes::TestCommitter for PlaneBudget<'_> {
 #[test]
 #[ignore = "needs a DRM device"]
 fn a_frame_never_arms_more_planes_than_the_kernel_will_take_vkms() {
+    let _guard = card_guard();
+    never_arms_more_planes_than_the_kernel_will_take(fixture());
+}
+
+/// The same, on the path a driver with a settable `zpos` takes: the canvas is
+/// held back by the scene's second pass rather than placed by the
+/// allocator's plane order.
+#[test]
+#[ignore = "needs a DRM device"]
+fn with_zpos_a_frame_never_arms_more_planes_than_the_kernel_will_take_vkms() {
+    let _guard = card_guard();
+    never_arms_more_planes_than_the_kernel_will_take(fixture_claiming_zpos(true));
+}
+
+fn never_arms_more_planes_than_the_kernel_will_take(fx: Option<Fixture>) {
     // P-18. The allocator settles on an assignment the kernel accepts, and the
     // canvas then lands on a plane that was in no test -- so the frame
     // committed is one plane larger than the frame validated. On hardware that
@@ -518,8 +547,7 @@ fn a_frame_never_arms_more_planes_than_the_kernel_will_take_vkms() {
     //
     // Reproduced on a Radxa ZERO 3 (rockchip VOP2, 3 planes advertised, 2
     // usable); imposed here so it stays reproducible without that board.
-    let _guard = card_guard();
-    let Some(mut fx) = fixture() else { return };
+    let Some(mut fx) = fx else { return };
     if fx.planes < 3 {
         drmkit_testkit::skipped("needs at least 3 candidate planes to squeeze");
         return;

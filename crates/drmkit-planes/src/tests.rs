@@ -1804,3 +1804,80 @@ fn plane_order_consistency() {
         stacked_at(1, Some(31), false),
     ]));
 }
+
+// --- multirect ---------------------------------------------------------------
+
+/// `Multirect.ParsesParentFromCapabilitiesBlob`
+#[test]
+fn parses_parent_from_capabilities_blob() {
+    let blob = b"max_linewidth=4096\nprimary_smart_plane_id=118\nmax_upscale=20\n";
+    assert_eq!(crate::parse_multirect_parent(blob), Some(118));
+}
+
+/// `Multirect.KeyAtBlobStart`
+#[test]
+fn key_at_blob_start() {
+    assert_eq!(
+        crate::parse_multirect_parent(b"primary_smart_plane_id=97\n"),
+        Some(97)
+    );
+}
+
+/// `Multirect.OrdinaryPlaneHasNoParent`
+#[test]
+fn ordinary_plane_has_no_parent() {
+    assert_eq!(
+        crate::parse_multirect_parent(b"max_linewidth=4096\nscaler_version=2\n"),
+        None
+    );
+    assert_eq!(crate::parse_multirect_parent(b""), None);
+}
+
+/// `Multirect.KeyMustStartALine`
+#[test]
+fn key_must_start_a_line() {
+    assert_eq!(
+        crate::parse_multirect_parent(b"not_primary_smart_plane_id=5\n"),
+        None
+    );
+}
+
+/// `Multirect.GarbageOrZeroValueIgnored`
+#[test]
+fn garbage_or_zero_value_ignored() {
+    assert_eq!(
+        crate::parse_multirect_parent(b"primary_smart_plane_id=abc\n"),
+        None
+    );
+    assert_eq!(
+        crate::parse_multirect_parent(b"primary_smart_plane_id=0\n"),
+        None
+    );
+}
+
+/// `Multirect.VirtualPlaneNeedsParentInUse`
+#[test]
+fn virtual_plane_needs_parent_in_use() {
+    let used = [115_u32, 97];
+    let in_use = |id: u32| used.contains(&id);
+    assert!(crate::multirect_pairing_ok(None, in_use), "ordinary plane");
+    assert!(
+        crate::multirect_pairing_ok(Some(115), in_use),
+        "parent armed"
+    );
+    assert!(
+        !crate::multirect_pairing_ok(Some(118), in_use),
+        "parent free"
+    );
+}
+
+/// Beyond upstream's file: the blob is driver-private bytes, not text, and a
+/// stray non-UTF-8 byte elsewhere in it must not hide the key; nor does a
+/// NUL terminator after the number.
+#[test]
+fn the_key_is_found_in_bytes_that_are_not_utf8() {
+    assert_eq!(
+        crate::parse_multirect_parent(b"name=\xff\xfe\nprimary_smart_plane_id=118\0"),
+        Some(118)
+    );
+}

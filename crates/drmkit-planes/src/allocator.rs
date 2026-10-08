@@ -828,11 +828,11 @@ impl Allocator {
             && order_holds
             && !self.previous.is_empty()
             && self.previous_still_applies(&placeable)
-            && stacking_consistent_all(
-                &registry.for_crtc(crtc_index).collect::<Vec<_>>(),
-                &self.previous,
-                &placeable,
-            )
+            && {
+                let planes: Vec<&PlaneCapabilities> = registry.for_crtc(crtc_index).collect();
+                stacking_consistent_all(&planes, &self.previous, &placeable)
+                    && multirect_complete(&planes, &self.previous)
+            }
             && let Some(allocation) = self.warm_start(&placeable, canvas, committer)?
         {
             return Ok(allocation);
@@ -1097,10 +1097,13 @@ impl Allocator {
             .filter(|entry| entry.layer.is_pinned())
             .filter_map(|entry| entry.layer.assigned_plane())
             .collect();
+        // Left out rather than modeled: a multirect virtual plane, which needs
+        // its parent armed alongside.
         let mut planes: Vec<&PlaneCapabilities> = registry
             .for_crtc(crtc_index)
             .filter(|plane| {
                 plane.plane_type != PlaneType::Cursor
+                    && plane.multirect_parent.is_none()
                     && !self.reserved.contains(&plane.id)
                     && !pinned.contains(&plane.id)
             })
@@ -1226,8 +1229,10 @@ impl Allocator {
         }
         // The matching knows nothing about stacking, so an inverted preseed
         // goes straight to the greedy pass rather than to a TEST that would
-        // accept it.
+        // accept it. Likewise a multirect virtual plane matched without its
+        // parent, which the TEST would refuse.
         if stacking_consistent_all(planes, &assignment, &ordered)
+            && multirect_complete(planes, &assignment)
             && self.try_test(&assignment, &ordered, committer)?
         {
             return Ok(assignment);
@@ -1238,9 +1243,15 @@ impl Allocator {
         let mut candidates = self.rank_candidates(&ordered, planes, crtc_index);
         candidates.sort_by(|a, b| b.2.cmp(&a.2));
 
+        // Ordinary planes first, then multirect virtual planes, each only
+        // once the first pass has taken its parent.
+        let (ordinary, virtual_planes): (Vec<_>, Vec<_>) =
+            candidates.into_iter().partition(|(plane_id, _, _)| {
+                caps_in(planes, *plane_id).is_none_or(|plane| plane.multirect_parent.is_none())
+            });
         let mut used_planes: Vec<u32> = Vec::new();
         let mut used_layers: Vec<LayerId> = Vec::new();
-        for (plane_id, layer, _) in candidates {
+        for (plane_id, layer, _) in ordinary.into_iter().chain(virtual_planes) {
             if used_planes.contains(&plane_id) || used_layers.contains(&layer.id) {
                 continue;
             }
@@ -1257,7 +1268,9 @@ impl Allocator {
             // The kernel accepts an inverted stack, so no TEST would catch
             // one: a layer is placed only where it stacks in the order its
             // zpos asks relative to what is already placed.
-            if !fits_stacking(planes, &assignment, &ordered, plane_id, layer.layer) {
+            if !fits_stacking(planes, &assignment, &ordered, plane_id, layer.layer)
+                || !fits_multirect(planes, &assignment, plane_id)
+            {
                 continue;
             }
             assignment.insert(plane_id, layer.id);
@@ -1282,7 +1295,22 @@ impl Allocator {
         });
 
         for (plane_id, _) in by_priority {
-            assignment.remove(plane_id);
+            if assignment.remove(plane_id).is_none() {
+                continue; // already dropped as an orphaned multirect child
+            }
+            // Dropping a multirect parent orphans its virtual plane; drop that
+            // too.
+            let children: Vec<u32> = assignment
+                .entries()
+                .iter()
+                .map(|(id, _)| *id)
+                .filter(|id| {
+                    caps_in(planes, *id).is_some_and(|c| c.multirect_parent == Some(plane_id))
+                })
+                .collect();
+            for child in children {
+                assignment.remove(child);
+            }
             if assignment.is_empty() {
                 break;
             }
@@ -1470,6 +1498,35 @@ fn fits_stacking(
         };
         crate::stacking_consistent(plane, zpos, other, entry.layer.property(PropTag::Zpos))
     })
+}
+
+/// The capabilities of `plane_id` among `planes`.
+fn caps_in<'a>(planes: &[&'a PlaneCapabilities], plane_id: u32) -> Option<&'a PlaneCapabilities> {
+    planes.iter().find(|plane| plane.id == plane_id).copied()
+}
+
+/// Whether `plane_id` may join `assignment`: not a multirect virtual plane, or
+/// one whose parent is already in it (see [`multirect_pairing_ok`]).
+///
+/// As with stacking, a plane missing from `planes` is not held against it.
+fn fits_multirect(
+    planes: &[&PlaneCapabilities],
+    assignment: &PlaneAssignment,
+    plane_id: u32,
+) -> bool {
+    caps_in(planes, plane_id).is_none_or(|plane| {
+        crate::multirect_pairing_ok(plane.multirect_parent, |parent| {
+            assignment.get(parent).is_some()
+        })
+    })
+}
+
+/// Whether no multirect virtual plane in `assignment` is without its parent.
+fn multirect_complete(planes: &[&PlaneCapabilities], assignment: &PlaneAssignment) -> bool {
+    assignment
+        .entries()
+        .iter()
+        .all(|(plane_id, _)| fits_multirect(planes, assignment, *plane_id))
 }
 
 /// Whether every placement in `assignment` stacks consistently.

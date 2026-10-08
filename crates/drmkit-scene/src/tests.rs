@@ -1449,6 +1449,27 @@ fn overflow_reserves_last_frames_canvas_plane() {
     );
 }
 
+/// Overflow never reserves a multirect virtual plane, last frame's or the
+/// first overlay: held, it is armed in every test the allocator runs, which
+/// fail whenever the search gives its parent away (drm-cxx `4b366b5`).
+#[test]
+fn overflow_never_reserves_a_virtual_plane() {
+    let registry = drmkit_planes::PlaneRegistry::from_capabilities(vec![
+        reservation_plane(31, drmkit_planes::PlaneType::Primary, Some((0, 0))),
+        drmkit_planes::PlaneCapabilities {
+            multirect_parent: Some(34),
+            ..reservation_plane(33, drmkit_planes::PlaneType::Overlay, Some((1, 8)))
+        },
+        reservation_plane(34, drmkit_planes::PlaneType::Overlay, Some((1, 8))),
+    ]);
+    let layers: Vec<drmkit_planes::Layer> = (0..5).map(|_| reservation_layer(None)).collect();
+    let reserve = |previous| {
+        crate::scene::canvas_reservation(true, &refs_of(&layers), &registry, 0, previous)
+    };
+    assert_eq!(reserve(None), vec![34]);
+    assert_eq!(reserve(Some(33)), vec![34]);
+}
+
 /// The order itself: last frame's plane, then overlays, then primaries, and
 /// only planes that can carry the canvas -- a previous plane that cannot is
 /// skipped rather than tried.

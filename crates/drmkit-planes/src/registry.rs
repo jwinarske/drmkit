@@ -131,6 +131,12 @@ pub struct PlaneCapabilities {
     pub zpos_min: Option<u64>,
     /// Maximum `zpos`, if the plane exposes the property.
     pub zpos_max: Option<u64>,
+    /// For a multirect "virtual" plane -- the second rectangle of a hardware
+    /// pipe, which some controllers publish as its own plane -- the id of the
+    /// parent plane it is only valid alongside. `None` for ordinary planes.
+    /// Read from the driver's read-only `capabilities` blob
+    /// (`primary_smart_plane_id=`); see [`parse_multirect_parent`](crate::parse_multirect_parent).
+    pub multirect_parent: Option<u32>,
     /// Supported rotate/reflect angles as a `DRM_MODE_ROTATE_*` /
     /// `DRM_MODE_REFLECT_*` mask; 0 when the plane exposes no rotation.
     ///

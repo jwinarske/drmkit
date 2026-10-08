@@ -363,11 +363,6 @@ impl Fixture {
         Some(image.pixels()[(y * image.width() + x) as usize] & 0x00FF_FFFF)
     }
 
-    /// Whether this CRTC's planes stack by plane id: none takes a `zpos`.
-    pub(crate) fn stacks_by_plane_id(&self) -> bool {
-        drmkit_planes::stacks_by_plane_id(&self.registry, self.crtc_index)
-    }
-
     /// How many planes on this CRTC the allocator may place a layer on.
     ///
     /// Measured rather than assumed: it is the number a pressure case has to

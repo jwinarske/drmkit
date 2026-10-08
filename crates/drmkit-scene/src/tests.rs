@@ -1314,7 +1314,7 @@ fn a_pinned_primary_with_no_eligible_layer_is_reserved() {
         .collect();
 
     assert_eq!(
-        crate::scene::canvas_reservation(true, &refs, &registry, 0),
+        crate::scene::canvas_reservation(true, &refs, &registry, 0, None),
         vec![31],
         "the primary is held out of the disable pass"
     );
@@ -1338,7 +1338,7 @@ fn a_layer_matching_the_pin_makes_the_anchor_unnecessary() {
         })
         .collect();
 
-    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0).is_empty());
+    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0, None).is_empty());
 }
 
 /// So does a layer with no zpos at all: it is free to land on the pin, and
@@ -1359,7 +1359,7 @@ fn a_layer_with_no_zpos_makes_the_anchor_unnecessary() {
         })
         .collect();
 
-    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0).is_empty());
+    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0, None).is_empty());
 }
 
 /// A primary with no zpos property is not pinned, so there is nothing to
@@ -1380,13 +1380,13 @@ fn an_unpinned_primary_is_not_anchored() {
         })
         .collect();
 
-    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0).is_empty());
+    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0, None).is_empty());
 }
 
-/// The overflow trigger still works, and still takes the last candidate so the
-/// layers below the canvas keep the lower-indexed planes.
+/// The overflow trigger still works, and takes an overlay so the primary stays
+/// free for the bottom layer.
 #[test]
-fn overflow_still_reserves_the_last_candidate() {
+fn overflow_reserves_an_overlay_for_the_canvas() {
     let registry = drmkit_planes::PlaneRegistry::from_capabilities(vec![
         reservation_plane(31, drmkit_planes::PlaneType::Primary, Some((0, 0))),
         reservation_plane(32, drmkit_planes::PlaneType::Overlay, Some((1, 4))),
@@ -1402,9 +1402,65 @@ fn overflow_still_reserves_the_last_candidate() {
         .collect();
 
     assert_eq!(
-        crate::scene::canvas_reservation(true, &refs, &registry, 0),
+        crate::scene::canvas_reservation(true, &refs, &registry, 0, None),
         vec![32]
     );
+}
+
+fn refs_of(layers: &[drmkit_planes::Layer]) -> Vec<drmkit_planes::LayerRef<'_>> {
+    layers
+        .iter()
+        .enumerate()
+        .map(|(i, layer)| drmkit_planes::LayerRef {
+            id: drmkit_planes::LayerId(i as u64 + 1),
+            layer,
+        })
+        .collect()
+}
+
+/// Two primaries, the shape of P-24 (57 CRTCs across six drivers in the
+/// drmdb corpus): the canvas takes the first overlay, not the second primary
+/// and not the last plane listed (drm-cxx `6d787f9`).
+fn two_primaries() -> drmkit_planes::PlaneRegistry {
+    drmkit_planes::PlaneRegistry::from_capabilities(vec![
+        reservation_plane(31, drmkit_planes::PlaneType::Primary, Some((0, 0))),
+        reservation_plane(32, drmkit_planes::PlaneType::Primary, Some((0, 0))),
+        reservation_plane(33, drmkit_planes::PlaneType::Overlay, Some((1, 8))),
+        reservation_plane(34, drmkit_planes::PlaneType::Overlay, Some((1, 8))),
+    ])
+}
+
+#[test]
+fn with_two_primaries_overflow_reserves_the_first_overlay() {
+    let layers: Vec<drmkit_planes::Layer> = (0..5).map(|_| reservation_layer(None)).collect();
+    assert_eq!(
+        crate::scene::canvas_reservation(true, &refs_of(&layers), &two_primaries(), 0, None),
+        vec![33]
+    );
+}
+
+/// The canvas keeps last frame's plane, so it does not move between frames.
+#[test]
+fn overflow_reserves_last_frames_canvas_plane() {
+    let layers: Vec<drmkit_planes::Layer> = (0..5).map(|_| reservation_layer(None)).collect();
+    assert_eq!(
+        crate::scene::canvas_reservation(true, &refs_of(&layers), &two_primaries(), 0, Some(34)),
+        vec![34]
+    );
+}
+
+/// The order itself: last frame's plane, then overlays, then primaries, and
+/// only planes that can carry the canvas -- a previous plane that cannot is
+/// skipped rather than tried.
+#[test]
+fn the_canvas_prefers_its_last_plane_then_overlays_then_primaries() {
+    let registry = two_primaries();
+    let order = |hosts: &[u32], previous| {
+        crate::scene::canvas_plane_order(hosts, &registry, 0, previous).collect::<Vec<_>>()
+    };
+    assert_eq!(order(&[31, 32, 33, 34], None), [33, 34, 31, 32]);
+    assert_eq!(order(&[31, 32, 33, 34], Some(32)), [32, 33, 34, 31]);
+    assert_eq!(order(&[31, 33], Some(34)), [33, 31]);
 }
 
 /// Where planes have no zpos, overflow reserves nothing: the last candidate
@@ -1427,7 +1483,7 @@ fn overflow_reserves_nothing_where_planes_stack_by_id() {
         })
         .collect();
 
-    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0).is_empty());
+    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0, None).is_empty());
 }
 
 /// The acquire-fence close discipline, at the level the scene works at.
@@ -1871,7 +1927,7 @@ fn the_lowest_layer_above_a_fixed_slot_makes_the_anchor_unnecessary() {
         })
         .collect();
 
-    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0).is_empty());
+    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0, None).is_empty());
 }
 
 /// Which layer can take a fixed slot below everything else.

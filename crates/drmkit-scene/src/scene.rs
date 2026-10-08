@@ -1123,11 +1123,14 @@ impl LayerScene {
         committer: &mut C,
     ) -> Result<drmkit_planes::Allocation, SceneError> {
         let reserved = canvas_reservation(self.canvas.is_some(), refs, registry, crtc_index);
-        let already_claimed = !reserved.is_empty();
         self.allocator.set_reserved_planes(&reserved);
+        // A plane reserved up front is the canvas's, so the search arms the
+        // canvas there in its tests. Without that the tests left it out, and
+        // where the kernel lights fewer planes than it offers the frame
+        // committed one plane over what it took (the SA8155P, P-18).
+        self.allocator.hold_canvas_plane(reserved.first().copied());
         // Where planes stack by id the allocator picks the canvas plane
-        // itself, so it has to know which ones can carry it, and arms it in
-        // its tests.
+        // itself, so it has to know which ones can carry it.
         let hosts: Vec<u32> = self.canvas.as_ref().map_or_else(Vec::new, |canvas| {
             registry
                 .force_disable_candidates(crtc_index)
@@ -1153,51 +1156,49 @@ impl LayerScene {
             Err(TestFailure::Rejected) => drmkit_planes::Allocation::default(),
         };
 
-        // Planes stacked by id: the allocator left the canvas the one plane
-        // between the run's neighbors, and already tested with it armed there.
-        // A spare held back here would sit wherever its id puts it.
+        // The canvas already has a plane it was tested on: the one held up
+        // front, the one a cached assignment kept, or, where planes stack by
+        // id, the one between the run's neighbors. A spare held back there
+        // would sit wherever its id puts it.
         if self.canvas.is_none()
-            || already_claimed
             || allocation.composited.is_empty()
+            || self.allocator.canvas_plane().is_some()
             || drmkit_planes::stacks_by_plane_id(registry, crtc_index)
         {
             return Ok(allocation);
         }
-        let Some(spare) = registry
-            .force_disable_candidates(crtc_index)
-            .map(|plane| plane.id)
+        let Some(spare) = hosts
+            .iter()
+            .copied()
             .find(|id| allocation.assignment.get(*id).is_none())
         else {
             return Ok(allocation);
         };
 
         let first_pass_tests = allocation.diagnostics.test_commits_issued;
-        // Arm the canvas in every test of the second pass. This is what makes
-        // the search account for it: the allocator stops when the kernel
-        // accepts, and now what the kernel is accepting is the whole frame
-        // rather than the frame minus a plane.
-        let canvas_layer = self
-            .canvas
-            .as_ref()
-            .and_then(|canvas| lower_canvas(canvas, self.crtc_id, self.canvas_zpos()));
-        if let Some(layer) = canvas_layer {
-            committer.set_extra_plane(spare, layer);
-        }
-
-        // Without this the warm start would re-validate the previous
-        // assignment, which still holds the plane just reserved.
-        self.allocator.invalidate_allocation();
+        let first_pass_budget = allocation.diagnostics.budget_exhausted;
+        // Hold the spare for the canvas, which arms it in every test of the
+        // second pass. This is what makes the search account for it: the
+        // allocator stops when the kernel accepts, and now what the kernel is
+        // accepting is the whole frame rather than the frame minus a plane.
+        // The first pass's assignment does not use the spare, so its warm
+        // start re-tests that assignment with the canvas armed, and searches
+        // only if the kernel refuses the pair.
         self.allocator.set_reserved_planes(&[spare]);
+        self.allocator.hold_canvas_plane(Some(spare));
         let outcome = self
             .allocator
             .allocate(refs, registry, crtc_index, committer);
-        committer.clear_extra_plane();
         match outcome {
             Ok(mut second) => {
                 // `allocate` zeroes its own per-frame counter, so without this
                 // the report would show the second pass's cost and hide the
                 // first.
                 second.diagnostics.test_commits_issued += first_pass_tests;
+                // Nor its verdict: the second pass re-tests what the first
+                // settled on, so a budget that bound the first decided what
+                // is composited, and the report has to say so.
+                second.diagnostics.budget_exhausted |= first_pass_budget;
                 allocation = second;
             }
             Err(TestFailure::NotMaster) => return Err(SceneError::NotMaster),

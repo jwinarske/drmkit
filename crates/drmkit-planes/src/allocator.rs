@@ -392,10 +392,13 @@ pub struct Allocator {
     /// [`set_canvas`](Self::set_canvas).
     canvas_hosts: Vec<u32>,
     canvas_layer: Option<Layer>,
-    /// The plane-order path's canvas plane for the last pass, and the one
-    /// cached with `previous`.
+    /// The canvas plane for the last pass, and the one cached with
+    /// `previous`.
     canvas_plane: Option<u32>,
     previous_canvas_plane: Option<u32>,
+    /// Where planes take a `zpos`: the reserved plane the caller holds back
+    /// for the canvas. See [`hold_canvas_plane`](Self::hold_canvas_plane).
+    canvas_hold: Option<u32>,
     /// The layers the last full search left unplaced, which the cached paths
     /// composite again rather than treat as new, and the planes it had free
     /// when it decided that.
@@ -432,6 +435,7 @@ impl Allocator {
             canvas_layer: None,
             canvas_plane: None,
             previous_canvas_plane: None,
+            canvas_hold: None,
             previous_composited: Vec::new(),
             previous_free: Vec::new(),
         }
@@ -440,11 +444,12 @@ impl Allocator {
     /// The composition canvas: which planes can carry it, and its plane's
     /// properties. Empty `hosts` or no `layer` means the caller has none.
     ///
-    /// Only the plane-order path reads it. Where planes have no `zpos` it
-    /// picks the canvas plane itself, since only a plane between the
-    /// composited run's neighbors stacks the canvas where the run asked, and
-    /// it arms `layer` there in every test it issues so that what the kernel
-    /// accepts is the whole frame (P-18).
+    /// Where planes have no `zpos` the allocator picks the canvas plane
+    /// itself, since only a plane between the composited run's neighbors
+    /// stacks the canvas where the run asked. Elsewhere the caller names it
+    /// with [`hold_canvas_plane`](Self::hold_canvas_plane). Either way the
+    /// allocator arms `layer` there in every test it issues, so that what the
+    /// kernel accepts is the whole frame (P-18).
     pub fn set_canvas(&mut self, hosts: &[u32], layer: Option<&Layer>) {
         self.canvas_hosts.clear();
         self.canvas_layer = layer.cloned();
@@ -453,14 +458,28 @@ impl Allocator {
         }
     }
 
-    /// The plane the last pass left for the canvas, on a CRTC whose planes
-    /// stack by id (see [`stacks_by_plane_id`](crate::stacks_by_plane_id)).
+    /// The plane the last pass left for the canvas, tested with it armed.
     ///
-    /// `None` elsewhere, when nothing is composited, or when no host fits;
-    /// the caller arms the canvas here when it is `Some`.
+    /// `None` when nothing is composited, when no host fits, or where planes
+    /// take a `zpos` and the pass held no plane for it; the caller arms the
+    /// canvas here when it is `Some`. A cached pass reports the plane the
+    /// search it reuses left, since that is the plane its test armed.
     #[must_use]
     pub const fn canvas_plane(&self) -> Option<u32> {
         self.canvas_plane
+    }
+
+    /// Where planes take a `zpos`: hold `plane` for the canvas this pass.
+    ///
+    /// The plane must also be reserved (see
+    /// [`set_reserved_planes`](Self::set_reserved_planes)). The search arms
+    /// the canvas there in every test, and when it leaves layers composited
+    /// reports the plane as [`canvas_plane`](Self::canvas_plane) and keeps it
+    /// with the cached assignment, so a warm start re-tests the canvas with
+    /// the layers rather than searching again. Ignored where planes stack by
+    /// id, which pick their own.
+    pub const fn hold_canvas_plane(&mut self, plane: Option<u32>) {
+        self.canvas_hold = plane;
     }
 
     /// Set the per-search test-commit budget.
@@ -776,11 +795,21 @@ impl Allocator {
 
         let has_new_layer =
             self.previous_valid && self.has_new_layer(&placeable, layers, registry, crtc_index);
+        // A plane held for the canvas that the cached assignment was not
+        // tested with needs a test before the pair is reused.
+        let canvas_tested =
+            self.canvas_hold.is_none() || self.canvas_hold == self.previous_canvas_plane;
+        let canvas = self.canvas_hold.or(self.previous_canvas_plane);
 
         // --- invariant 4: the FB-only fast path ---------------------------
-        if self.previous_valid && !has_new_layer && order_holds && self.is_fb_only_frame(layers) {
+        if self.previous_valid
+            && !has_new_layer
+            && order_holds
+            && canvas_tested
+            && self.is_fb_only_frame(layers)
+        {
             let assignment = self.previous.clone();
-            self.canvas_plane = self.previous_canvas_plane.filter(|_| by_plane_id);
+            self.canvas_plane = self.previous_canvas_plane;
             let composited = Self::unplaced(&placeable, &assignment);
             return Ok(Allocation {
                 assignment,
@@ -804,42 +833,19 @@ impl Allocator {
                 &self.previous,
                 &placeable,
             )
+            && let Some(allocation) = self.warm_start(&placeable, canvas, committer)?
         {
-            let pairs = Self::pairs_for(&self.previous, &placeable);
-            if pairs.len() == self.previous.len() {
-                self.test_commits_this_frame += 1;
-                let canvas = self.previous_canvas_plane.filter(|_| by_plane_id);
-                self.arm_canvas(canvas, committer);
-                let verdict = committer.test_assignment(&pairs);
-                self.arm_canvas(None, committer);
-                match verdict {
-                    Ok(()) => {
-                        let assignment = self.previous.clone();
-                        self.canvas_plane = self.previous_canvas_plane.filter(|_| by_plane_id);
-                        let composited = Self::unplaced(&placeable, &assignment);
-                        return Ok(Allocation {
-                            assignment,
-                            composited,
-                            diagnostics: Diagnostics {
-                                test_commits_issued: self.test_commits_this_frame,
-                                fb_delta_fast_path: false,
-                                budget_exhausted: false,
-                            },
-                        });
-                    }
-                    Err(TestFailure::NotMaster) => return Err(TestFailure::NotMaster),
-                    Err(TestFailure::Rejected) => {
-                        // Fall through to a full search.
-                        self.previous_valid = false;
-                    }
-                }
-            }
+            return Ok(allocation);
         }
 
         let assignment = if by_plane_id {
             self.place_in_plane_order(&stacked, layers, registry, crtc_index, committer)?
         } else {
-            self.full_search(&placeable, registry, crtc_index, committer)?
+            self.canvas_plane = self.canvas_hold;
+            self.arm_canvas(self.canvas_hold, committer);
+            let searched = self.full_search(&placeable, registry, crtc_index, committer);
+            self.arm_canvas(None, committer);
+            searched?
         };
         let composited = Self::unplaced(&placeable, &assignment);
         if composited.is_empty() {
@@ -861,6 +867,49 @@ impl Allocator {
                 budget_exhausted: self.budget_exhausted_this_frame,
             },
         })
+    }
+
+    /// Re-test the cached assignment, with the canvas armed on `canvas`.
+    /// `None` when the kernel refuses it, which drops the cache for a full
+    /// search.
+    fn warm_start<C: TestCommitter>(
+        &mut self,
+        placeable: &[LayerRef<'_>],
+        canvas: Option<u32>,
+        committer: &mut C,
+    ) -> Result<Option<Allocation>, TestFailure> {
+        let pairs = Self::pairs_for(&self.previous, placeable);
+        if pairs.len() != self.previous.len() {
+            return Ok(None);
+        }
+        self.test_commits_this_frame += 1;
+        self.arm_canvas(canvas, committer);
+        let verdict = committer.test_assignment(&pairs);
+        self.arm_canvas(None, committer);
+        match verdict {
+            Ok(()) => {
+                let assignment = self.previous.clone();
+                let composited = Self::unplaced(placeable, &assignment);
+                // The plane the test armed is the canvas's now, and stays
+                // paired with the cached assignment.
+                self.canvas_plane = canvas.filter(|_| !composited.is_empty());
+                self.previous_canvas_plane = self.canvas_plane;
+                Ok(Some(Allocation {
+                    assignment,
+                    composited,
+                    diagnostics: Diagnostics {
+                        test_commits_issued: self.test_commits_this_frame,
+                        fb_delta_fast_path: false,
+                        budget_exhausted: false,
+                    },
+                }))
+            }
+            Err(TestFailure::NotMaster) => Err(TestFailure::NotMaster),
+            Err(TestFailure::Rejected) => {
+                self.previous_valid = false;
+                Ok(None)
+            }
+        }
     }
 
     /// Whether a layer present this frame needs a full search to have a
@@ -913,7 +962,7 @@ impl Allocator {
     }
 
     /// The planes on `crtc_index` a search could still use beside
-    /// `assignment`: not a cursor, not reserved, not a pinned layer's.
+    /// `assignment`: not a cursor, not reserved, not a pinned layer's, not the canvas's.
     fn free_planes(
         &self,
         assignment: &PlaneAssignment,
@@ -933,6 +982,8 @@ impl Allocator {
                     && !self.reserved.contains(&plane.id)
                     && !pinned.contains(&plane.id)
                     && assignment.get(plane.id).is_none()
+                    // The canvas's plane is taken, held back or not.
+                    && self.previous_canvas_plane != Some(plane.id)
             })
             .map(|plane| plane.id)
             .collect()

@@ -725,3 +725,72 @@ fn a_scene_that_places_nothing_composites_everything_vkms() {
         "the second frame came out differently from the first"
     );
 }
+
+/// When composition stops, the canvas plane goes dark, and the area the
+/// composited layer covered shows what is under it again.
+///
+/// Port of `CanvasPlaneTurnsOffWhenCompositionStops` (drm-cxx `8e73f82`).
+/// Upstream's allocator disabled only planes it armed, so the old canvas frame
+/// stayed on screen after the composited layer was removed. Here the canvas's
+/// plane enters the committed baseline like any other, so the next frame's
+/// disable pass turns it off.
+#[test]
+#[ignore = "needs a DRM device"]
+fn the_canvas_plane_turns_off_when_composition_stops_vkms() {
+    let _guard = card_guard();
+    let Some(device) = common::open_card() else {
+        return;
+    };
+    let Some(mut fx) = common::fixture(device) else {
+        drmkit_testkit::skipped("no connected output");
+        return;
+    };
+    if fx.enable_full_screen_composition().is_none() {
+        drmkit_testkit::skipped("no canvas");
+        return;
+    }
+    // The background on a plane and the canvas on another.
+    if fx.eligible_planes() < 2 {
+        drmkit_testkit::skipped("one plane cannot hold the background and the canvas");
+        fx.teardown();
+        return;
+    }
+    let (w, h) = fx.mode_size();
+    let (ow, oh) = (w / 4, h / 4);
+    let (ox, oy) = (
+        i32::try_from(w / 4).expect("on screen"),
+        i32::try_from(h / 4).expect("on screen"),
+    );
+    let (Some(background), Some(overlay)) =
+        (fx.add_layer(0, 0, w, h), fx.add_layer(ox, oy, ow, oh))
+    else {
+        drmkit_testkit::skipped("no dumb buffer for a layer");
+        return;
+    };
+    fx.paint(background, 0x00FF_0000).expect("paint");
+    fx.paint(overlay, 0x0000_FF00).expect("paint");
+    fx.set_zpos(background, 1);
+    fx.set_zpos(overlay, 4);
+    fx.scene
+        .layer_mut(overlay)
+        .expect("the overlay")
+        .set_force_composited(true);
+
+    let first = fx.commit().expect("the composited frame");
+    assert_eq!(first.layers_composited, 1, "{first:?}");
+
+    fx.scene.remove_layer(overlay);
+    let second = fx.commit().expect("the frame after composition stops");
+    assert_eq!(second.layers_composited, 0, "{second:?}");
+
+    let Some(shown) = fx.pixel_at(w / 4 + ow / 2, h / 4 + oh / 2) else {
+        drmkit_testkit::skipped("the CRTC cannot be read back");
+        fx.teardown();
+        return;
+    };
+    assert_eq!(
+        shown, 0x00FF_0000,
+        "the removed overlay's area must show the background, not the stale canvas"
+    );
+    fx.teardown();
+}

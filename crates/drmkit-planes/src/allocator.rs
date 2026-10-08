@@ -12,8 +12,9 @@ use drmkit_fmt::{Modifier, ModifierProbeCache, Verdict};
 
 use crate::layer::Layer;
 use crate::matching::BipartiteMatching;
+use crate::plane_order::{PlaneOrder, Position, plane_order_consistent, stacks_by_plane_id};
 use crate::prop::PropTag;
-use crate::registry::{PlaneCapabilities, PlaneRegistry};
+use crate::registry::{PlaneCapabilities, PlaneRegistry, PlaneType};
 use crate::scoring::{
     ScoreContext, keep_priority, plane_statically_compatible, score_pair, split_independent_groups,
 };
@@ -373,6 +374,15 @@ pub struct Allocator {
     /// [`Diagnostics::budget_exhausted`].
     budget_exhausted_this_frame: bool,
     matcher: BipartiteMatching,
+    /// Planes that can carry the composition canvas, and the canvas as its
+    /// plane would be programmed; empty and `None` without one. See
+    /// [`set_canvas`](Self::set_canvas).
+    canvas_hosts: Vec<u32>,
+    canvas_layer: Option<Layer>,
+    /// The plane-order path's canvas plane for the last pass, and the one
+    /// cached with `previous`.
+    canvas_plane: Option<u32>,
+    previous_canvas_plane: Option<u32>,
 }
 
 impl Default for Allocator {
@@ -400,7 +410,37 @@ impl Allocator {
             test_commits_this_frame: 0,
             budget_exhausted_this_frame: false,
             matcher: BipartiteMatching::new(),
+            canvas_hosts: Vec::new(),
+            canvas_layer: None,
+            canvas_plane: None,
+            previous_canvas_plane: None,
         }
+    }
+
+    /// The composition canvas: which planes can carry it, and its plane's
+    /// properties. Empty `hosts` or no `layer` means the caller has none.
+    ///
+    /// Only the plane-order path reads it. Where planes have no `zpos` it
+    /// picks the canvas plane itself, since only a plane between the
+    /// composited run's neighbors stacks the canvas where the run asked, and
+    /// it arms `layer` there in every test it issues so that what the kernel
+    /// accepts is the whole frame (P-18).
+    pub fn set_canvas(&mut self, hosts: &[u32], layer: Option<&Layer>) {
+        self.canvas_hosts.clear();
+        self.canvas_layer = layer.cloned();
+        if self.canvas_layer.is_some() {
+            self.canvas_hosts.extend_from_slice(hosts);
+        }
+    }
+
+    /// The plane the last pass left for the canvas, on a CRTC whose planes
+    /// stack by id (see [`stacks_by_plane_id`](crate::stacks_by_plane_id)).
+    ///
+    /// `None` elsewhere, when nothing is composited, or when no host fits;
+    /// the caller arms the canvas here when it is `Some`.
+    #[must_use]
+    pub const fn canvas_plane(&self) -> Option<u32> {
+        self.canvas_plane
     }
 
     /// Set the per-search test-commit budget.
@@ -436,6 +476,8 @@ impl Allocator {
     pub fn forget_output(&mut self) {
         self.previous = PlaneAssignment::new();
         self.previous_valid = false;
+        self.canvas_plane = None;
+        self.previous_canvas_plane = None;
         self.last_committed.clear();
         self.failure_cache = TestCache::default();
     }
@@ -676,6 +718,8 @@ impl Allocator {
     ) -> Result<Allocation, TestFailure> {
         self.test_commits_this_frame = 0;
         self.budget_exhausted_this_frame = false;
+        self.canvas_plane = None;
+        let by_plane_id = stacks_by_plane_id(registry, crtc_index);
 
         // Layers the allocator must not touch: the scene owns their planes.
         let placeable: Vec<LayerRef<'_>> = layers
@@ -689,21 +733,24 @@ impl Allocator {
             .collect();
 
         // Bottom-up, so the search hands the lowest layer the lowest plane.
-        //
-        // On a card whose planes expose a settable `zpos` this is only a
-        // preference -- stacking is whatever gets written. On a card whose
-        // planes do not (vkms, Tegra Orin display, plenty of SoC display
-        // controllers) the plane's index *is* its stacking order, nothing can
-        // change it, and an assignment made in any other order puts layers on
-        // screen in the wrong order. A backing store handed a higher-numbered
-        // plane than the overlays it is supposed to sit behind covers them.
-        //
+        // Only a preference where planes take a written `zpos`; where they do
+        // not, the plane-order path below keeps the order by construction.
         // Cheap here, and it cannot cost a placement: the matcher maximizes
         // cardinality first and uses score only to break ties, so reordering
         // the input changes which valid assignment is chosen, never whether
         // one is found.
         let mut placeable = placeable;
         placeable.sort_by_key(|entry| entry.layer.property(PropTag::Zpos).unwrap_or(0));
+
+        let stacked = if by_plane_id {
+            Self::plane_stack(layers)
+        } else {
+            Vec::new()
+        };
+        // The cached assignment is still valid to the kernel after a restack,
+        // just stacked in the old order, and nothing but this notices
+        // (drm-cxx#239).
+        let order_holds = !by_plane_id || self.plane_order_holds(&stacked);
 
         // A layer present this frame that the previous frame did not place.
         //
@@ -719,8 +766,9 @@ impl Allocator {
                 .any(|entry| self.previous.get_plane_of(entry.id).is_none());
 
         // --- invariant 4: the FB-only fast path ---------------------------
-        if self.previous_valid && !has_new_layer && self.is_fb_only_frame(layers) {
+        if self.previous_valid && !has_new_layer && order_holds && self.is_fb_only_frame(layers) {
             let assignment = self.previous.clone();
+            self.canvas_plane = self.previous_canvas_plane.filter(|_| by_plane_id);
             let composited = Self::unplaced(&placeable, &assignment);
             return Ok(Allocation {
                 assignment,
@@ -736,6 +784,7 @@ impl Allocator {
         // --- warm start: re-validate the cached assignment ----------------
         if self.previous_valid
             && !has_new_layer
+            && order_holds
             && !self.previous.is_empty()
             && self.previous_still_applies(&placeable)
             && stacking_consistent_all(
@@ -747,9 +796,14 @@ impl Allocator {
             let pairs = Self::pairs_for(&self.previous, &placeable);
             if pairs.len() == self.previous.len() {
                 self.test_commits_this_frame += 1;
-                match committer.test_assignment(&pairs) {
+                let canvas = self.previous_canvas_plane.filter(|_| by_plane_id);
+                self.arm_canvas(canvas, committer);
+                let verdict = committer.test_assignment(&pairs);
+                self.arm_canvas(None, committer);
+                match verdict {
                     Ok(()) => {
                         let assignment = self.previous.clone();
+                        self.canvas_plane = self.previous_canvas_plane.filter(|_| by_plane_id);
                         let composited = Self::unplaced(&placeable, &assignment);
                         return Ok(Allocation {
                             assignment,
@@ -770,11 +824,19 @@ impl Allocator {
             }
         }
 
-        let assignment = self.full_search(&placeable, registry, crtc_index, committer)?;
+        let assignment = if by_plane_id {
+            self.place_in_plane_order(&stacked, layers, registry, crtc_index, committer)?
+        } else {
+            self.full_search(&placeable, registry, crtc_index, committer)?
+        };
         let composited = Self::unplaced(&placeable, &assignment);
+        if composited.is_empty() {
+            self.canvas_plane = None;
+        }
 
         self.previous = assignment.clone();
         self.previous_valid = !assignment.is_empty();
+        self.previous_canvas_plane = self.canvas_plane;
 
         Ok(Allocation {
             assignment,
@@ -819,6 +881,156 @@ impl Allocator {
             .filter(|entry| !assignment.entries().iter().any(|(_, id)| *id == entry.id))
             .map(|entry| entry.id)
             .collect()
+    }
+
+    /// Every layer that reaches the screen through the allocator, in the one
+    /// order planes stacked by id can show them: transient-composited layers
+    /// too, which land on the canvas.
+    ///
+    /// Equal zpos asks for no order, so ties go lowest keep-priority first:
+    /// the composited run has to be contiguous, and this is what lets it take
+    /// the low-priority layers of a tie rather than whichever the caller added
+    /// first. Upstream keeps caller order there. Stable, so equal priorities
+    /// keep caller order.
+    fn plane_stack<'a>(layers: &[LayerRef<'a>]) -> Vec<LayerRef<'a>> {
+        let mut stacked: Vec<LayerRef<'a>> = layers
+            .iter()
+            .filter(|entry| !entry.layer.is_externally_bound() && !entry.layer.is_pinned())
+            .copied()
+            .collect();
+        stacked.sort_by_key(|entry| {
+            (
+                entry.layer.property(PropTag::Zpos).unwrap_or(0),
+                keep_priority(entry.layer),
+            )
+        });
+        stacked
+    }
+
+    /// Whether the cached assignment and canvas plane still stack `stacked`
+    /// in zpos order, on a CRTC whose planes stack by id.
+    ///
+    /// Without a canvas a layer left off the planes is not on screen at all,
+    /// so it constrains nothing. Upstream fails the check there, which costs
+    /// a canvas-less scene with a dropped layer its warm start every frame.
+    fn plane_order_holds(&self, stacked: &[LayerRef<'_>]) -> bool {
+        let with_canvas = !self.canvas_hosts.is_empty();
+        let positions: Vec<Position> = stacked
+            .iter()
+            .filter_map(|entry| {
+                let plane = self.previous.get_plane_of(entry.id);
+                if plane.is_none() && !with_canvas {
+                    return None;
+                }
+                Some(Position {
+                    zpos: entry.layer.property(PropTag::Zpos).unwrap_or(0),
+                    plane: plane.or(self.previous_canvas_plane),
+                    on_canvas: plane.is_none(),
+                })
+            })
+            .collect();
+        plane_order_consistent(&positions)
+    }
+
+    /// Place zpos-ordered `stacked` on a CRTC whose planes stack by id.
+    ///
+    /// Layers map onto planes in id order, and those left over form one
+    /// contiguous zpos run on [`canvas_plane`](Self::canvas_plane), between
+    /// the run's neighbors. Most layers placed wins, then the lowest total
+    /// keep-priority composited; a refused `TEST_ONLY` retries with one placed
+    /// layer fewer. The spatial split does not apply -- the canvas spans every
+    /// group -- and cursor planes are left out: their size and update rules
+    /// are the cursor path's.
+    ///
+    /// Conservative for disjoint layers, which keep plane order too.
+    fn place_in_plane_order<C: TestCommitter>(
+        &mut self,
+        stacked: &[LayerRef<'_>],
+        layers: &[LayerRef<'_>],
+        registry: &PlaneRegistry,
+        crtc_index: u32,
+        committer: &mut C,
+    ) -> Result<PlaneAssignment, TestFailure> {
+        // A pinned layer's plane is the scene's.
+        let pinned: Vec<u32> = layers
+            .iter()
+            .filter(|entry| entry.layer.is_pinned())
+            .filter_map(|entry| entry.layer.assigned_plane())
+            .collect();
+        let mut planes: Vec<&PlaneCapabilities> = registry
+            .for_crtc(crtc_index)
+            .filter(|plane| {
+                plane.plane_type != PlaneType::Cursor
+                    && !self.reserved.contains(&plane.id)
+                    && !pinned.contains(&plane.id)
+            })
+            .collect();
+        planes.sort_by_key(|plane| plane.id);
+        if stacked.is_empty() {
+            return Ok(PlaneAssignment::new());
+        }
+
+        let order = PlaneOrder::new(stacked.len(), planes.len(), |i, j| {
+            let (plane, layer) = (planes[j], stacked[i].layer);
+            plane_statically_compatible(plane, layer, crtc_index)
+                && !self.probe_rejected(crtc_index, plane.id, layer)
+                && self.failure_cache.lookup(plane.id, layer.property_hash()) != Some(false)
+        });
+        let forced = stacked
+            .iter()
+            .position(|entry| forced_composited(entry.layer))
+            .zip(
+                stacked
+                    .iter()
+                    .rposition(|entry| forced_composited(entry.layer)),
+            )
+            .map(|(first, last)| first..last + 1);
+        let host_ids = self.canvas_hosts.clone();
+        let hosts = |j: usize| host_ids.contains(&planes[j].id);
+        let hosts_canvas: Option<&dyn Fn(usize) -> bool> = (!host_ids.is_empty()).then_some(&hosts);
+        let cost = |i: usize| i64::from(keep_priority(stacked[i].layer));
+
+        let mut max_placed = stacked.len();
+        loop {
+            let Some(choice) = order.choose(max_placed, forced.as_ref(), hosts_canvas, cost) else {
+                return Ok(PlaneAssignment::new());
+            };
+            let mut assignment = PlaneAssignment::new();
+            for (i, entry) in stacked.iter().enumerate() {
+                if let Some(j) = order.plane_of(i, &choice) {
+                    assignment.insert(planes[j].id, entry.id);
+                }
+            }
+            self.canvas_plane = choice.canvas.map(|j| planes[j].id);
+            if assignment.is_empty() {
+                return Ok(assignment);
+            }
+            self.arm_canvas(self.canvas_plane, committer);
+            let passed = self.try_test(&assignment, stacked, committer);
+            self.arm_canvas(None, committer);
+            if passed? {
+                return Ok(assignment);
+            }
+            if self.test_commits_this_frame >= self.max_test_commits {
+                // Out of tests: composite everything rather than arm an
+                // untested stack.
+                self.budget_exhausted_this_frame = true;
+                self.canvas_plane = order
+                    .choose(0, forced.as_ref(), hosts_canvas, cost)
+                    .and_then(|all| all.canvas)
+                    .map(|j| planes[j].id);
+                return Ok(PlaneAssignment::new());
+            }
+            max_placed = assignment.len() - 1;
+        }
+    }
+
+    /// Arm the canvas on `plane` in the tests that follow, or disarm it.
+    fn arm_canvas<C: TestCommitter>(&self, plane: Option<u32>, committer: &mut C) {
+        match (plane, &self.canvas_layer) {
+            (Some(plane_id), Some(layer)) => committer.set_extra_plane(plane_id, layer.clone()),
+            _ => committer.clear_extra_plane(),
+        }
     }
 
     /// Full search: split into independent groups, place each from a shared
@@ -1081,6 +1293,12 @@ impl Allocator {
             );
         }
     }
+}
+
+/// Whether the caller or the scene has sent `layer` to the canvas, whatever
+/// the planes could take.
+const fn forced_composited(layer: &Layer) -> bool {
+    layer.is_force_composited() || layer.is_transient_composited()
 }
 
 /// Whether `layer` on `plane_id` stacks consistently with everything already

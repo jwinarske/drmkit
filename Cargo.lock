@@ -369,6 +369,7 @@ name = "drmkit-scene"
 version = "0.0.0"
 dependencies = [
  "drm 0.15.0",
+ "drmkit-capture",
  "drmkit-core",
  "drmkit-display",
  "drmkit-dumb",

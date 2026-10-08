@@ -842,3 +842,187 @@ fn a_warm_start_that_would_invert_the_stack_is_not_reused() {
         "the cached assignment now inverts the stack and was kept"
     );
 }
+
+// --- plane order (drm-cxx 03bc1d7) -------------------------------------------
+
+/// `count` layers stacked on one spot at zpos `0..count`, ids `1..=count`.
+fn stacked_layers(count: u64) -> Vec<(LayerId, Layer)> {
+    (0..count)
+        .map(|zpos| (LayerId(zpos + 1), layer_at(0, 0, 64, 64, zpos)))
+        .collect()
+}
+
+/// The planes each layer landed on, in zpos order; `None` for composited.
+fn planes_in_zpos_order(
+    allocation: &drmkit_planes::Allocation,
+    layers: &[(LayerId, Layer)],
+) -> Vec<Option<u32>> {
+    let mut by_zpos: Vec<&(LayerId, Layer)> = layers.iter().collect();
+    by_zpos.sort_by_key(|(_, layer)| layer.property(PropTag::Zpos));
+    by_zpos
+        .iter()
+        .map(|(id, _)| allocation.assignment.get_plane_of(*id))
+        .collect()
+}
+
+/// More layers than planes. What is left over is one contiguous zpos run, and
+/// the canvas plane carrying it sits between the run's neighbors: the canvas
+/// reservation used to take a plane below the layers it carries (drm-cxx#240).
+#[test]
+fn overflow_composites_one_run_on_a_canvas_between_its_neighbors() {
+    let registry = fixed_order_registry();
+    let layers = stacked_layers(6);
+    let mut allocator = Allocator::new();
+    allocator.set_canvas(&[31, 32, 33, 34], Some(&Layer::new()));
+
+    let allocation = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    assert_eq!(
+        planes_in_zpos_order(&allocation, &layers),
+        [None, None, None, Some(32), Some(33), Some(34)],
+        "three placed on planes, the run below them on the canvas"
+    );
+    assert_eq!(allocator.canvas_plane(), Some(31));
+
+    // The warm start keeps the canvas plane with the assignment.
+    let again = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+    assert_eq!(again.assignment.entries(), allocation.assignment.entries());
+    assert_eq!(allocator.canvas_plane(), Some(31));
+}
+
+/// Under plane pressure only the low-priority layers go to the canvas, though
+/// they sit mid-stack: the run lands where it costs least, and the canvas
+/// sits between the layers above and below it.
+#[test]
+fn the_composited_run_takes_the_low_priority_layers() {
+    let registry = fixed_order_registry();
+    let mut layers = stacked_layers(6);
+    for (id, layer) in &mut layers {
+        layer.set_app_priority(if (3..=5).contains(&id.0) { 10 } else { 200 });
+    }
+    let mut allocator = Allocator::new();
+    allocator.set_canvas(&[31, 32, 33, 34], Some(&Layer::new()));
+
+    let allocation = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    assert_eq!(
+        planes_in_zpos_order(&allocation, &layers),
+        [Some(31), Some(32), None, None, None, Some(34)]
+    );
+    assert_eq!(allocator.canvas_plane(), Some(33));
+}
+
+/// Reversing the stack after a steady frame must move the layers. The cached
+/// assignment is still valid to the kernel, just stacked in the old order, so
+/// a warm start that only asks the kernel keeps it (drm-cxx#239).
+#[test]
+fn a_restack_is_not_served_from_the_warm_start() {
+    let registry = fixed_order_registry();
+    let mut layers = stacked_layers(3);
+    let mut allocator = Allocator::new();
+    allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    for (index, (_, layer)) in layers.iter_mut().enumerate() {
+        layer.set_property(PropTag::Zpos, 2 - index as u64);
+    }
+    let restacked = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    let planes = planes_in_zpos_order(&restacked, &layers);
+    assert!(
+        planes.windows(2).all(|pair| pair[0] < pair[1]),
+        "zpos order must be plane order after the restack; got {planes:?}"
+    );
+}
+
+/// A refused frame retries with one placed layer fewer, and out of tests the
+/// whole stack goes to the canvas on the topmost host rather than arming an
+/// untested assignment.
+#[test]
+fn out_of_tests_the_whole_stack_goes_to_the_canvas() {
+    let registry = fixed_order_registry();
+    let layers = stacked_layers(3);
+    let mut allocator = Allocator::new();
+    allocator.set_canvas(&[31, 32, 33, 34], Some(&Layer::new()));
+    allocator.set_max_test_commits(2);
+    let mut committer = Committer {
+        reject_first: usize::MAX,
+        ..Committer::default()
+    };
+
+    let allocation = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut committer)
+        .expect("allocate");
+
+    // With nothing composited the stack is fit top-down, onto the top planes.
+    assert_eq!(committer.seen, [vec![32, 33, 34], vec![33, 34]]);
+    assert!(allocation.assignment.is_empty());
+    assert_eq!(allocation.composited.len(), 3);
+    assert!(allocation.diagnostics.budget_exhausted);
+    assert_eq!(allocator.canvas_plane(), Some(34));
+}
+
+/// The cursor plane is the cursor path's, and a pinned layer's plane is the
+/// scene's: neither is offered. Without a canvas the layer left over is
+/// dropped and no canvas plane is named.
+#[test]
+fn plane_order_leaves_the_cursor_and_pinned_planes_alone() {
+    let registry = PlaneRegistry::from_capabilities(vec![
+        plane(31, PlaneType::Primary, None),
+        plane(32, PlaneType::Overlay, None),
+        plane(33, PlaneType::Overlay, None),
+        plane(34, PlaneType::Cursor, None),
+    ]);
+    let mut layers = stacked_layers(4);
+    layers[3].1.set_pinned(true).set_assigned_plane(Some(33));
+    let mut allocator = Allocator::new();
+
+    let allocation = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    let used: Vec<u32> = allocation
+        .assignment
+        .entries()
+        .iter()
+        .map(|(plane, _)| *plane)
+        .collect();
+    assert_eq!(used.len(), 2, "two free planes for three layers: {used:?}");
+    assert!(!used.contains(&33) && !used.contains(&34), "{used:?}");
+    assert_eq!(allocation.composited.len(), 1);
+    assert_eq!(allocator.canvas_plane(), None);
+}
+
+/// Equal zpos asks for no order, so a tie under pressure composites its
+/// lowest-priority layers whatever order the caller added them in. Keeping
+/// caller order would make the run take whichever came first.
+#[test]
+fn a_zpos_tie_composites_its_lowest_priority_layers() {
+    let registry = fixed_order_registry();
+    let mut layers: Vec<(LayerId, Layer)> = (1..=6)
+        .map(|id| (LayerId(id), layer_at(0, 0, 64, 64, 0)))
+        .collect();
+    for (id, layer) in &mut layers {
+        // Highest first, so caller order is the worst order.
+        layer.set_app_priority(u8::try_from(250 - id.0 * 10).expect("small"));
+    }
+    let mut allocator = Allocator::new();
+    allocator.set_canvas(&[31, 32, 33, 34], Some(&Layer::new()));
+
+    let allocation = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    let mut composited: Vec<u64> = allocation.composited.iter().map(|id| id.0).collect();
+    composited.sort_unstable();
+    assert_eq!(composited, [4, 5, 6], "the three lowest priorities");
+}

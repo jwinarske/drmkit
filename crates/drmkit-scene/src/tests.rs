@@ -1388,8 +1388,8 @@ fn an_unpinned_primary_is_not_anchored() {
 #[test]
 fn overflow_still_reserves_the_last_candidate() {
     let registry = drmkit_planes::PlaneRegistry::from_capabilities(vec![
-        reservation_plane(31, drmkit_planes::PlaneType::Primary, None),
-        reservation_plane(32, drmkit_planes::PlaneType::Overlay, None),
+        reservation_plane(31, drmkit_planes::PlaneType::Primary, Some((0, 0))),
+        reservation_plane(32, drmkit_planes::PlaneType::Overlay, Some((1, 4))),
     ]);
     let layers: Vec<drmkit_planes::Layer> = (0..3).map(|_| reservation_layer(None)).collect();
     let refs: Vec<drmkit_planes::LayerRef<'_>> = layers
@@ -1405,6 +1405,29 @@ fn overflow_still_reserves_the_last_candidate() {
         crate::scene::canvas_reservation(true, &refs, &registry, 0),
         vec![32]
     );
+}
+
+/// Where planes have no zpos, overflow reserves nothing: the last candidate
+/// stacks above every layer whatever the canvas carries, and the allocator
+/// picks the plane between the composited run's neighbors instead
+/// (drm-cxx#240).
+#[test]
+fn overflow_reserves_nothing_where_planes_stack_by_id() {
+    let registry = drmkit_planes::PlaneRegistry::from_capabilities(vec![
+        reservation_plane(31, drmkit_planes::PlaneType::Primary, None),
+        reservation_plane(32, drmkit_planes::PlaneType::Overlay, None),
+    ]);
+    let layers: Vec<drmkit_planes::Layer> = (0..3).map(|_| reservation_layer(None)).collect();
+    let refs: Vec<drmkit_planes::LayerRef<'_>> = layers
+        .iter()
+        .enumerate()
+        .map(|(i, layer)| drmkit_planes::LayerRef {
+            id: drmkit_planes::LayerId(i as u64 + 1),
+            layer,
+        })
+        .collect();
+
+    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0).is_empty());
 }
 
 /// The acquire-fence close discipline, at the level the scene works at.

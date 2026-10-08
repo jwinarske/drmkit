@@ -467,9 +467,33 @@ impl Allocator {
     /// Call after a successful **real** commit, never after a test -- see
     /// [`record_committed`](Self::record_committed).
     pub fn record_commit(&mut self, applied: &[(u32, LayerRef<'_>)]) {
+        self.record_commit_stacked(applied, &[]);
+    }
+
+    /// [`record_commit`](Self::record_commit), for a commit that wrote a
+    /// stacked zpos in place of some layers' own (see
+    /// [`stacked_zpos`](crate::stacked_zpos)).
+    ///
+    /// The snapshot takes the written value, because the next frame's diff
+    /// has to compare against what the kernel holds. The hash stays the
+    /// layer's own, because the fast path compares it against the layer as
+    /// the caller will present it next frame, which is the requested zpos --
+    /// and an unchanged assignment of unchanged requests stacks the same.
+    pub fn record_commit_stacked(&mut self, applied: &[(u32, LayerRef<'_>)], zpos: &[(u32, u64)]) {
         self.last_committed.clear();
         for (plane_id, entry) in applied {
-            self.record_committed(*plane_id, *entry);
+            let mut properties = entry.layer.snapshot();
+            if let Some((_, written)) = zpos.iter().find(|(id, _)| id == plane_id) {
+                properties = properties.with(PropTag::Zpos, *written);
+            }
+            self.last_committed.insert(
+                *plane_id,
+                LastCommitted {
+                    layer: Some(entry.id),
+                    properties,
+                    hash: entry.layer.property_hash(),
+                },
+            );
         }
     }
 
@@ -714,6 +738,11 @@ impl Allocator {
             && !has_new_layer
             && !self.previous.is_empty()
             && self.previous_still_applies(&placeable)
+            && stacking_consistent_all(
+                &registry.for_crtc(crtc_index).collect::<Vec<_>>(),
+                &self.previous,
+                &placeable,
+            )
         {
             let pairs = Self::pairs_for(&self.previous, &placeable);
             if pairs.len() == self.previous.len() {
@@ -843,7 +872,12 @@ impl Allocator {
         if assignment.is_empty() {
             return Ok(assignment);
         }
-        if self.try_test(&assignment, &ordered, committer)? {
+        // The matching knows nothing about stacking, so an inverted preseed
+        // goes straight to the greedy pass rather than to a TEST that would
+        // accept it.
+        if stacking_consistent_all(planes, &assignment, &ordered)
+            && self.try_test(&assignment, &ordered, committer)?
+        {
             return Ok(assignment);
         }
 
@@ -866,6 +900,12 @@ impl Allocator {
                 continue;
             }
             if self.probe_rejected(crtc_index, plane_id, layer.layer) {
+                continue;
+            }
+            // The kernel accepts an inverted stack, so no TEST would catch
+            // one: a layer is placed only where it stacks in the order its
+            // zpos asks relative to what is already placed.
+            if !fits_stacking(planes, &assignment, &ordered, plane_id, layer.layer) {
                 continue;
             }
             assignment.insert(plane_id, layer.id);
@@ -1041,4 +1081,49 @@ impl Allocator {
             );
         }
     }
+}
+
+/// Whether `layer` on `plane_id` stacks consistently with everything already
+/// in `assignment` (see [`stacking_consistent`](crate::stacking_consistent)).
+///
+/// A plane missing from `planes` cannot be ruled on and is not held against
+/// the layer, which is what a plane without a zpos property gets as well.
+fn fits_stacking(
+    planes: &[&PlaneCapabilities],
+    assignment: &PlaneAssignment,
+    present: &[LayerRef<'_>],
+    plane_id: u32,
+    layer: &Layer,
+) -> bool {
+    let caps = |id: u32| planes.iter().find(|plane| plane.id == id).copied();
+    let Some(plane) = caps(plane_id) else {
+        return true;
+    };
+    let zpos = layer.property(PropTag::Zpos);
+    assignment.entries().iter().all(|(other_plane, other_id)| {
+        if *other_plane == plane_id {
+            return true;
+        }
+        let (Some(other), Some(entry)) = (
+            caps(*other_plane),
+            present.iter().find(|entry| entry.id == *other_id),
+        ) else {
+            return true;
+        };
+        crate::stacking_consistent(plane, zpos, other, entry.layer.property(PropTag::Zpos))
+    })
+}
+
+/// Whether every placement in `assignment` stacks consistently.
+fn stacking_consistent_all(
+    planes: &[&PlaneCapabilities],
+    assignment: &PlaneAssignment,
+    present: &[LayerRef<'_>],
+) -> bool {
+    assignment.entries().iter().all(|(plane_id, layer_id)| {
+        present
+            .iter()
+            .find(|entry| entry.id == *layer_id)
+            .is_none_or(|entry| fits_stacking(planes, assignment, present, *plane_id, entry.layer))
+    })
 }

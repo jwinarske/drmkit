@@ -816,3 +816,98 @@ fn a_starved_layer_holds_its_plane_and_the_report_still_balances() {
 
     scene.drain();
 }
+
+/// Planes with an SA8155P-like zpos range: every one mutable over `[0, 10]`,
+/// which that controller advertises and then refuses at 9 and 10.
+fn ranged_registry() -> PlaneRegistry {
+    let plane = |id, plane_type| PlaneCapabilities {
+        id,
+        possible_crtcs: 0b1,
+        plane_type,
+        formats: vec![fourcc::XRGB8888],
+        supports_scaling: true,
+        zpos_min: Some(0),
+        zpos_max: Some(10),
+        ..PlaneCapabilities::default()
+    };
+    PlaneRegistry::from_capabilities(vec![
+        plane(31, PlaneType::Primary),
+        plane(32, PlaneType::Overlay),
+        plane(33, PlaneType::Overlay),
+    ])
+}
+
+/// The frame writes zpos densely over the planes it arms, and the next frame
+/// diffs against what was written while still taking the fast path.
+///
+/// Two layers asking 8 and 20 go out as 0 and 1 (drm-cxx `1384526`): 20 is past
+/// the range, and even 8 sits near a top the SA8155P rejects. The baseline has
+/// to record the written values, or the next frame would compare 0 against 8
+/// and rewrite zpos forever; its hash has to stay the layer's own, or the fast
+/// path would never match the layer as the caller presents it again.
+#[test]
+fn zpos_is_written_densely_and_the_baseline_keeps_what_was_written() {
+    let log = Rc::new(RefCell::new(SourceLog::default()));
+    let mut scene = LayerScene::new(1);
+    let mut handles = Vec::new();
+    for (x, zpos) in [(0, 8), (960, 20)] {
+        let handle = scene.add_layer(Box::new(TestSource::new(&log)));
+        scene
+            .layer_mut(handle)
+            .expect("layer")
+            .set_display(DisplayParams {
+                dst_rect: Rect {
+                    x,
+                    y: 0,
+                    w: 960,
+                    h: 1080,
+                },
+                zpos: Some(zpos),
+                ..DisplayParams::default()
+            });
+        handles.push(handle);
+    }
+    let registry = ranged_registry();
+    let mut committer = Accepting::default();
+
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("build");
+    let mut written: Vec<(u64, Option<u64>)> = build
+        .plan()
+        .iter()
+        .map(|entry| {
+            (
+                entry
+                    .layer
+                    .property(drmkit_planes::PropTag::Zpos)
+                    .expect("asked"),
+                entry.zpos,
+            )
+        })
+        .collect();
+    written.sort_unstable();
+    assert_eq!(written, vec![(8, Some(0)), (20, Some(1))]);
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("build");
+    for entry in build.plan() {
+        assert_eq!(
+            entry
+                .baseline
+                .and_then(|b| b.get(drmkit_planes::PropTag::Zpos)),
+            entry.zpos,
+            "the baseline holds the zpos that went out, not the one asked for"
+        );
+    }
+    let report = scene.finalize_frame(build, KernelResult::Ok);
+    assert!(
+        report.fb_delta_fast_path,
+        "an unchanged frame still takes the fast path"
+    );
+    scene.flip_landed();
+    scene.drain();
+}

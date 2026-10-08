@@ -1287,12 +1287,15 @@ fn reservation_layer(zpos: Option<u64>) -> drmkit_planes::Layer {
 /// disable pass.
 ///
 /// amdgpu pins its primary at zpos 2 and refuses a commit that disables the
-/// primary of an active CRTC. With every layer sitting above the pin -- which
-/// is the layout the reference's own examples use, `zpos >= 3` -- nothing is
-/// eligible for the primary, so nothing assigns it, so the disable pass clears
-/// it in every test and the kernel refuses every one. The allocator places
-/// nothing and the entire scene falls through to software composition, still
-/// correct, still arriving, silently not using the hardware.
+/// primary of an active CRTC. With nothing eligible for the primary, nothing
+/// assigns it, so the disable pass clears it in every test and the kernel
+/// refuses every one. The allocator places nothing and the entire scene falls
+/// through to software composition, still correct, still arriving, silently
+/// not using the hardware.
+///
+/// Every layer above the pin is no longer enough to get here: the unique
+/// lowest one can take the slot (see the next case). Two layers tied at the
+/// bottom, both above it, still can't.
 #[test]
 fn a_pinned_primary_with_no_eligible_layer_is_reserved() {
     let registry = drmkit_planes::PlaneRegistry::from_capabilities(vec![
@@ -1300,7 +1303,7 @@ fn a_pinned_primary_with_no_eligible_layer_is_reserved() {
         reservation_plane(32, drmkit_planes::PlaneType::Overlay, Some((3, 9))),
         reservation_plane(33, drmkit_planes::PlaneType::Overlay, Some((3, 9))),
     ]);
-    let layers = [reservation_layer(Some(3)), reservation_layer(Some(4))];
+    let layers = [reservation_layer(Some(3)), reservation_layer(Some(3))];
     let refs: Vec<drmkit_planes::LayerRef<'_>> = layers
         .iter()
         .enumerate()
@@ -1822,4 +1825,45 @@ fn alpha_on_a_plane_without_a_range_is_left_alone() {
     let mut map = eight_bit_alpha_plane();
     map.alpha_max.clear();
     assert_eq!(map.rescale_alpha(7, 0x8000), 0x8000);
+}
+
+/// The unique lowest layer can take a fixed primary slot when every other layer
+/// sits above it, so the anchor is not reserved (drm-cxx `8bf20e6`). Layers at
+/// 3 and 4 over amdgpu's slot at 2: the 3 takes the primary, and the stack is
+/// still what was asked for.
+#[test]
+fn the_lowest_layer_above_a_fixed_slot_makes_the_anchor_unnecessary() {
+    let registry = drmkit_planes::PlaneRegistry::from_capabilities(vec![
+        reservation_plane(31, drmkit_planes::PlaneType::Primary, Some((2, 2))),
+        reservation_plane(32, drmkit_planes::PlaneType::Overlay, Some((3, 9))),
+        reservation_plane(33, drmkit_planes::PlaneType::Overlay, Some((3, 9))),
+    ]);
+    let layers = [reservation_layer(Some(3)), reservation_layer(Some(4))];
+    let refs: Vec<drmkit_planes::LayerRef<'_>> = layers
+        .iter()
+        .enumerate()
+        .map(|(i, layer)| drmkit_planes::LayerRef {
+            id: drmkit_planes::LayerId(i as u64 + 1),
+            layer,
+        })
+        .collect();
+
+    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0).is_empty());
+}
+
+/// Which layer can take a fixed slot below everything else.
+#[test]
+fn the_bottom_slot_layer_is_the_unique_lowest_above_the_pin() {
+    use crate::scene::bottom_slot_layer;
+    // i.MX LCDIF / tilcdc: a lone layer above slot 0.
+    assert_eq!(bottom_slot_layer(&[Some(1)], 0), Some(0));
+    // The unique lowest, wherever it is listed.
+    assert_eq!(bottom_slot_layer(&[Some(5), Some(3), Some(4)], 2), Some(1));
+    // Tied at the bottom: neither can claim the slot.
+    assert_eq!(bottom_slot_layer(&[Some(3), Some(3)], 2), None);
+    // Another layer at or below the slot keeps the existing behavior.
+    assert_eq!(bottom_slot_layer(&[Some(1), Some(2)], 2), None);
+    // A layer with no zpos is the existing hint's business.
+    assert_eq!(bottom_slot_layer(&[Some(3), None], 2), None);
+    assert_eq!(bottom_slot_layer(&[], 2), None);
 }

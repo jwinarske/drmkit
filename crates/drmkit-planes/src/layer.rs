@@ -54,6 +54,18 @@ impl PropertySnapshot {
             Some(self.values[tag.index()])
         }
     }
+
+    /// This snapshot with one property replaced.
+    ///
+    /// For a value the commit wrote in place of the layer's own: the stacked
+    /// zpos, which the next frame's diff has to compare against what went out
+    /// rather than what was asked for.
+    #[must_use]
+    pub const fn with(mut self, tag: PropTag, value: u64) -> Self {
+        self.values[tag.index()] = value;
+        self.set_mask |= 1 << tag.index();
+        self
+    }
 }
 
 /// One layer the scene wants on screen.

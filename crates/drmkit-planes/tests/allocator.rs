@@ -733,3 +733,112 @@ fn a_plane_on_another_crtc_contributes_nothing() {
         vec![LINEAR]
     );
 }
+
+// --- zpos stacking (drm-cxx `8bf20e6`, `ad47fa9`) -----------------------------
+
+/// A layer above 0 can take a lone fixed-slot primary.
+///
+/// On a single-plane controller (i.MX LCDIF, tilcdc) the primary is pinned at
+/// 0, and requiring the layer's zpos to equal the slot composited every layer
+/// above 0, even alone. Nothing else is placed, so there is no order to break.
+#[test]
+fn a_layer_above_zero_can_take_a_lone_fixed_primary() {
+    let registry =
+        PlaneRegistry::from_capabilities(vec![plane(31, PlaneType::Primary, Some((0, 0)))]);
+    let layers = vec![(LayerId(1), layer_at(0, 0, 640, 480, 1))];
+    let mut allocator = Allocator::new();
+
+    let result = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    assert_eq!(result.assignment.get(31), Some(LayerId(1)));
+    assert!(result.composited.is_empty());
+}
+
+/// A requested zpos past a mutable overlay's range still reaches it; the
+/// stacked value is what gets written.
+#[test]
+fn a_zpos_past_the_overlays_range_still_reaches_it() {
+    let layers = vec![(LayerId(1), layer_at(0, 0, 640, 480, 9))];
+    let mut allocator = Allocator::new();
+
+    let result = allocator
+        .allocate(&refs(&layers), &registry(), 0, &mut Committer::default())
+        .expect("allocate");
+
+    assert_eq!(
+        result.assignment.len(),
+        1,
+        "zpos 9 against overlays of [1, 4]"
+    );
+}
+
+/// The allocator never picks an inverted stack, which the kernel would accept.
+///
+/// amdgpu's primary is pinned at 2. With a layer asking 3 and one asking 5,
+/// putting the 5 on the primary and the 3 on an overlay stacks them upside
+/// down -- the overlay is written at 3, above the slot -- which no TEST can
+/// tell apart from a correct frame. (Below the slot is fine: an overlay under
+/// the primary is an underlay, and a layer asking 1 may take one.)
+#[test]
+fn an_inverted_stack_is_never_chosen() {
+    let registry = PlaneRegistry::from_capabilities(vec![
+        plane(40, PlaneType::Primary, Some((2, 2))),
+        plane(41, PlaneType::Overlay, Some((0, 255))),
+    ]);
+    let layers = vec![
+        (LayerId(1), layer_at(0, 0, 640, 480, 5)),
+        (LayerId(2), layer_at(0, 0, 640, 480, 3)),
+    ];
+    let mut allocator = Allocator::new();
+
+    let result = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    let inverted = result.assignment.get(40) == Some(LayerId(1))
+        && result.assignment.get(41) == Some(LayerId(2));
+    assert!(
+        !inverted,
+        "{:?} stacks the 3 above the 5",
+        result.assignment.entries()
+    );
+}
+
+/// A warm start whose cached assignment no longer stacks is not reused.
+///
+/// Last frame the layer on the fixed primary asked 5 and the one on the overlay
+/// asked 1, an underlay -- consistent. When the overlay's request rises to 3 it
+/// is written above the primary's slot while asking to sit below the 5, and
+/// re-validating the cached assignment with a TEST would pass, so the stacking
+/// check has to run on the warm path too.
+#[test]
+fn a_warm_start_that_would_invert_the_stack_is_not_reused() {
+    let registry = PlaneRegistry::from_capabilities(vec![
+        plane(40, PlaneType::Primary, Some((2, 2))),
+        plane(41, PlaneType::Overlay, Some((0, 255))),
+    ]);
+    let mut layers = vec![
+        (LayerId(1), layer_at(0, 0, 640, 480, 5)),
+        (LayerId(2), layer_at(0, 0, 640, 480, 1)),
+    ];
+    let mut allocator = Allocator::new();
+    let first = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+    assert_eq!(first.assignment.get(40), Some(LayerId(1)));
+    assert_eq!(first.assignment.get(41), Some(LayerId(2)));
+
+    layers[1].1.set_property(PropTag::Zpos, 3);
+    let second = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    let inverted = second.assignment.get(40) == Some(LayerId(1))
+        && second.assignment.get(41) == Some(LayerId(2));
+    assert!(
+        !inverted,
+        "the cached assignment now inverts the stack and was kept"
+    );
+}

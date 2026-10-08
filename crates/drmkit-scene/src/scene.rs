@@ -329,6 +329,11 @@ pub struct PlanePlan {
     /// blob, which the kernel reads as *nothing changed* and would leave the
     /// frame unrepainted.
     pub damage: Vec<crate::DamageRect>,
+    /// The zpos to write in place of the layer's own: the frame's stack,
+    /// numbered densely over the planes it arms (see
+    /// [`stacked_zpos`](drmkit_planes::stacked_zpos)). `None` where the plane
+    /// is not ranked, and the layer's own value goes out.
+    pub zpos: Option<u64>,
 }
 
 /// One pass over the sources: what they gave, and what it cost.
@@ -856,6 +861,8 @@ impl LayerScene {
             pins_unhonored,
             pinned,
         } = self.acquire_every_layer(registry, crtc_index, &mut tally)?;
+        let mut plane_layers = plane_layers;
+        lower_bottom_layer_to_primary_slot(&mut plane_layers, registry, crtc_index);
 
         let refs: Vec<LayerRef<'_>> = plane_layers
             .iter()
@@ -924,11 +931,26 @@ impl LayerScene {
                 // its content is the union of what it rescued -- there is no
                 // one source's damage to report, so it repaints whole.
                 damage: Vec::new(),
+                zpos: None,
             });
             disables.into_iter().filter(|id| *id != plane_id).collect()
         } else {
             disables
         };
+
+        // One stack over everything armed -- allocated, pinned and the canvas,
+        // which asks to sit above every layer and so lands just above the
+        // highest armed one. Numbering only the armed planes is what keeps
+        // composited layers from using up the range (drm-cxx `1384526`).
+        let armed: Vec<(u32, Option<u64>)> = plan
+            .iter()
+            .map(|entry| (entry.plane_id, entry.layer.property(PropTag::Zpos)))
+            .collect();
+        for (plane_id, zpos) in drmkit_planes::stacked_zpos(registry, &armed) {
+            if let Some(entry) = plan.iter_mut().find(|entry| entry.plane_id == plane_id) {
+                entry.zpos = Some(zpos);
+            }
+        }
 
         Ok(FrameBuild {
             acquisitions,
@@ -1263,7 +1285,11 @@ impl LayerScene {
                     )
                 })
                 .collect();
-            self.allocator.record_commit(&applied);
+            let stacked: Vec<(u32, u64)> = plan
+                .iter()
+                .filter_map(|entry| entry.zpos.map(|zpos| (entry.plane_id, zpos)))
+                .collect();
+            self.allocator.record_commit_stacked(&applied, &stacked);
         }
 
         // Which layers asked for the release fence, decided before the
@@ -1628,7 +1654,9 @@ struct Composition {
 ///
 /// A layer counts as eligible when its zpos matches the pin, or when it has
 /// none at all: an unpinned layer is free to land there and the scoring bonus
-/// in `plane_score` will put it there.
+/// in `plane_score` will put it there. So does the unique lowest layer when
+/// every other one sits above a fixed slot -- see
+/// [`lower_bottom_layer_to_primary_slot`], which is what then lands it there.
 ///
 /// Not reachable on vkms, which exposes no zpos property at all, so nothing
 /// in CI can show this. See P-26.
@@ -1656,12 +1684,14 @@ pub(crate) fn canvas_reservation(
         && let Some(pin) = primary.zpos_min
         && crate::canvas_format_for_plane(primary).is_some()
     {
-        let anyone_eligible = refs.iter().any(|layer| {
-            layer
-                .layer
-                .property(drmkit_planes::PropTag::Zpos)
-                .is_none_or(|zpos| zpos == pin)
-        });
+        let zposes: Vec<Option<u64>> = refs
+            .iter()
+            .map(|layer| layer.layer.property(drmkit_planes::PropTag::Zpos))
+            .collect();
+        let anyone_eligible = zposes
+            .iter()
+            .any(|zpos| zpos.is_none_or(|zpos| zpos == pin))
+            || (drmkit_planes::zpos_fixed(primary) && bottom_slot_layer(&zposes, pin).is_some());
         if !anyone_eligible {
             return vec![primary.id];
         }
@@ -1738,6 +1768,60 @@ fn blend_targets(
         blended += 1;
     }
     blended
+}
+
+/// The layer that can take a fixed primary slot `pin` though it asks for
+/// another zpos: the unique lowest, with every other layer asking strictly
+/// above the slot.
+///
+/// Port of upstream's `bottom_slot_layer` (drm-cxx `8bf20e6`). On it, the stack
+/// comes out as asked whichever plane each layer lands on. `None` when any
+/// layer leaves zpos unset -- the existing primary hint covers that -- when the
+/// lowest is tied, or when another layer asks at or below the slot (amdgpu
+/// layers at zpos 2 or lower keep the existing behavior).
+pub(crate) fn bottom_slot_layer(zposes: &[Option<u64>], pin: u64) -> Option<usize> {
+    let all: Option<Vec<u64>> = zposes.iter().copied().collect();
+    let all = all?;
+    let lowest = *all.iter().min()?;
+    let mut at_lowest = all.iter().enumerate().filter(|(_, z)| **z == lowest);
+    let (index, _) = at_lowest.next()?;
+    if at_lowest.next().is_some() {
+        return None;
+    }
+    all.iter()
+        .enumerate()
+        .all(|(i, z)| i == index || *z > pin)
+        .then_some(index)
+}
+
+/// Lower the bottom layer at the primary's fixed slot, when it can take it.
+///
+/// On a single-primary controller (i.MX LCDIF, tilcdc: slot 0) a lone layer
+/// at zpos 1 or above otherwise never reaches the only plane, and on one that
+/// enforces an armed primary (amdgpu, slot 2) the disable every test would
+/// carry refuses them all. Asking at the slot keeps the requested stacking --
+/// every other layer asks above it -- and is what the primary's scoring bonus
+/// keys on.
+fn lower_bottom_layer_to_primary_slot(
+    plane_layers: &mut [(LayerId, PlaneLayer)],
+    registry: &PlaneRegistry,
+    crtc_index: u32,
+) {
+    let Some(primary) = registry.for_crtc(crtc_index).find(|plane| {
+        plane.plane_type == drmkit_planes::PlaneType::Primary && drmkit_planes::zpos_fixed(plane)
+    }) else {
+        return;
+    };
+    let Some(pin) = primary.zpos_min else {
+        return;
+    };
+    let zposes: Vec<Option<u64>> = plane_layers
+        .iter()
+        .map(|(_, layer)| layer.property(PropTag::Zpos))
+        .collect();
+    if let Some(index) = bottom_slot_layer(&zposes, pin) {
+        plane_layers[index].1.set_property(PropTag::Zpos, pin);
+    }
 }
 
 /// Lower the canvas itself into the property bag its plane is programmed from.
@@ -1895,6 +1979,7 @@ fn build_plan(
                     layer: layer.clone(),
                     baseline: allocator.committed_baseline(plane_id, *id).copied(),
                     damage: damage.get(id).cloned().unwrap_or_default(),
+                    zpos: None,
                 })
         })
         .collect();

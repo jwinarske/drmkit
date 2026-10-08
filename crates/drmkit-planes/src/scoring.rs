@@ -242,14 +242,13 @@ pub fn plane_statically_compatible(
         return false;
     }
 
-    if let Some(z) = layer.property(PropTag::Zpos) {
-        if plane.zpos_min.is_some_and(|min| z < min) {
-            return false;
-        }
-        if plane.zpos_max.is_some_and(|max| z > max) {
-            return false;
-        }
-    }
+    // No zpos range check: the requested value is not what gets written. The
+    // scene writes `stacked_zpos`'s dense numbering, which fits each plane's
+    // range, so a layer asking zpos 3 can sit on a `[0, 1]` plane (tidss on a
+    // BeaglePlay, where the gate kept every layer above 1 off the overlay).
+    // Where no dense numbering fits, the requested values go out and the
+    // TEST decides. Stacking order is checked per assignment instead
+    // (drm-cxx `ad47fa9`, `8bf20e6`).
 
     if plane.plane_type == PlaneType::Cursor {
         if plane.cursor_max_w > 0 && layer.width() > plane.cursor_max_w {

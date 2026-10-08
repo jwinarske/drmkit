@@ -529,6 +529,10 @@ pub struct LayerScene {
     /// it lit, on screen over or under the scene and counted against a
     /// controller's plane limit.
     planes_unknown: bool,
+    /// The plane the canvas was armed on last frame, if composition ran: the
+    /// canvas's first preference this frame (drm-cxx `6d787f9`). Forgotten on
+    /// a frame that composites nothing, and on rebind and resume.
+    last_canvas_plane: Option<u32>,
     /// What a rebind to another CRTC left lit on the old one.
     detach: Option<PendingDetach>,
 }
@@ -575,6 +579,7 @@ impl LayerScene {
             topology_dirty: true,
             committed_once: false,
             planes_unknown: true,
+            last_canvas_plane: None,
             detach: None,
         }
     }
@@ -627,6 +632,7 @@ impl LayerScene {
     pub const fn resume(&mut self) {
         self.lifecycle.resume();
         self.planes_unknown = true;
+        self.last_canvas_plane = None;
     }
 
     /// Add a layer backed by `source`.
@@ -898,6 +904,7 @@ impl LayerScene {
         // canvas takes a plane, and a plane carrying the canvas must not also
         // appear in the disable pass.
         let canvas_plane = self.compose_unassigned(&allocation, registry, crtc_index);
+        self.last_canvas_plane = canvas_plane.as_ref().map(|c| c.plane_id);
         // What actually landed in the canvas, not what the allocator dropped.
         // A layer whose source the CPU cannot read, or whose format the blend
         // does not handle, is dropped *and* unrescued -- counting it composited
@@ -1122,7 +1129,13 @@ impl LayerScene {
         crtc_index: u32,
         committer: &mut C,
     ) -> Result<drmkit_planes::Allocation, SceneError> {
-        let reserved = canvas_reservation(self.canvas.is_some(), refs, registry, crtc_index);
+        let reserved = canvas_reservation(
+            self.canvas.is_some(),
+            refs,
+            registry,
+            crtc_index,
+            self.last_canvas_plane,
+        );
         self.allocator.set_reserved_planes(&reserved);
         // A plane reserved up front is the canvas's, so the search arms the
         // canvas there in its tests. Without that the tests left it out, and
@@ -1167,9 +1180,7 @@ impl LayerScene {
         {
             return Ok(allocation);
         }
-        let Some(spare) = hosts
-            .iter()
-            .copied()
+        let Some(spare) = canvas_plane_order(&hosts, registry, crtc_index, self.last_canvas_plane)
             .find(|id| allocation.assignment.get(*id).is_none())
         else {
             return Ok(allocation);
@@ -1210,11 +1221,11 @@ impl LayerScene {
         Ok(allocation)
     }
 
-    /// Where the canvas sits in the stack: above every layer.
+    /// Where the canvas sits in the allocator's tests: above every layer.
     ///
-    /// Shared by the pass that tests a frame and the pass that builds it, so
-    /// the plane the kernel was asked about and the plane it is handed cannot
-    /// disagree about their stacking.
+    /// The tests run before anything is composited, so they cannot know the
+    /// run's own zpos, which is where the built frame stacks the canvas (see
+    /// `compose_unassigned`).
     fn canvas_zpos(&self) -> u64 {
         let mut zpos = 0u64;
         for handle in self.handles().collect::<Vec<_>>() {
@@ -1252,18 +1263,21 @@ impl LayerScene {
                     .max()
             })?
         } else {
-            registry
+            // The plane its tests armed it on, else upstream's order.
+            let hosts: Vec<u32> = registry
                 .force_disable_candidates(crtc_index)
+                .filter(|plane| {
+                    self.canvas
+                        .as_ref()
+                        .is_some_and(|canvas| plane.supports_format(canvas.fourcc()))
+                })
                 .map(|plane| plane.id)
-                .find(free)?
+                .collect();
+            self.allocator.canvas_plane().filter(free).or_else(|| {
+                canvas_plane_order(&hosts, registry, crtc_index, self.last_canvas_plane)
+                    .find(|id| free(id))
+            })?
         };
-
-        // Above every layer that did get a plane, and above anything the
-        // composited layers themselves asked for. A canvas that lands at the
-        // same stacking slot as an assigned layer competes with it, and on a
-        // driver that pins its primary plane high the canvas ends up hidden
-        // underneath the very layers it is carrying.
-        let zpos = self.canvas_zpos();
 
         // Resolve every composited layer to its slot before touching the
         // canvas: `LayerId` packs a handle and a generation, and undoing that
@@ -1290,6 +1304,20 @@ impl LayerScene {
         // asked for. `composited` comes back in allocation order, which is not
         // it.
         targets.sort_unstable();
+
+        // Where the run asked to be: at its topmost layer's zpos, so placed
+        // layers above the run stay above the canvas and those below stay
+        // below. Above every layer, as this used to be, the canvas covered
+        // any placed layer stacked over what it carries (P-44, drm-cxx#343),
+        // which overlay-first placement makes the common case: on a Pi 5 the
+        // plane-limit scene's top tile went under a canvas carrying the
+        // background. A run with placed layers inside it still cannot stack
+        // right; on these CRTCs the search does not keep the run contiguous.
+        //
+        // The tests armed the canvas above every layer (see `canvas_zpos`),
+        // since which layers are composited is not known before the search;
+        // the planes and buffers are the ones tested, only the order differs.
+        let zpos = targets.last().map_or(0, |(order, _)| *order);
 
         // Disjoint field borrows: the sources live in `slots`, the canvas does
         // not, and the blend needs both at once.
@@ -1540,6 +1568,7 @@ impl LayerScene {
         self.topology_dirty = true;
         self.committed_once = false;
         self.planes_unknown = true;
+        self.last_canvas_plane = None;
         for handle in self.handles().collect::<Vec<_>>() {
             if let Some(layer) = self.layer_mut(handle) {
                 layer.hints_dirty = true;
@@ -1731,9 +1760,14 @@ struct Composition {
 /// did not take -- so with more layers than planes there would be none left,
 /// and the overflow the canvas exists to rescue would be dropped instead.
 ///
-/// The *last* candidate, so the search keeps the lower-indexed planes for the
+/// Which plane follows [`canvas_plane_order`]: last frame's canvas plane, else
+/// the first overlay, else a primary, so the primary stays free for the
+/// bottom layer (drm-cxx `6d787f9`). Only planes that can carry the canvas
+/// count, toward the overflow as well as for the pick. This used to take the
+/// *last* candidate, so the search kept the lower-indexed planes for the
 /// layers that stack below the canvas -- which matters on hardware where plane
-/// index is the stacking order and nothing can reorder it.
+/// index is the stacking order and nothing can reorder it. Such hardware now
+/// takes the plane-order path, which reserves nothing.
 ///
 /// **Primary anchor.** A primary whose zpos is pinned, with no live layer
 /// eligible to land on it. Nothing then assigns the primary, so the disable
@@ -1762,6 +1796,7 @@ pub(crate) fn canvas_reservation(
     refs: &[LayerRef<'_>],
     registry: &PlaneRegistry,
     crtc_index: u32,
+    previous: Option<u32>,
 ) -> Vec<u32> {
     // Planes stacked by id: the allocator places the canvas itself, between
     // the layers it carries.
@@ -1796,15 +1831,50 @@ pub(crate) fn canvas_reservation(
         }
     }
 
-    if refs.len() > candidates.len() {
-        candidates
-            .last()
-            .map(|plane| plane.id)
-            .into_iter()
+    let hosts: Vec<u32> = candidates
+        .iter()
+        .filter(|plane| crate::canvas_format_for_plane(plane).is_some())
+        .map(|plane| plane.id)
+        .collect();
+    if refs.len() > hosts.len() {
+        canvas_plane_order(&hosts, registry, crtc_index, previous)
+            .take(1)
             .collect()
     } else {
         Vec::new()
     }
+}
+
+/// The planes the canvas prefers, best first: `previous`, the plane it had
+/// last frame, then overlays, then primaries, each in registry order. Only
+/// `hosts`, the planes that can carry it.
+///
+/// Upstream's order (`6d787f9`, closing P-24): a primary is a preference for
+/// the bottom layer, not a contract for the canvas, so on a CRTC with two
+/// primaries and one taken a free overlay comes before the other primary.
+/// The sticky first choice keeps the canvas from moving between planes frame
+/// to frame.
+pub(crate) fn canvas_plane_order<'a>(
+    hosts: &'a [u32],
+    registry: &'a PlaneRegistry,
+    crtc_index: u32,
+    previous: Option<u32>,
+) -> impl Iterator<Item = u32> + 'a {
+    let of_type = move |plane_type: drmkit_planes::PlaneType| {
+        registry
+            .for_crtc(crtc_index)
+            .filter(move |plane| {
+                plane.plane_type == plane_type
+                    && hosts.contains(&plane.id)
+                    && previous != Some(plane.id)
+            })
+            .map(|plane| plane.id)
+    };
+    previous
+        .filter(|id| hosts.contains(id))
+        .into_iter()
+        .chain(of_type(drmkit_planes::PlaneType::Overlay))
+        .chain(of_type(drmkit_planes::PlaneType::Primary))
 }
 
 /// Blend each target's source into the canvas, and say how many landed.

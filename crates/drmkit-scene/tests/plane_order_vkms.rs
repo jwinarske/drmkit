@@ -99,13 +99,6 @@ fn the_composited_run_takes_the_low_priority_layers_vkms() {
         drmkit_testkit::skipped("no connected output or no canvas");
         return;
     };
-    // Where planes take a zpos the canvas goes above every layer, so a
-    // composited run with placed layers above it shows over them (P-44).
-    if !fx.stacks_by_plane_id() {
-        drmkit_testkit::skipped("planes take a zpos: the canvas sits above every layer (P-44)");
-        fx.teardown();
-        return;
-    }
     let count = u32::try_from(fx.eligible_planes() + 4).expect("few planes");
     // The middle half is cheap to composite, the rest is not.
     let low = |index: u32| index >= count / 4 && index < count * 3 / 4;

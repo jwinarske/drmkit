@@ -1026,3 +1026,97 @@ fn a_zpos_tie_composites_its_lowest_priority_layers() {
     composited.sort_unstable();
     assert_eq!(composited, [4, 5, 6], "the three lowest priorities");
 }
+
+// --- warm start with composited layers (drm-cxx 6e58d23, #341) ----------------
+
+/// Six layers stacked on four id-ordered planes with a canvas: three placed,
+/// three composited, the canvas taking the last plane.
+fn composited_scene(low: &[u64]) -> Vec<(LayerId, Layer)> {
+    let mut layers = stacked_layers(6);
+    for (id, layer) in &mut layers {
+        layer.set_app_priority(if low.contains(&id.0) { 10 } else { 200 });
+    }
+    layers
+}
+
+fn composited_ids(allocation: &drmkit_planes::Allocation) -> Vec<u64> {
+    let mut ids: Vec<u64> = allocation.composited.iter().map(|id| id.0).collect();
+    ids.sort_unstable();
+    ids
+}
+
+/// With every plane taken, a layer composited last frame is not new: the warm
+/// start composites it again rather than paying for a full search. Shown by
+/// what a full search would do differently -- move the run to the layers that
+/// are now cheap.
+#[test]
+fn a_composited_layer_is_not_new_while_no_plane_is_free() {
+    let registry = fixed_order_registry();
+    let mut layers = composited_scene(&[1, 2, 3]);
+    let mut allocator = Allocator::new();
+    allocator.set_canvas(&[31, 32, 33, 34], Some(&Layer::new()));
+    let first = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+    assert_eq!(composited_ids(&first), [1, 2, 3]);
+
+    for (id, layer) in &mut layers {
+        layer.set_app_priority(if id.0 >= 4 { 10 } else { 200 });
+    }
+    let second = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    assert_eq!(second.diagnostics.test_commits_issued, 1);
+    assert_eq!(second.assignment.entries(), first.assignment.entries());
+    assert_eq!(composited_ids(&second), [1, 2, 3]);
+    assert_eq!(allocator.canvas_plane(), Some(31));
+}
+
+/// Removing composited layers until the one left would fit its canvas's
+/// plane: a full search gives it that plane and retires the canvas, where a
+/// warm start would go on blending one layer every frame.
+#[test]
+fn a_lone_composited_layer_takes_the_canvas_plane_once_it_fits() {
+    let registry = fixed_order_registry();
+    let mut layers = composited_scene(&[1, 2, 3]);
+    let mut allocator = Allocator::new();
+    allocator.set_canvas(&[31, 32, 33, 34], Some(&Layer::new()));
+    allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    layers.retain(|(id, _)| id.0 != 2 && id.0 != 3);
+    let shrunk = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    assert!(shrunk.composited.is_empty(), "{:?}", shrunk.composited);
+    assert_eq!(shrunk.assignment.len(), 4);
+    assert_eq!(allocator.canvas_plane(), None);
+}
+
+/// The shape of drm-cxx#341: placed layers removed so the scene is back
+/// under the plane count. Every layer gets a plane and the canvas goes.
+#[test]
+fn a_scene_back_under_the_plane_count_retires_the_canvas() {
+    let registry = fixed_order_registry();
+    let mut layers = composited_scene(&[1, 2, 3]);
+    let mut allocator = Allocator::new();
+    allocator.set_canvas(&[31, 32, 33, 34], Some(&Layer::new()));
+    allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    layers.retain(|(id, _)| id.0 <= 4);
+    let shrunk = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    assert!(shrunk.composited.is_empty(), "{:?}", shrunk.composited);
+    assert_eq!(
+        planes_in_zpos_order(&shrunk, &layers),
+        [Some(31), Some(32), Some(33), Some(34)]
+    );
+    assert_eq!(allocator.canvas_plane(), None);
+}

@@ -41,8 +41,9 @@ fn stack(fx: &mut Fixture, count: u32) -> Option<Vec<LayerHandle>> {
     Some(handles)
 }
 
-/// The color at the screen center.
-fn center(fx: &Fixture) -> u32 {
+/// The color at the screen center; `None` where the CRTC cannot be read
+/// back, which leaves these cases nothing to check.
+fn center(fx: &Fixture) -> Option<u32> {
     let (w, h) = fx.mode_size();
     fx.pixel_at(w / 2, h / 2)
 }
@@ -78,7 +79,12 @@ fn the_canvas_stacks_where_its_layers_asked_vkms() {
         "the stack should overflow into the canvas: {report:?}"
     );
     assert_eq!(report.layers_unassigned, 0, "{report:?}");
-    assert_eq!(center(&fx), color(count - 1), "the topmost layer must show");
+    let Some(shown) = center(&fx) else {
+        drmkit_testkit::skipped("the CRTC cannot be read back");
+        fx.teardown();
+        return;
+    };
+    assert_eq!(shown, color(count - 1), "the topmost layer must show");
     fx.teardown();
 }
 
@@ -93,13 +99,30 @@ fn the_composited_run_takes_the_low_priority_layers_vkms() {
         drmkit_testkit::skipped("no connected output or no canvas");
         return;
     };
+    // Where planes take a zpos the canvas goes above every layer, so a
+    // composited run with placed layers above it shows over them (P-44).
+    if !fx.stacks_by_plane_id() {
+        drmkit_testkit::skipped("planes take a zpos: the canvas sits above every layer (P-44)");
+        fx.teardown();
+        return;
+    }
     let count = u32::try_from(fx.eligible_planes() + 4).expect("few planes");
+    // The middle half is cheap to composite, the rest is not.
+    let low = |index: u32| index >= count / 4 && index < count * 3 / 4;
+    // Every high-priority layer needs a plane of its own, beside the canvas's.
+    let high = (0..count).filter(|index| !low(*index)).count();
+    if high + 1 > fx.eligible_planes() {
+        drmkit_testkit::skipped(&format!(
+            "{} plane(s) cannot hold {high} high-priority layers and the canvas",
+            fx.eligible_planes()
+        ));
+        fx.teardown();
+        return;
+    }
     let Some(handles) = stack(&mut fx, count) else {
         drmkit_testkit::skipped("no dumb buffer for a layer");
         return;
     };
-    // The middle half is cheap to composite, the rest is not.
-    let low = |index: u32| index >= count / 4 && index < count * 3 / 4;
     for (index, handle) in (0..count).zip(&handles) {
         fx.scene
             .layer_mut(*handle)
@@ -121,7 +144,12 @@ fn the_composited_run_takes_the_low_priority_layers_vkms() {
             "layer {index} (high priority) was composited"
         );
     }
-    assert_eq!(center(&fx), color(count - 1));
+    let Some(shown) = center(&fx) else {
+        drmkit_testkit::skipped("the CRTC cannot be read back");
+        fx.teardown();
+        return;
+    };
+    assert_eq!(shown, color(count - 1));
     fx.teardown();
 }
 
@@ -137,13 +165,27 @@ fn a_restack_reaches_the_screen_vkms() {
         drmkit_testkit::skipped("no connected output");
         return;
     };
+    // No canvas here: each of the three needs a plane.
+    if fx.eligible_planes() < 3 {
+        drmkit_testkit::skipped(&format!(
+            "{} plane(s) cannot hold three layers",
+            fx.eligible_planes()
+        ));
+        fx.teardown();
+        return;
+    }
     let Some(handles) = stack(&mut fx, 3) else {
         drmkit_testkit::skipped("no dumb buffer for a layer");
         return;
     };
     fx.commit().expect("the first frame");
     fx.commit().expect("a steady frame");
-    assert_eq!(center(&fx), color(2), "before the restack");
+    let Some(before) = center(&fx) else {
+        drmkit_testkit::skipped("the CRTC cannot be read back");
+        fx.teardown();
+        return;
+    };
+    assert_eq!(before, color(2), "before the restack");
 
     for (index, handle) in (0u64..).zip(&handles) {
         fx.set_zpos(*handle, 5 - index);
@@ -151,7 +193,7 @@ fn a_restack_reaches_the_screen_vkms() {
     fx.commit().expect("the restacked frame");
     assert_eq!(
         center(&fx),
-        color(0),
+        Some(color(0)),
         "the layer now on top must show after the restack"
     );
     fx.teardown();

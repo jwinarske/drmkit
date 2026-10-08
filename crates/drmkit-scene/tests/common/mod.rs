@@ -348,10 +348,20 @@ impl Fixture {
     }
 
     /// The color on screen at `(x, y)`, read back from the CRTC, alpha
-    /// dropped.
-    pub(crate) fn pixel_at(&self, x: u32, y: u32) -> u32 {
-        let image = drmkit_capture::snapshot(&self.device, self.crtc_id).expect("snapshot");
-        image.pixels()[(y * image.width() + x) as usize] & 0x00FF_FFFF
+    /// dropped; `None` where the CRTC cannot be read back (the SA8155P's
+    /// planes hand out no readable framebuffer).
+    pub(crate) fn pixel_at(&self, x: u32, y: u32) -> Option<u32> {
+        let image = match drmkit_capture::snapshot(&self.device, self.crtc_id) {
+            Ok(image) => image,
+            Err(drmkit_capture::CaptureError::NothingReadable) => return None,
+            Err(error) => panic!("snapshot: {error}"),
+        };
+        Some(image.pixels()[(y * image.width() + x) as usize] & 0x00FF_FFFF)
+    }
+
+    /// Whether this CRTC's planes stack by plane id: none takes a `zpos`.
+    pub(crate) fn stacks_by_plane_id(&self) -> bool {
+        drmkit_planes::stacks_by_plane_id(&self.registry, self.crtc_index)
     }
 
     /// How many planes on this CRTC the allocator may place a layer on.

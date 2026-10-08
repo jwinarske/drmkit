@@ -156,12 +156,26 @@ fn rig() -> Option<Rig> {
             Ok(2) => PlaneType::Cursor,
             _ => PlaneType::Overlay,
         };
+        // The zpos range too: a plane list without one reads as planes that
+        // stack by id, which sends the allocator down the plane-order path
+        // and past the search these cases exist for. Read the way `probe`
+        // reads it.
+        let (zpos_min, zpos_max) = match store.range(plane_id, "zpos") {
+            Ok(Some((min, max))) => (Some(min), Some(max)),
+            Ok(None) => {
+                let fixed = store.property_value(plane_id, "zpos").ok();
+                (fixed, fixed)
+            }
+            Err(_) => (None, None),
+        };
         capabilities.push(PlaneCapabilities {
             id: plane_id,
             possible_crtcs: mask,
             plane_type,
             formats: vec![fourcc::ARGB8888],
             supports_scaling: true,
+            zpos_min,
+            zpos_max,
             ..PlaneCapabilities::default()
         });
     }

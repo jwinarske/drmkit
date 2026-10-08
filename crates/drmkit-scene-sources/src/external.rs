@@ -42,6 +42,11 @@ pub enum ExternalError {
     /// framebuffer.
     #[error("external buffer operation failed: {0}")]
     Io(#[from] rustix::io::Errno),
+    /// The key was [`retire`](crate::ExternalDmaBufPool::retire)d and its old
+    /// import is not torn down yet, so the frame was not taken. Try again once
+    /// a later frame has displaced it.
+    #[error("buffer key retired and not yet torn down")]
+    Retired,
 }
 
 /// Up to four planes, as KMS accepts.

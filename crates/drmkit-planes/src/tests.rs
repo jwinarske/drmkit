@@ -911,20 +911,24 @@ fn scaling_requires_a_scaling_plane() {
     assert!(plane_statically_compatible(&plane, &layer, 0));
 }
 
+/// A requested zpos outside the plane's range no longer rules the plane out:
+/// the value written is the stacked one, which fits (drm-cxx `ad47fa9`). On
+/// tidss, both planes `[0, 1]`, the old gate kept every layer above 1 off the
+/// overlay.
 #[test]
-fn zpos_must_fall_inside_the_planes_range() {
+fn a_zpos_outside_the_planes_range_does_not_rule_it_out() {
     let mut plane = scoring_plane(31, PlaneType::Overlay);
     plane.zpos_min = Some(2);
     plane.zpos_max = Some(4);
 
     let mut layer = scoring_layer();
-    layer.set_property(PropTag::Zpos, 3);
-    assert!(plane_statically_compatible(&plane, &layer, 0));
-
-    layer.set_property(PropTag::Zpos, 1);
-    assert!(!plane_statically_compatible(&plane, &layer, 0));
-    layer.set_property(PropTag::Zpos, 5);
-    assert!(!plane_statically_compatible(&plane, &layer, 0));
+    for zpos in [1, 3, 5, 99] {
+        layer.set_property(PropTag::Zpos, zpos);
+        assert!(
+            plane_statically_compatible(&plane, &layer, 0),
+            "zpos {zpos}"
+        );
+    }
 }
 
 #[test]
@@ -1453,4 +1457,242 @@ fn plane_alpha_respects_each_planes_own_range() {
     assert_eq!(rescale_alpha(0x8000, 0x7FFF), 0x4000);
     assert_eq!(rescale_alpha(ALPHA_FULL / 2, 1), 0);
     assert_eq!(rescale_alpha(ALPHA_FULL, 1), 1);
+}
+
+// --- zpos order (`test_zpos_order.cpp`) --------------------------------------
+
+fn zplane(id: u32, plane_type: PlaneType, min: Option<u64>, max: Option<u64>) -> PlaneCapabilities {
+    PlaneCapabilities {
+        id,
+        plane_type,
+        zpos_min: min,
+        zpos_max: max,
+        ..PlaneCapabilities::default()
+    }
+}
+
+/// i.MX LCDIF / vc4: primary pinned at 0.
+fn primary_0() -> PlaneCapabilities {
+    zplane(31, PlaneType::Primary, Some(0), Some(0))
+}
+/// amdgpu DC: primary pinned at 2.
+fn primary_2() -> PlaneCapabilities {
+    zplane(40, PlaneType::Primary, Some(2), Some(2))
+}
+fn mutable_overlay() -> PlaneCapabilities {
+    zplane(50, PlaneType::Overlay, Some(0), Some(255))
+}
+/// No zpos property at all (Tegra display).
+fn no_zpos() -> PlaneCapabilities {
+    zplane(60, PlaneType::Overlay, None, None)
+}
+
+/// `ZposOrder.FixedOnlyWhenMinEqualsMax`
+#[test]
+fn zpos_fixed_only_when_min_equals_max() {
+    assert!(zpos_fixed(&primary_0()));
+    assert!(zpos_fixed(&primary_2()));
+    assert!(!zpos_fixed(&mutable_overlay()));
+    assert!(!zpos_fixed(&no_zpos()));
+}
+
+/// `ZposOrder.EffectiveZposIsSlotOnFixedPlanesElseRequested`
+#[test]
+fn effective_zpos_is_the_slot_on_fixed_planes() {
+    assert_eq!(effective_zpos(&primary_2(), Some(7)), Some(2));
+    assert_eq!(effective_zpos(&mutable_overlay(), Some(7)), Some(7));
+    assert_eq!(effective_zpos(&no_zpos(), Some(7)), Some(7));
+    assert_eq!(effective_zpos(&mutable_overlay(), None), None);
+}
+
+/// `ZposOrder.BottomLayerOnFixedPrimaryKeepsOrder`: the bottom layer may sit
+/// on the fixed primary whatever its zpos, as long as everything above lands
+/// higher.
+#[test]
+fn the_bottom_layer_may_take_a_fixed_primary() {
+    assert!(stacking_consistent(
+        &primary_2(),
+        Some(0),
+        &mutable_overlay(),
+        Some(3)
+    ));
+    assert!(stacking_consistent(
+        &primary_0(),
+        Some(1),
+        &mutable_overlay(),
+        Some(5)
+    ));
+}
+
+/// `ZposOrder.InvertedStackRejected`: a TEST accepts it, so this must not.
+#[test]
+fn an_inverted_stack_is_rejected() {
+    assert!(!stacking_consistent(
+        &primary_2(),
+        Some(5),
+        &mutable_overlay(),
+        Some(3)
+    ));
+    assert!(!stacking_consistent(
+        &mutable_overlay(),
+        Some(3),
+        &primary_2(),
+        Some(5)
+    ));
+}
+
+/// `ZposOrder.EqualEffectiveSlotForDifferentRequestRejected`
+#[test]
+fn different_requests_on_one_slot_are_rejected() {
+    assert!(!stacking_consistent(
+        &primary_2(),
+        Some(5),
+        &mutable_overlay(),
+        Some(2)
+    ));
+}
+
+/// `ZposOrder.UnorderedRequestsAlwaysConsistent`
+#[test]
+fn unordered_requests_are_always_consistent() {
+    assert!(stacking_consistent(
+        &primary_2(),
+        None,
+        &mutable_overlay(),
+        Some(3)
+    ));
+    assert!(stacking_consistent(
+        &primary_2(),
+        Some(4),
+        &mutable_overlay(),
+        Some(4)
+    ));
+    assert!(stacking_consistent(
+        &no_zpos(),
+        Some(9),
+        &primary_0(),
+        Some(1)
+    ));
+}
+
+/// `ZposOrder.PreviouslyLegalAssignmentsUnaffected`: everything the old range
+/// gate admitted stays admitted.
+#[test]
+fn previously_legal_assignments_are_unaffected() {
+    let overlay = mutable_overlay();
+    assert!(stacking_consistent(&overlay, Some(1), &overlay, Some(9)));
+    assert!(stacking_consistent(&overlay, Some(9), &overlay, Some(1)));
+    assert!(stacking_consistent(
+        &primary_2(),
+        Some(2),
+        &overlay,
+        Some(5)
+    ));
+    assert!(stacking_consistent(
+        &primary_0(),
+        Some(0),
+        &overlay,
+        Some(1)
+    ));
+}
+
+/// SA8155P-like: every plane mutable over `[0, 10]`.
+fn sde(id: u32) -> PlaneCapabilities {
+    zplane(id, PlaneType::Overlay, Some(0), Some(10))
+}
+
+fn written(entries: &[StackEntry<'_>]) -> Vec<u64> {
+    entries
+        .iter()
+        .map(|e| e.written.unwrap_or(u64::MAX))
+        .collect()
+}
+
+/// `ZposOrder.StackPacksArmedPlanesDensely`: composited layers that took the
+/// values in between no longer push the stack up.
+#[test]
+fn the_stack_packs_armed_planes_densely() {
+    let (a, b, c) = (sde(97), sde(115), sde(118));
+    let mut e = [
+        StackEntry::new(&b, Some(8)),
+        StackEntry::new(&a, Some(0)),
+        StackEntry::new(&c, Some(5)),
+    ];
+    assert!(stack_zpos(&mut e));
+    assert_eq!(written(&e), vec![2, 0, 1]);
+}
+
+/// `ZposOrder.StackKeepsFixedSlot` (amdgpu primary at 2).
+#[test]
+fn the_stack_keeps_a_fixed_slot() {
+    let (primary, overlay) = (primary_2(), mutable_overlay());
+    let mut e = [
+        StackEntry::new(&primary, Some(2)),
+        StackEntry::new(&overlay, Some(9)),
+        StackEntry::new(&overlay, Some(1)),
+    ];
+    assert!(stack_zpos(&mut e));
+    assert_eq!(written(&e), vec![2, 3, 0]);
+}
+
+/// `ZposOrder.StackSeparatesTies`, by plane id.
+#[test]
+fn the_stack_separates_ties() {
+    let (b, c) = (sde(115), sde(118));
+    let mut e = [StackEntry::new(&c, Some(4)), StackEntry::new(&b, Some(4))];
+    assert!(stack_zpos(&mut e));
+    assert_eq!(written(&e), vec![1, 0]);
+}
+
+/// `ZposOrder.StackHonorsPlaneMinimum`
+#[test]
+fn the_stack_honors_each_planes_minimum() {
+    let (overlay, high) = (
+        mutable_overlay(),
+        zplane(70, PlaneType::Overlay, Some(4), Some(7)),
+    );
+    let mut e = [
+        StackEntry::new(&overlay, Some(0)),
+        StackEntry::new(&high, Some(6)),
+    ];
+    assert!(stack_zpos(&mut e));
+    assert_eq!(written(&e), vec![0, 4]);
+}
+
+/// `ZposOrder.StackOverflowKeepsRequested`
+#[test]
+fn an_overflowing_stack_keeps_the_requested_values() {
+    let (overlay, tight) = (
+        mutable_overlay(),
+        zplane(71, PlaneType::Overlay, Some(0), Some(0)),
+    );
+    let mut e = [
+        StackEntry::new(&overlay, Some(0)),
+        StackEntry::new(&tight, Some(5)),
+    ];
+    assert!(!stack_zpos(&mut e));
+    assert_eq!(written(&e), vec![0, 5]);
+    // A fixed slot at or below what sits under it.
+    let primary = primary_0();
+    let mut f = [
+        StackEntry::new(&overlay, Some(0)),
+        StackEntry::new(&overlay, Some(1)),
+        StackEntry::new(&primary, Some(3)),
+    ];
+    assert!(!stack_zpos(&mut f));
+}
+
+/// `ZposOrder.StackSkipsUnrankable`
+#[test]
+fn the_stack_skips_what_it_cannot_rank() {
+    let (none, overlay) = (no_zpos(), mutable_overlay());
+    let mut e = [
+        StackEntry::new(&none, Some(3)),
+        StackEntry::new(&overlay, None),
+        StackEntry::new(&overlay, Some(9)),
+    ];
+    assert!(stack_zpos(&mut e));
+    assert_eq!(e[0].written, Some(3));
+    assert_eq!(e[1].written, None);
+    assert_eq!(e[2].written, Some(0));
 }

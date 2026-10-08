@@ -57,6 +57,7 @@ mod output;
 mod prop;
 mod registry;
 mod scoring;
+mod zpos_order;
 
 pub use allocator::{
     Allocation, Allocator, AlwaysAccept, Diagnostics, LayerId, LayerRef, PlaneAssignment,
@@ -74,6 +75,9 @@ pub use scoring::{
     ScoreContext, WARM_STABILITY_BONUS, bandwidth_class_bonus, cost_bias, keep_priority,
     layer_priority, layers_intersect, plane_statically_compatible, rects_intersect, score_pair,
     split_independent_groups,
+};
+pub use zpos_order::{
+    StackEntry, effective_zpos, stack_zpos, stacked_zpos, stacking_consistent, zpos_fixed,
 };
 
 #[cfg(test)]

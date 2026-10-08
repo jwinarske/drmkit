@@ -405,6 +405,19 @@ pub fn commit_detach(device: &Device, scene: &mut crate::LayerScene) -> Result<b
     Ok(true)
 }
 
+/// `layer` with the stacked zpos for `plane_id`, if the stack has one.
+fn with_stacked_zpos(
+    layer: &drmkit_planes::Layer,
+    plane_id: u32,
+    stacked: &[(u32, u64)],
+) -> drmkit_planes::Layer {
+    let mut layer = layer.clone();
+    if let Some((_, zpos)) = stacked.iter().find(|(id, _)| *id == plane_id) {
+        layer.set_property(PropTag::Zpos, *zpos);
+    }
+    layer
+}
+
 /// A [`TestCommitter`] that issues real `TEST_ONLY` commits.
 ///
 /// Builds a fresh request per test that (a) disables every candidate plane not
@@ -424,6 +437,8 @@ pub struct DeviceCommitter<'a> {
     /// A plane armed in every test alongside the assignment -- the
     /// composition canvas. See [`TestCommitter::set_extra_plane`].
     extra: Option<(u32, drmkit_planes::Layer)>,
+    /// For the zpos each test writes: the same stack the frame will.
+    registry: &'a drmkit_planes::PlaneRegistry,
 }
 
 impl<'a> DeviceCommitter<'a> {
@@ -439,7 +454,7 @@ impl<'a> DeviceCommitter<'a> {
     pub fn new(
         device: &'a Device,
         map: &'a PlanePropertyMap,
-        registry: &drmkit_planes::PlaneRegistry,
+        registry: &'a drmkit_planes::PlaneRegistry,
         crtc_index: u32,
         flags: AtomicCommitFlags,
         modeset: Option<&'a Modeset<'a>>,
@@ -455,6 +470,7 @@ impl<'a> DeviceCommitter<'a> {
             modeset,
             commits: 0,
             extra: None,
+            registry,
         }
     }
 }
@@ -492,18 +508,32 @@ impl TestCommitter for DeviceCommitter<'_> {
         // current state, while the assignment being tried is not that state.
         // Upstream splits the same way -- the search path and the apply path
         // are different functions there for this reason.
+        //
+        // zpos goes out as the frame will write it: stacked over exactly the
+        // planes this test arms, canvas included, so the kernel is asked
+        // about the stack it will be handed.
+        let mut armed: Vec<(u32, Option<u64>)> = assignment
+            .iter()
+            .map(|(plane_id, layer)| (*plane_id, layer.layer.property(PropTag::Zpos)))
+            .collect();
+        if let Some((plane_id, layer)) = &self.extra {
+            armed.push((*plane_id, layer.property(PropTag::Zpos)));
+        }
+        let stacked = drmkit_planes::stacked_zpos(self.registry, &armed);
         for (plane_id, layer) in assignment {
-            if emit_layer(&mut request, self.map, *plane_id, layer.layer, None).is_err() {
+            let layer = with_stacked_zpos(layer.layer, *plane_id, &stacked);
+            if emit_layer(&mut request, self.map, *plane_id, &layer, None).is_err() {
                 return Err(TestFailure::Rejected);
             }
         }
         // The canvas, when the caller has told us there will be one. It is
         // part of the frame the kernel will be asked to take, so it is part of
         // the frame the kernel is asked about.
-        if let Some((plane_id, layer)) = &self.extra
-            && emit_layer(&mut request, self.map, *plane_id, layer, None).is_err()
-        {
-            return Err(TestFailure::Rejected);
+        if let Some((plane_id, layer)) = &self.extra {
+            let layer = with_stacked_zpos(layer, *plane_id, &stacked);
+            if emit_layer(&mut request, self.map, *plane_id, &layer, None).is_err() {
+                return Err(TestFailure::Rejected);
+            }
         }
 
         match request.test(self.device, self.flags) {
@@ -694,13 +724,15 @@ pub fn emit_frame_damaged<'a>(
         written += emit_disable(request, map, *plane_id)?;
     }
     for entry in build.plan() {
-        let layer = emit_layer(
-            request,
-            map,
-            entry.plane_id,
-            &entry.layer,
-            entry.baseline.as_ref(),
-        )?;
+        let bag = match entry.zpos {
+            Some(zpos) if entry.layer.property(PropTag::Zpos) != Some(zpos) => {
+                let mut bag = entry.layer.clone();
+                bag.set_property(PropTag::Zpos, zpos);
+                std::borrow::Cow::Owned(bag)
+            }
+            _ => std::borrow::Cow::Borrowed(&entry.layer),
+        };
+        let layer = emit_layer(request, map, entry.plane_id, &bag, entry.baseline.as_ref())?;
         written += layer.properties;
         fbs += layer.framebuffers;
         written += emit_color_props(request, map, entry.plane_id)?;

@@ -18,15 +18,15 @@ composition, and scanout.
 >
 > The present spine, cross-output orchestration, GBM surface sources and
 > client-side decorations have since landed. Of the 107 test files upstream has
-> at v4.1.0, 70 are ported and 14 partial. Of the 20 pending, 5 arrived upstream
+> at v4.1.0, 71 are ported and 14 partial. Of the 19 pending, 4 arrived upstream
 > after the `4a0b64a` baseline and wait on porting its allocator and canvas
 > changes. The other 15 do **not** wait on unwritten crates — each waits on
 > hardware or a library this tree does not have: a working GPU render node, the
 > `vgem`, `vivid` or `vicodec` modules, or NVIDIA silicon for EGL streams.
 > [`TEST_PARITY.md`](TEST_PARITY.md) records
 > which, per file, and [`docs/parity-findings.md`](docs/parity-findings.md)
-> records the four findings still open: three wait on hardware, and P-24 on
-> porting upstream's canvas placement.
+> records the five findings still open: three wait on hardware, P-24 on
+> porting upstream's canvas placement, and P-41 on a diagnosis on the SA8155P.
 > See [`plan.md`](plan.md) for the full porting plan.
 >
 > It has run on more than vkms. amdgpu and vc4 (Raspberry Pi 5) by hand, a

@@ -7,18 +7,12 @@
 //!
 //! # What runs here, and what cannot
 //!
-//! **No case locks a front buffer.** `gbm_surface_lock_front_buffer` is
-//! undefined before the first `eglSwapBuffers`, and drmkit creates no GL
-//! context — so the acquire path needs a producer that does not exist here.
-//! Upstream's cases do not lock either, for the same reason.
-//!
-//! **No case creates a surface, either**, on the hardware this was written
-//! against. Neither card here has a working DRI backend: vkms has no render
-//! node, and the amdgpu node's `ACCEL_WORKING` query is refused. Mesa gives
-//! both the minimal backend, where creating a surface *succeeds* and touching
-//! it segfaults. So what the device cases pin is the refusal — that drmkit
-//! declines rather than handing back a crashing handle — and the rest of the
-//! surface's behaviour has no coverage anywhere. Recorded as P-38.
+//! **No case locks a front buffer.** Before a producer binds the surface,
+//! `gbm_surface_lock_front_buffer` and `has_free_buffers` are a `SIGSEGV` in
+//! Mesa, and drmkit creates no GL context, so nothing here binds one.
+//! Upstream's cases do not lock either, for the same reason. Creating a
+//! surface, pausing and resuming it, and the `require_bind` gate are all safe
+//! without a producer, and run on any card with a GBM backend, vkms included.
 
 use std::sync::{Mutex, MutexGuard};
 
@@ -59,6 +53,7 @@ fn good_config() -> SurfaceConfig {
         height: 64,
         fourcc: fourcc::XRGB8888,
         modifier: None,
+        require_bind: false,
     }
 }
 
@@ -129,36 +124,11 @@ fn a_format_gbm_does_not_know_is_refused_before_the_driver_sees_it() {
     );
 }
 
-/// A device that cannot make surfaces is refused, not handed a crashing one.
+/// A surface reports the shape it was asked for.
 ///
-/// This is the case that matters most here, because the failure it prevents
-/// is not an error return — it is `SIGSEGV` on the caller's next line.
-#[test]
-fn a_device_without_surface_support_is_refused() {
-    let _guard = card_guard();
-    let Some(device) = open_card() else { return };
-    let gbm = drmkit_gbm::GbmDevice::new(&device).expect("gbm device");
-
-    if gbm.supports_surfaces() {
-        drmkit_testkit::skipped("this card has a render node; the refusal path needs one without");
-        return;
-    }
-
-    let error = GbmSurfaceSource::create(&device, &good_config())
-        .expect_err("a device with no surface backend must be refused here");
-    assert!(
-        matches!(error, SurfaceError::Create(_)),
-        "got {error}, which does not tell a caller to stop asking for surfaces \
-         on this device"
-    );
-}
-
-/// A surface, where one can be had.
-///
-/// Skips everywhere the hardware cannot support one, which on the machine
-/// this was written against is everywhere. Left in because it is the case
-/// that will run first on a board with a working GPU, and because a skip that
-/// says why is worth more than a case that is not there.
+/// Read without touching the surface: `has_free_buffers` would be the natural
+/// check that it has somewhere to render, but before a producer binds it that
+/// call is a `SIGSEGV` in Mesa.
 #[test]
 fn a_surface_reports_the_shape_it_was_asked_for() {
     let _guard = card_guard();
@@ -172,11 +142,6 @@ fn a_surface_reports_the_shape_it_was_asked_for() {
     assert_eq!(format.width, 64);
     assert_eq!(format.height, 64);
     assert_eq!(format.fourcc, fourcc::XRGB8888);
-    assert!(
-        source.has_free_buffers(),
-        "a fresh surface must have somewhere to render, or the producer's \
-         first swap has nowhere to go"
-    );
 }
 
 /// The pixels live where the CPU cannot see them.
@@ -270,5 +235,39 @@ fn resuming_rebuilds_the_surface_against_the_new_device() {
         LayerBufferSource::format(&source),
         before,
         "callers rely on the shape surviving a resume"
+    );
+}
+
+/// `RequireBindGatesAcquireUntilBound`: with `require_bind`, an acquire before
+/// the producer binds the surface is flow control rather than a call into it,
+/// which in Mesa is a `SIGSEGV`. A resume rebuilds the surface, so the gate
+/// closes again.
+#[test]
+fn require_bind_gates_acquire_until_bound() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let config = SurfaceConfig {
+        require_bind: true,
+        ..good_config()
+    };
+    let Ok(mut source) = GbmSurfaceSource::create(&device, &config) else {
+        drmkit_testkit::skipped("no GBM surface backend on this card");
+        return;
+    };
+
+    assert!(
+        matches!(source.acquire(), Err(SourceError::WouldBlock)),
+        "nothing has bound the surface, so locking its front buffer would crash"
+    );
+
+    source.mark_bound();
+    source.on_session_paused();
+    source
+        .on_session_resumed(&device)
+        .expect("the same device is a device it can resume onto");
+    assert!(
+        matches!(source.acquire(), Err(SourceError::WouldBlock)),
+        "the resume rebuilt the surface, and the producer has not bound the \
+         new one"
     );
 }

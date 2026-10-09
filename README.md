@@ -25,7 +25,7 @@ composition, and scanout.
 > `vgem`, `vivid` or `vicodec` modules, or NVIDIA silicon for EGL streams.
 > [`TEST_PARITY.md`](TEST_PARITY.md) records
 > which, per file, and [`docs/parity-findings.md`](docs/parity-findings.md)
-> records the five findings still open: three wait on hardware, P-24 on
+> records the four findings still open: two wait on hardware, P-24 on
 > porting upstream's canvas placement, and P-41 on a diagnosis on the SA8155P.
 > See [`plan.md`](plan.md) for the full porting plan.
 >

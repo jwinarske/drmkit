@@ -795,6 +795,93 @@ fn the_canvas_plane_turns_off_when_composition_stops_vkms() {
     fx.teardown();
 }
 
+/// Removing layers until the rest fit the planes takes the composited ones off
+/// the canvas.
+///
+/// Port of `CompositedLayersReturnToPlanesAfterRemoval` (`110a126`,
+/// drm-cxx#341). Upstream's warm start kept the old run composited where
+/// planes have no zpos, because the cached run was still in plane order and
+/// the kernel took it. The port already re-searches when a plane comes free
+/// that the last search did not have (`has_new_layer`), so this passes without
+/// upstream's layer-count rule.
+#[test]
+#[ignore = "needs a DRM device"]
+fn composited_layers_return_to_planes_after_removal_vkms() {
+    const LAYERS: usize = 16; // more than vkms has planes
+    const SIDE: u32 = 64;
+    const OVERFLOW: usize = 4;
+
+    let _guard = card_guard();
+    let Some(device) = common::open_card() else {
+        return;
+    };
+    let Some(mut fx) = common::fixture(device) else {
+        drmkit_testkit::skipped("no connected output");
+        return;
+    };
+    if fx.enable_full_screen_composition().is_none() {
+        drmkit_testkit::skipped("no canvas");
+        return;
+    }
+
+    let mut handles = Vec::new();
+    for i in 0..LAYERS {
+        let index = u32::try_from(i).expect("small");
+        let offset = i32::try_from(index * 8).expect("on screen");
+        let Some(handle) = fx.add_layer(offset, offset, SIDE, SIDE) else {
+            drmkit_testkit::skipped("no dumb buffer for a layer");
+            fx.teardown();
+            return;
+        };
+        fx.paint(handle, 0xFF00_0000 | ((index * 15) << 16) | 0x80)
+            .expect("paint");
+        fx.set_zpos(handle, u64::from(index) + 3);
+        handles.push(handle);
+    }
+
+    let first = fx.commit().expect("the overflowing frame");
+    assert!(
+        first.layers_composited > 0,
+        "the stack should overflow into the canvas: {first:?}"
+    );
+    // One more plane holds the canvas.
+    let planes_for_layers = first.layers_assigned;
+
+    let mut remove_top = |fx: &mut common::Fixture, keep: usize| {
+        while handles.len() > keep {
+            let handle = handles.pop().expect("non-empty");
+            fx.scene.remove_layer(handle);
+        }
+    };
+
+    // Removing placed layers frees their planes. Only OVERFLOW layers still
+    // need the canvas.
+    remove_top(&mut fx, planes_for_layers + OVERFLOW);
+    for frame in 0..2 {
+        let report = fx.commit().expect("a frame after the first removal");
+        assert_eq!(
+            report.layers_composited, OVERFLOW,
+            "frame {frame}: {report:?}"
+        );
+        assert_eq!(
+            report.layers_assigned, planes_for_layers,
+            "frame {frame}: {report:?}"
+        );
+    }
+
+    // Drop the top OVERFLOW: what is left fits one plane per layer.
+    remove_top(&mut fx, planes_for_layers);
+    for frame in 0..2 {
+        let report = fx.commit().expect("a frame after the second removal");
+        assert_eq!(report.layers_composited, 0, "frame {frame}: {report:?}");
+        assert_eq!(
+            report.layers_assigned, planes_for_layers,
+            "frame {frame}: {report:?}"
+        );
+    }
+    fx.teardown();
+}
+
 /// Refuses, the way msm does, any test that arms a multirect virtual plane
 /// without its parent, and counts them. vkms has no such planes, so the pair
 /// is declared in the registry and imposed here.

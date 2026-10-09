@@ -3,7 +3,7 @@
 Machine-checked mapping from every drm-cxx test file to its drmkit counterpart.
 
 **Upstream baseline:** `jwinarske/drm-cxx` @ `4a0b64a` (v2.0.1+6, PR #238)
-**Tracked tree:** `f396e54` (v4.1.0, PR #339) -- the test list below is upstream's
+**Tracked tree:** `d374767` (v4.2.1+1, PR #355) -- the test list below is upstream's
 current one, so new upstream tests surface as rows. The baseline above is the
 behavior drmkit claims to match, and moves when the behavior has caught up.
 **Coverage:** 107 test files (75 unit + 32 integration)

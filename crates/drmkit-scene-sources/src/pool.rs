@@ -34,7 +34,7 @@ use drmkit_scene::{
 };
 use drmkit_sync::SyncFence;
 
-use crate::external::{ExternalPlane, ImportedFramebuffer};
+use crate::external::{ExternalError, ExternalPlane, ImportedFramebuffer};
 use crate::presenter::{Present, RingPresenter};
 use crate::ring::OnRelease;
 
@@ -57,6 +57,11 @@ struct PoolSlot {
     /// configuration the producer has moved on from, and is torn down once no
     /// commit still references it.
     retiring: bool,
+    /// Set by [`ExternalDmaBufPool::retire`]: the import is final. The key
+    /// may name a different DMA-BUF if it is submitted again, so unlike a
+    /// generation retirement a resubmit does not revive this import. Gone
+    /// with the slot.
+    stale: bool,
 }
 
 /// A pool of externally allocated DMA-BUFs, imported on first sight.
@@ -142,10 +147,16 @@ impl ExternalDmaBufPool {
     /// there. Upstream keeps a raw descriptor instead; passing the device says
     /// the same thing without a descriptor outliving what opened it.
     ///
-    /// **A failed import skips the frame rather than reporting.** The producer
-    /// has nothing useful to do about it on its own thread, and the presenter
-    /// holds the last good buffer — a frozen layer beats a blank one. Returns
-    /// whether the frame was taken, for a caller that wants to count.
+    /// A frame that cannot be taken is skipped -- the presenter holds the last
+    /// good buffer rather than blanking the layer -- and the reason returned,
+    /// so a caller can route the buffer elsewhere (drm-cxx `2c3bf65`).
+    ///
+    /// # Errors
+    ///
+    /// The import's [`ExternalError`] when the descriptors are unusable or the
+    /// device refuses them -- a modifier no plane scans out, for one -- and
+    /// [`ExternalError::Retired`] for a key [`retire`](Self::retire)d and not
+    /// yet torn down.
     pub fn submit(
         &self,
         device: &Device,
@@ -153,21 +164,31 @@ impl ExternalDmaBufPool {
         planes: &[ExternalPlane<'_>],
         fence: Option<SyncFence>,
         damage: &[DamageRect],
-    ) -> bool {
+    ) -> Result<(), ExternalError> {
         let format = *self.lock_format();
         {
             let mut slots = self.lock_slots();
-            if let Entry::Vacant(entry) = slots.entry(key) {
-                // First sight of this key. A later submit of it reuses this
-                // import and ignores `planes` entirely.
-                let Ok(imported) = ImportedFramebuffer::import(device, format, planes) else {
-                    return false;
-                };
-                entry.insert(PoolSlot {
-                    imported: Arc::new(imported),
-                    last_used: 0,
-                    retiring: false,
-                });
+            match slots.entry(key) {
+                // Retired, and the old import is not torn down yet: a commit
+                // still holds it. The key may name a different buffer now, so
+                // the cached framebuffer cannot stand in for it, and a second
+                // import cannot be keyed the same. Hold the last frame; once
+                // the sweep has run, the key is new.
+                Entry::Occupied(entry) if entry.get().stale => {
+                    return Err(ExternalError::Retired);
+                }
+                Entry::Occupied(_) => {}
+                Entry::Vacant(entry) => {
+                    // First sight of this key. A later submit of it reuses
+                    // this import and ignores `planes` entirely.
+                    let imported = ImportedFramebuffer::import(device, format, planes)?;
+                    entry.insert(PoolSlot {
+                        imported: Arc::new(imported),
+                        last_used: 0,
+                        retiring: false,
+                        stale: false,
+                    });
+                }
             }
             let stamp = self
                 .tick
@@ -185,7 +206,31 @@ impl ExternalDmaBufPool {
         // before the presenter's handoff is taken, so there is no order to get
         // wrong between the producer and commit threads.
         self.presenter.submit(key, fence, damage);
-        true
+        Ok(())
+    }
+
+    /// The producer will not show `key` again: tear its import down as soon
+    /// as no in-flight commit still holds it, rather than leaving it to the
+    /// cap. Port of drm-cxx `608a527`.
+    ///
+    /// A producer whose buffers come and go -- a compositor passing its
+    /// clients' buffers through -- knows exactly when one is gone; without
+    /// this each dead buffer stayed imported, pinning its memory, until up to
+    /// `max_pool` newer ones pushed it out. The teardown is the deferred sweep
+    /// [`reset_generation`](Self::reset_generation) uses, on the commit
+    /// thread: a buffer still scanning out stays on screen until a later
+    /// frame displaces it. An unknown key is a no-op.
+    ///
+    /// Unlike a generation retirement this is final for the import: until the
+    /// old import is gone, a [`submit`](Self::submit) of the key is refused
+    /// with [`ExternalError::Retired`] and the layer holds its last frame;
+    /// after that the key is new and imports afresh. A producer that never
+    /// reuses a retired key never sees the refusal.
+    pub fn retire(&self, key: u64) {
+        if let Some(slot) = self.lock_slots().get_mut(&key) {
+            slot.retiring = true;
+            slot.stale = true;
+        }
     }
 
     /// How many buffers are currently imported.

@@ -1237,11 +1237,13 @@ fn a_pool_imports_each_key_once() {
     let mut pool = ExternalDmaBufPool::new(pool_format(), None);
     assert_eq!(pool.cached_count(), 0, "a pool starts empty");
 
-    assert!(pool.submit(&device, 42, &planes, None, &[]));
+    pool.submit(&device, 42, &planes, None, &[])
+        .expect("submit");
     let first = pool.acquire().expect("first frame").fb_id;
     assert_eq!(pool.cached_count(), 1);
 
-    assert!(pool.submit(&device, 42, &planes, None, &[]));
+    pool.submit(&device, 42, &planes, None, &[])
+        .expect("submit");
     let second = pool.acquire().expect("second frame").fb_id;
 
     assert_eq!(first, second, "the same key must reuse its import");
@@ -1271,7 +1273,8 @@ fn a_pool_keeps_keys_apart() {
         }],
         None,
         &[],
-    );
+    )
+    .expect("submit");
     let first = pool.acquire().expect("first").fb_id;
 
     pool.submit(
@@ -1284,17 +1287,16 @@ fn a_pool_keeps_keys_apart() {
         }],
         None,
         &[],
-    );
+    )
+    .expect("submit");
     let second = pool.acquire().expect("second").fb_id;
 
     assert_ne!(first, second, "two keys must not share a framebuffer");
     assert_eq!(pool.cached_count(), 2);
 }
 
-/// A failed import skips the frame and holds the last good buffer.
-///
-/// The producer is on its own thread with no commit to fail, so reporting
-/// upward has nowhere to go. A frozen layer beats a blank one.
+/// A failed import skips the frame and holds the last good buffer, and says
+/// why. A frozen layer beats a blank one.
 #[test]
 fn a_failed_import_holds_the_last_frame() {
     let _guard = card_guard();
@@ -1309,13 +1311,16 @@ fn a_failed_import_holds_the_last_frame() {
     }];
 
     let mut pool = ExternalDmaBufPool::new(pool_format(), None);
-    pool.submit(&device, 1, &planes, None, &[]);
+    pool.submit(&device, 1, &planes, None, &[]).expect("submit");
     let good = pool.acquire().expect("a good frame").fb_id;
 
     // A key the pool has never seen, with a plane list it must refuse.
     assert!(
-        !pool.submit(&device, 2, &[], None, &[]),
-        "an empty plane list cannot be imported"
+        matches!(
+            pool.submit(&device, 2, &[], None, &[]),
+            Err(ExternalError::Invalid { .. })
+        ),
+        "an empty plane list cannot be imported, and the caller hears why"
     );
     assert_eq!(pool.cached_count(), 1, "the bad key cached nothing");
 
@@ -1350,7 +1355,8 @@ fn a_generation_reset_retires_buffers_only_once_unreferenced() {
         }],
         None,
         &[],
-    );
+    )
+    .expect("submit");
     let old_token = pool.acquire().expect("the old generation").token;
     assert_eq!(pool.cached_count(), 1);
 
@@ -1380,7 +1386,8 @@ fn a_generation_reset_retires_buffers_only_once_unreferenced() {
         }],
         None,
         &[],
-    );
+    )
+    .expect("submit");
     pool.acquire().expect("the new generation");
     pool.release(AcquiredBuffer {
         token: old_token,
@@ -1415,7 +1422,7 @@ fn a_paused_pool_forgets_its_imports() {
     }];
 
     let mut pool = ExternalDmaBufPool::new(pool_format(), None);
-    pool.submit(&device, 1, &planes, None, &[]);
+    pool.submit(&device, 1, &planes, None, &[]).expect("submit");
     pool.acquire().expect("a frame");
     assert_eq!(pool.cached_count(), 1);
 
@@ -2112,7 +2119,7 @@ fn a_pool_advances_on_a_new_key_and_holds_when_idle_vkms() {
     }];
 
     let mut pool = ExternalDmaBufPool::new(pool_format(), None);
-    assert!(pool.submit(&device, 0xA, &a, None, &[]));
+    pool.submit(&device, 0xA, &a, None, &[]).expect("submit");
     let first = pool.acquire().expect("key A").fb_id;
     assert_ne!(first, 0);
     assert!(
@@ -2126,7 +2133,7 @@ fn a_pool_advances_on_a_new_key_and_holds_when_idle_vkms() {
         "with nothing new, the last frame stays up"
     );
 
-    assert!(pool.submit(&device, 0xB, &b, None, &[]));
+    pool.submit(&device, 0xB, &b, None, &[]).expect("submit");
     assert!(
         pool.has_fresh_content(),
         "a submitted frame is what makes the scene bother committing"
@@ -2175,9 +2182,9 @@ fn a_pool_releases_the_displaced_key_and_not_the_live_one_vkms() {
         "with a listener attached the scene is worth asking for an out-fence"
     );
 
-    assert!(pool.submit(&device, 0xA, &a, None, &[]));
+    pool.submit(&device, 0xA, &a, None, &[]).expect("submit");
     let first = pool.acquire().expect("key A");
-    assert!(pool.submit(&device, 0xB, &b, None, &[]));
+    pool.submit(&device, 0xB, &b, None, &[]).expect("submit");
     let second = pool.acquire().expect("key B");
 
     pool.release_with_fence(first, None);
@@ -2219,16 +2226,19 @@ fn a_pool_evicts_its_least_recently_used_idle_import_vkms() {
     let mut pool = ExternalDmaBufPool::new(pool_format(), None);
     pool.set_max_pool(2);
 
-    assert!(pool.submit(&device, 0xA, &planes, None, &[]));
+    pool.submit(&device, 0xA, &planes, None, &[])
+        .expect("submit");
     let first = pool.acquire().expect("key A");
-    assert!(pool.submit(&device, 0xB, &planes, None, &[]));
+    pool.submit(&device, 0xB, &planes, None, &[])
+        .expect("submit");
     let second = pool.acquire().expect("key B");
 
     // A is now idle and unreferenced: displaced from the screen and released.
     pool.release_with_fence(first, None);
     assert_eq!(pool.cached_count(), 2);
 
-    assert!(pool.submit(&device, 0xC, &planes, None, &[]));
+    pool.submit(&device, 0xC, &planes, None, &[])
+        .expect("submit");
     assert_eq!(
         pool.cached_count(),
         2,
@@ -2262,10 +2272,12 @@ fn eviction_waits_for_a_buffer_that_is_still_in_flight_vkms() {
     let mut pool = ExternalDmaBufPool::new(pool_format(), None);
     pool.set_max_pool(1);
 
-    assert!(pool.submit(&device, 0xA, &planes, None, &[]));
+    pool.submit(&device, 0xA, &planes, None, &[])
+        .expect("submit");
     let first = pool.acquire().expect("key A");
 
-    assert!(pool.submit(&device, 0xB, &planes, None, &[]));
+    pool.submit(&device, 0xB, &planes, None, &[])
+        .expect("submit");
     let second = pool.acquire().expect("key B");
     assert_eq!(
         pool.cached_count(),
@@ -2311,7 +2323,8 @@ fn a_new_generation_retires_the_previous_buffers_vkms() {
     }];
 
     let mut pool = ExternalDmaBufPool::new(pool_format(), None);
-    assert!(pool.submit(&device, 0xA, &planes, None, &[]));
+    pool.submit(&device, 0xA, &planes, None, &[])
+        .expect("submit");
     let first = pool.acquire().expect("key A");
     assert_eq!(pool.cached_count(), 1);
 
@@ -2334,7 +2347,8 @@ fn a_new_generation_retires_the_previous_buffers_vkms() {
     );
 
     // The new generation must arrive under a fresh key.
-    assert!(pool.submit(&device, 0xB, &small, None, &[]));
+    pool.submit(&device, 0xB, &small, None, &[])
+        .expect("submit");
     let second = pool.acquire().expect("key B");
     assert_eq!(
         pool.cached_count(),
@@ -2356,9 +2370,9 @@ fn a_new_generation_retires_the_previous_buffers_vkms() {
 
 /// A submit the pool cannot import is skipped, and the last good frame stays.
 ///
-/// Reporting the failure would give the producer thread nothing useful to do
-/// about it -- there is no commit there to fail. A frozen layer beats a blank
-/// one, so the frame is dropped and what is on screen stays.
+/// A frozen layer beats a blank one, so the frame is dropped and what is on
+/// screen stays. The caller hears why (drm-cxx `2c3bf65`): it may have
+/// somewhere else to send the buffer.
 #[test]
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn a_submit_the_pool_cannot_import_holds_the_last_frame_vkms() {
@@ -2375,7 +2389,8 @@ fn a_submit_the_pool_cannot_import_holds_the_last_frame_vkms() {
     }];
 
     let mut pool = ExternalDmaBufPool::new(pool_format(), None);
-    assert!(pool.submit(&device, 0xA, &planes, None, &[]));
+    pool.submit(&device, 0xA, &planes, None, &[])
+        .expect("submit");
     let good = pool.acquire().expect("key A");
     let fb_a = good.fb_id;
 
@@ -2387,8 +2402,12 @@ fn a_submit_the_pool_cannot_import_holds_the_last_frame_vkms() {
         pitch,
     }];
     assert!(
-        !pool.submit(&device, 0xBAD, &bad, None, &[]),
-        "an import that failed must say so to a caller that wants to count"
+        matches!(
+            pool.submit(&device, 0xBAD, &bad, None, &[]),
+            Err(ExternalError::Io(_))
+        ),
+        "an import the device refused must say so, so the caller can route the \
+         buffer elsewhere"
     );
     assert_eq!(
         pool.cached_count(),
@@ -2408,6 +2427,173 @@ fn a_submit_the_pool_cannot_import_holds_the_last_frame_vkms() {
 
     pool.release_with_fence(held, None);
     pool.release_with_fence(good, None);
+}
+
+/// Two imported dma-bufs for the retire cases, or `None` with a note.
+#[cfg(test)]
+fn two_pool_buffers(device: &Device) -> Option<[(OwnedFd, u32); 2]> {
+    let pair = pool_planes(device).zip(pool_planes(device));
+    if pair.is_none() {
+        println!("note: skipped -- no importable dma-buf on this card");
+    }
+    pair.map(|(a, b)| [a, b])
+}
+
+/// One plane over `buffer`.
+#[cfg(test)]
+fn one_plane(buffer: &(OwnedFd, u32)) -> [ExternalPlane<'_>; 1] {
+    [ExternalPlane {
+        fd: buffer.0.as_fd(),
+        offset: 0,
+        pitch: buffer.1,
+    }]
+}
+
+/// `RetireTearsDownAnIdleBuffer`: a retired buffer off screen is torn down at
+/// the next sweep, without waiting for the cap.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn retire_tears_down_an_idle_buffer_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some(buffers) = two_pool_buffers(&device) else {
+        return;
+    };
+    let mut pool = ExternalDmaBufPool::new(pool_format(), None);
+    pool.submit(&device, 0xA, &one_plane(&buffers[0]), None, &[])
+        .expect("submit A");
+    pool.submit(&device, 0xB, &one_plane(&buffers[1]), None, &[])
+        .expect("submit B");
+    // B scanning; A was superseded before it was ever scanned out.
+    let _b = pool.acquire().expect("key B");
+    assert_eq!(pool.cached_count(), 2);
+
+    pool.retire(0xA);
+    assert_eq!(pool.cached_count(), 2, "torn down on the commit thread");
+    let _held = pool.acquire().expect("the sweep");
+    assert_eq!(pool.cached_count(), 1);
+}
+
+/// `RetireWaitsForTheBufferToLeaveScanout`: a retired buffer still on screen
+/// stays until a later frame displaces it and the commits that scanned it
+/// retire.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn retire_waits_for_the_buffer_to_leave_scanout_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some(buffers) = two_pool_buffers(&device) else {
+        return;
+    };
+    let mut pool = ExternalDmaBufPool::new(pool_format(), None);
+    pool.submit(&device, 0xA, &one_plane(&buffers[0]), None, &[])
+        .expect("submit A");
+    let a = pool.acquire().expect("key A");
+    pool.retire(0xA);
+    let still = pool.acquire().expect("A is held, still on screen");
+    assert_eq!(still.fb_id, a.fb_id);
+    assert_eq!(pool.cached_count(), 1);
+
+    pool.submit(&device, 0xB, &one_plane(&buffers[1]), None, &[])
+        .expect("submit B");
+    let _b = pool.acquire().expect("B displaces A");
+    assert_eq!(pool.cached_count(), 2, "A's commits have not retired");
+
+    pool.release_with_fence(a, None);
+    pool.release_with_fence(still, None);
+    let _held = pool.acquire().expect("the sweep");
+    assert_eq!(pool.cached_count(), 1, "nothing references A now");
+}
+
+/// `RetiredKeyImportsAfreshOnlyOnceTornDown`: a retired key may name a
+/// different dma-buf when it comes back, so its cached import must not stand
+/// in for it. Until the old import is gone the frame is refused, and after
+/// that the key imports afresh.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_retired_key_imports_afresh_only_once_torn_down_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some(buffers) = two_pool_buffers(&device) else {
+        return;
+    };
+    let mut pool = ExternalDmaBufPool::new(pool_format(), None);
+    pool.submit(&device, 0xA, &one_plane(&buffers[0]), None, &[])
+        .expect("submit A");
+    let a = pool.acquire().expect("key A");
+    pool.retire(0xA);
+
+    // Key A again, now naming the other buffer, while the old import is on
+    // screen: the frame is refused and the old buffer holds.
+    assert!(matches!(
+        pool.submit(&device, 0xA, &one_plane(&buffers[1]), None, &[]),
+        Err(ExternalError::Retired)
+    ));
+    let held = pool.acquire().expect("the old A holds");
+    assert_eq!(held.fb_id, a.fb_id);
+
+    // Displace and retire the old import; then key A imports afresh.
+    pool.submit(&device, 0xB, &one_plane(&buffers[1]), None, &[])
+        .expect("submit B");
+    let _b = pool.acquire().expect("key B");
+    pool.release_with_fence(a, None);
+    pool.release_with_fence(held, None);
+    let _swept = pool.acquire().expect("tears the old A down");
+    assert_eq!(pool.cached_count(), 1);
+
+    pool.submit(&device, 0xA, &one_plane(&buffers[1]), None, &[])
+        .expect("a fresh import under key A");
+    assert_eq!(pool.cached_count(), 2);
+    let fresh = pool.acquire().expect("the new A");
+    assert_ne!(fresh.fb_id, 0);
+}
+
+/// `RetireOfAnUnknownKeyIsANoOp`: never imported, so never stale, and the
+/// key imports normally afterwards.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn retiring_an_unknown_key_is_a_no_op_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some(buffer) = pool_planes(&device) else {
+        println!("note: skipped -- no importable dma-buf on this card");
+        return;
+    };
+    let pool = ExternalDmaBufPool::new(pool_format(), None);
+    pool.retire(0x99);
+    pool.submit(&device, 0x99, &one_plane(&buffer), None, &[])
+        .expect("an unknown key was never retired");
+    assert_eq!(pool.cached_count(), 1);
+}
+
+/// `SubmitReportsAFrameItCannotTake`: a modifier the device cannot scan out
+/// is refused at import, and the caller hears about it instead of finding an
+/// empty pool at commit time.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn submit_reports_a_frame_it_cannot_take_vkms() {
+    /// `DRM_FORMAT_MOD_BROADCOM_UIF`: vendor 0x07, value 6.
+    const BROADCOM_UIF: u64 = (0x07 << 56) | 6;
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some(buffer) = pool_planes(&device) else {
+        println!("note: skipped -- no importable dma-buf on this card");
+        return;
+    };
+    let tiled = SourceFormat {
+        modifier: BROADCOM_UIF,
+        ..pool_format()
+    };
+    let mut pool = ExternalDmaBufPool::new(tiled, None);
+    let refused = pool.submit(&device, 0xA, &one_plane(&buffer), None, &[]);
+    if refused.is_ok() {
+        // vc4 scans UIF out: there the modifier is not one it refuses.
+        println!("note: skipped -- this card accepts BROADCOM_UIF");
+        return;
+    }
+    assert!(matches!(refused, Err(ExternalError::Io(_))), "{refused:?}");
+    assert_eq!(pool.cached_count(), 0);
+    assert!(matches!(pool.acquire(), Err(SourceError::WouldBlock)));
 }
 
 // --- DmaBufSourceCache, against a card ----------------------------------------
@@ -2582,7 +2768,8 @@ fn a_pool_lends_its_acquired_descriptors_vkms() {
         "nothing has been acquired, so there is nothing to describe"
     );
 
-    assert!(pool.submit(&device, 0xA, &planes, None, &[]));
+    pool.submit(&device, 0xA, &planes, None, &[])
+        .expect("submit");
     let acquired = pool.acquire().expect("key A");
 
     let exported = pool
@@ -2625,7 +2812,8 @@ fn a_paused_pool_lends_nothing_vkms() {
     }];
 
     let mut pool = ExternalDmaBufPool::new(pool_format(), None);
-    assert!(pool.submit(&device, 0xA, &planes, None, &[]));
+    pool.submit(&device, 0xA, &planes, None, &[])
+        .expect("submit");
     let acquired = pool.acquire().expect("key A");
     assert!(pool.export_dma_buf().is_ok());
     pool.release(acquired);

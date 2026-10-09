@@ -45,11 +45,13 @@ mod atomic;
 mod device;
 mod error;
 mod property;
+mod vblank;
 
 pub use atomic::{AtomicRequest, PropertyWrite, commit_with_out_fence};
 pub use device::{Device, PropertyBlob, framebuffer_modifier, supports_framebuffer_modifiers};
 pub use error::{CoreError, Result};
 pub use property::{ObjectType, PropertyInfo, PropertyStore};
+pub use vblank::crtc_sequence;
 
 /// Re-exported so consumers need not depend on `drm` directly for the types
 /// that appear in this crate's signatures.

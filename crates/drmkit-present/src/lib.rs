@@ -25,6 +25,8 @@
 //! GBM, GL and Vulkan producers are separate crates after that.
 
 #[cfg(feature = "device")]
+mod armed_flip;
+#[cfg(feature = "device")]
 mod backend;
 mod buffer_ring;
 #[cfg(feature = "device")]

@@ -51,6 +51,11 @@ impl LayerBufferSource for SharedSource {
         self.0.borrow().has_fresh_content()
     }
 
+    /// Not forwarded. One copy retiring says nothing about the others, which
+    /// may still be scanning the same buffer out; letting it go to the
+    /// producer would have it overwritten mid-scanout on those outputs.
+    fn on_retired(&mut self) {}
+
     fn binding_model(&self) -> BindingModel {
         self.0.borrow().binding_model()
     }

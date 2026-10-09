@@ -677,12 +677,14 @@ impl LayerScene {
     ///
     /// If the layer's buffers are still in flight, its source is kept alive
     /// until they come back — releasing to a dropped source would strand them.
+    /// The source hears [`LayerBufferSource::on_retired`] first.
     pub fn remove_layer(&mut self, handle: LayerHandle) -> bool {
         let Some(index) = self.resolve(handle) else {
             return false;
         };
 
-        let Slot::Occupied(layer) = std::mem::replace(&mut self.slots[index], Slot::Free) else {
+        let Slot::Occupied(mut layer) = std::mem::replace(&mut self.slots[index], Slot::Free)
+        else {
             return false;
         };
 
@@ -690,6 +692,9 @@ impl LayerScene {
         self.generations[index] = self.generations[index].wrapping_add(1);
         self.free.push(handle.id);
 
+        // Before its buffers drain, so the one on screen is handed back with
+        // them rather than held for a newer frame that will never come.
+        layer.source.on_retired();
         if self.lifecycle.buffers_in_flight() > 0 {
             self.topology_dirty = true;
             self.retiring.push((handle.layer_id(), layer.source));

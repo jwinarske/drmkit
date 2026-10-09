@@ -80,6 +80,8 @@ fn require_master(device: &Device) -> bool {
 #[derive(Debug, Default)]
 struct SourceLog {
     released: Vec<u32>,
+    /// How many times the scene said it was done acquiring.
+    retired: usize,
 }
 
 /// A source over a real dumb buffer, so its framebuffer id is one the kernel
@@ -101,6 +103,10 @@ impl LayerBufferSource for RealSource {
 
     fn format(&self) -> SourceFormat {
         self.inner.format()
+    }
+
+    fn on_retired(&mut self) {
+        self.log.borrow_mut().retired += 1;
     }
 }
 
@@ -474,6 +480,12 @@ fn removing_a_layer_defers_retiring_its_source_vkms() {
     // The source has not been given its buffer back yet: the flip that stops
     // scanning it out has not landed.
     let released_at_removal = h.log.borrow().released.len();
+    assert_eq!(
+        h.log.borrow().retired,
+        1,
+        "the removed layer's source must be told it retired, or a ring source \
+         holds its on-screen buffer back for a frame that never comes"
+    );
 
     // Land it and run the frame that follows, which is where the deferred
     // retirement happens.

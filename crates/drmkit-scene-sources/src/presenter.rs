@@ -274,6 +274,15 @@ impl RingPresenter {
         Some(self.outstanding.remove(at).1)
     }
 
+    /// Let the buffer on screen release like a superseded one.
+    ///
+    /// For a source the scene has retired: no newer frame will ever displace
+    /// the scanning buffer, so the release that would otherwise be held back
+    /// is the last chance to hand it to the producer.
+    pub fn retire_scanning(&mut self) {
+        self.scanning_token = 0;
+    }
+
     /// Drop all pending, in-flight and scanning state.
     ///
     /// For a session resume, which re-imports every buffer and restarts
@@ -472,6 +481,26 @@ mod tests {
         assert_eq!(p.release(first), Some(0), "slot 0 is now off screen");
         assert_eq!(p.release(first), None, "and is not released twice");
         assert_eq!(p.release(second), None, "the new one is still up");
+    }
+
+    /// A retired presenter hands back its scanning buffer with the last
+    /// acquisition that carried it, and only once.
+    #[test]
+    fn a_retired_presenter_releases_its_scanning_buffer() {
+        let mut p = RingPresenter::new(None);
+        p.submit(3, None, &[]);
+        let live = p.acquire().token;
+        let hold = p.acquire().token;
+        assert_eq!(hold, live, "an idle hold shares the live token");
+        assert_eq!(p.release(live), None, "still on screen");
+
+        p.retire_scanning();
+        assert_eq!(
+            p.release(hold),
+            Some(3),
+            "no newer frame is coming, so the producer would never get it back"
+        );
+        assert_eq!(p.release(hold), None, "and not twice");
     }
 
     /// The sentinel token releases nothing.

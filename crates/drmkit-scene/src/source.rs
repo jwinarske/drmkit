@@ -268,6 +268,20 @@ pub trait LayerBufferSource {
         true
     }
 
+    /// The scene acquires from this source no more: its layer was removed.
+    ///
+    /// Its in-flight buffers still come back through [`release`](Self::release)
+    /// or [`release_with_fence`](Self::release_with_fence), after the commits
+    /// that displace them. A source that holds its on-screen buffer back from
+    /// release until a newer frame supersedes it -- `ExternalDmaBufRing`,
+    /// `ExternalDmaBufPool` -- must let that one go with them: no newer frame
+    /// is coming, and the producer would never get the buffer back. A client
+    /// that makes a new pool per geometry would lose one buffer to every
+    /// resize until it ran out and stalled.
+    ///
+    /// The default does nothing.
+    fn on_retired(&mut self) {}
+
     /// Which binding contract this source participates in.
     fn binding_model(&self) -> BindingModel {
         BindingModel::SceneSubmitsFbId

@@ -212,8 +212,10 @@ The port's scene holds no device to poll, so the wait lives one level up, in
 the two types that own both a scene and the descriptor it commits on:
 `ScanoutBackend` and `DumbScanoutSink` wait the same way in their `Drop`, then
 tell the scene the flip landed. A bare `LayerScene` still does not wait, and
-the heading above still holds for it. Upstream's own text for this invariant
-predates `debd061` and still says teardown does not wait (drm-cxx#354).
+the heading above still holds for it. Upstream has since retitled this
+invariant "Teardown waits, bounded, for the last armed flip" (`cc87618`,
+drm-cxx#354). The heading here follows the tracked tree, and changes when the
+pin moves past that commit.
 
 - **Wait defined:** `drmkit-present` `src/armed_flip.rs` (`settle`), over
   `drmkit_core::crtc_sequence`.

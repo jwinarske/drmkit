@@ -177,45 +177,27 @@ without classifying it fails to compile rather than silently defaulting to
   `fb_only_fast_path_retests_on_placement_change_vkms`;
   `static_steady_state_vkms`.
 
-## 5. Teardown does not wait on the kernel — drain the last flip first
+## 5. Teardown waits, bounded, for the last armed flip
 
-Destroying a `LayerScene` releases its buffers and framebuffers **without
-waiting on the kernel**. If the last real commit armed `DRM_MODE_PAGE_FLIP_EVENT`
-and that event has not been dispatched, the flip still references a buffer the
-destructor tears down (the RmFB-on-in-flight-FB hazard). Land it first: call
-`LayerScene::drain(pf, timeout)` — a no-op when nothing is armed — or dispatch
-the event yourself, before the scene goes out of scope.
+If the last real commit armed `DRM_MODE_PAGE_FLIP_EVENT` and the flip has not
+been reported landed, tearing down waits **up to 100 ms** for the CRTC's vblank
+sequence to pass that commit, so the flip has landed before its buffers and
+framebuffers go (the RmFB-on-in-flight-FB hazard). The wait never reads the
+event queue: a caller that dispatches the event itself is undisturbed, and an
+undispatched event stays queued for the caller. It is skipped while suspended
+or when the CRTC's sequence cannot be read, and gives up at the bound, so a
+CRTC that stopped counting cannot hang teardown.
 
-`LayerScene`'s `Drop` must stay non-blocking; `drain` stays an explicit method
-and never moves into it. The port adds observability the C++ side cannot
-cheaply provide: a `tracing::warn!` (and `debug_assert!`) in `Drop` when an
-armed flip is still outstanding, so the hazard is loud in development instead
-of silent until it tears.
-
-- **Partly defined:** `drmkit-scene`, `ReleaseQueue::drain` and
-  `ScenePendingFlip`. `drain` returns every held buffer without waiting on the
-  kernel; `ScenePendingFlip` is the tripwire the scene's `Drop` will consult to
-  warn when a flip is still armed — the observability the C++ cannot cheaply
-  add.
-- **Pinned so far by:** `draining_returns_every_held_buffer_oldest_first` and
-  `pending_flip_tracks_whether_teardown_is_safe`.
-- **End-to-end pinned by:** `drain_lands_pending_flip_before_teardown_vkms`
-  and `an_armed_flip_keeps_teardown_unsafe_until_landed_vkms`. The second is
-  the hazard itself: draining returns buffers but does **not** wait on the
-  kernel, so the flip stays outstanding and teardown stays unsafe until the
-  event is dispatched.
-
-Upstream's `~LayerScene` now waits, bounded, for the armed flip (`debd061`): the
-commit records the CRTC's vblank sequence, and the destructor polls until the
-sequence moves past it, for at most 100 ms, without reading the event queue.
-The port's scene holds no device to poll, so the wait lives one level up, in
-the two types that own both a scene and the descriptor it commits on:
-`ScanoutBackend` and `DumbScanoutSink` wait the same way in their `Drop`, then
-tell the scene the flip landed. A bare `LayerScene` still does not wait, and
-the heading above still holds for it. Upstream has since retitled this
-invariant "Teardown waits, bounded, for the last armed flip" (`cc87618`,
-drm-cxx#354). The heading here follows the tracked tree, and changes when the
-pin moves past that commit.
+**Where the port differs.** Upstream's `~LayerScene` waits. The port's
+`LayerScene` holds no device to read the sequence on, so the wait lives one
+level up, in the two types that own both a scene and the descriptor it commits
+on: `ScanoutBackend` and `DumbScanoutSink` wait in their `Drop`, then tell the
+scene the flip landed. A bare `LayerScene`'s `Drop` stays non-blocking: its
+owner lands the flip first with `LayerScene::drain(pf, timeout)` — a no-op when
+nothing is armed — or by dispatching the event itself. The port adds
+observability the C++ side cannot cheaply provide: a `tracing::warn!` (and
+`debug_assert!`) in that `Drop` when an armed flip is still outstanding, so a
+missed drain is loud in development instead of silent until it tears.
 
 - **Wait defined:** `drmkit-present` `src/armed_flip.rs` (`settle`), over
   `drmkit_core::crtc_sequence`.
@@ -223,6 +205,16 @@ pin moves past that commit.
   which reads the sequence as the layer's source drops and fails with the wait
   removed, and `dropping_the_sink_waits_for_the_armed_flip_vkms`. Both check
   the event is still queued afterwards.
+- **Bare scene defined:** `drmkit-scene`, `LayerScene::drain`,
+  `ReleaseQueue::drain` and `ScenePendingFlip`, the tripwire the scene's `Drop`
+  consults.
+- **Bare scene pinned by:** `draining_returns_every_held_buffer_oldest_first`,
+  `pending_flip_tracks_whether_teardown_is_safe`,
+  `drain_lands_pending_flip_before_teardown_vkms` and
+  `an_armed_flip_keeps_teardown_unsafe_until_landed_vkms`. The last is the
+  hazard itself: draining returns buffers but does **not** wait on the kernel,
+  so the flip stays outstanding and teardown stays unsafe until the event is
+  dispatched.
 
 ## 6. `dumb::Buffer::map` is a zero-cost view of a lifetime mmap
 

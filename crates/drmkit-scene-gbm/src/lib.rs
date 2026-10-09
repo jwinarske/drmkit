@@ -19,18 +19,18 @@
 //! rendering; drmkit owns getting the result on screen. [`native_surface`] is
 //! what a producer passes to `eglCreateWindowSurface`.
 //!
-//! # A hazard worth reading before using this
+//! # Bind before the first acquire
 //!
-//! Mesa hands a device with no working DRI backend a minimal GBM
-//! implementation: buffers work, surfaces do not. It does **not refuse** a
-//! surface — `gbm_surface_create` returns a handle whose entry points are
-//! absent, and the first call through one is a `SIGSEGV`, not an error.
-//!
-//! [`GbmDevice::supports_surfaces`](drmkit_gbm::GbmDevice::supports_surfaces)
-//! catches the common case, and [`create`](GbmSurfaceSource::create) refuses
-//! there. It cannot catch every case: a device *with* a render node whose DRI
-//! backend failed to start behaves identically, and nothing GBM exposes tells
-//! the two apart.
+//! A `gbm_surface` is an EGL native window. Mesa routes `lock_front_buffer`,
+//! `has_free_buffers` and `release_buffer` into the window surface EGL (or
+//! Vulkan) creates on it, and until one exists each of them is a `SIGSEGV`,
+//! not an error, on every Mesa device. GBM has no safe query for this, so the
+//! producer has to say it happened. Either bind the surface and render a
+//! frame before adding the layer to a scene, or set
+//! [`SurfaceConfig::require_bind`] and call
+//! [`mark_bound`](GbmSurfaceSource::mark_bound) once the window surface
+//! exists: until then [`acquire`](GbmSurfaceSource::acquire) reports
+//! [`SourceError::WouldBlock`] instead of touching the surface.
 //!
 //! [`native_surface`]: GbmSurfaceSource::native_surface
 
@@ -57,6 +57,14 @@ pub struct SurfaceConfig {
     /// `PlaneRegistry::candidate_modifiers` intersected with what the render
     /// API can export — passing it here is what keeps the result scannable.
     pub modifier: Option<u64>,
+    /// Hold `acquire` at [`SourceError::WouldBlock`] until
+    /// [`GbmSurfaceSource::mark_bound`].
+    ///
+    /// Rather than lock a front buffer on a surface no producer has bound yet,
+    /// which is a `SIGSEGV` in Mesa. A resume rebuilds the surface and closes
+    /// the gate again. Off by default, so a producer that binds before the
+    /// first commit needs nothing.
+    pub require_bind: bool,
 }
 
 impl Default for SurfaceConfig {
@@ -66,6 +74,7 @@ impl Default for SurfaceConfig {
             height: 0,
             fourcc: drmkit_fmt::fourcc::XRGB8888,
             modifier: None,
+            require_bind: false,
         }
     }
 }
@@ -130,6 +139,10 @@ pub struct GbmSurfaceSource {
     /// Set by `on_session_paused`: the descriptor is gone, so the framebuffer
     /// ids must not be committed and must not be destroyed through it either.
     paused: bool,
+    /// Set by `mark_bound`: the producer has created its window surface, so
+    /// locking a front buffer is safe. Gates `acquire` only when
+    /// `config.require_bind`, and cleared when a resume rebuilds the surface.
+    bound: bool,
     /// Declared last, so it drops last. Fields drop in declaration order, and
     /// the surface and the locked buffers free their GEM handles through this
     /// device's descriptor -- a libgbm that keeps no descriptor of its own
@@ -195,6 +208,7 @@ impl GbmSurfaceSource {
             pending_fence: None,
             device_fd: device.raw_fd(),
             paused: false,
+            bound: false,
             gbm,
         })
     }
@@ -233,10 +247,21 @@ impl GbmSurfaceSource {
         self.pending_fence = Some(fence);
     }
 
+    /// The producer has created its window surface on
+    /// [`native_surface`](Self::native_surface).
+    ///
+    /// Opens the gate [`SurfaceConfig::require_bind`] closes. Call it again
+    /// after every resume: the surface is rebuilt, and the producer has to
+    /// bind the new one.
+    pub const fn mark_bound(&mut self) {
+        self.bound = true;
+    }
+
     /// Whether the surface has a buffer free to render into.
     ///
     /// A producer must check before drawing: with every buffer locked, the
-    /// next `eglSwapBuffers` has nowhere to go.
+    /// next `eglSwapBuffers` has nowhere to go. Only once the surface is bound
+    /// -- before that, Mesa segfaults here.
     #[must_use]
     pub fn has_free_buffers(&self) -> bool {
         self.surface.has_free_buffers()
@@ -361,7 +386,9 @@ impl LayerBufferSource for GbmSurfaceSource {
     /// undefined behaviour in GBM, not merely an error — which is why this is
     /// the producer's contract to keep and cannot be checked here. A source
     /// whose producer has not swapped reports [`SourceError::WouldBlock`] only
-    /// where GBM says so.
+    /// where GBM says so. Before the producer binds the surface the call is a
+    /// `SIGSEGV`; [`SurfaceConfig::require_bind`] turns that into
+    /// [`SourceError::WouldBlock`].
     ///
     /// # Errors
     ///
@@ -369,7 +396,7 @@ impl LayerBufferSource for GbmSurfaceSource {
     /// which is flow control. Anything else means the buffer could not be made
     /// into a framebuffer.
     fn acquire(&mut self) -> Result<AcquiredBuffer, SourceError> {
-        if self.paused {
+        if self.paused || (self.config.require_bind && !self.bound) {
             return Err(SourceError::WouldBlock);
         }
 
@@ -461,6 +488,8 @@ impl LayerBufferSource for GbmSurfaceSource {
         self.framebuffers.clear();
         self.device_fd = device.raw_fd();
         self.paused = false;
+        // A new surface: the producer must bind it again.
+        self.bound = false;
         Ok(())
     }
 }

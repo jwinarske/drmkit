@@ -50,57 +50,6 @@ impl GbmDevice {
         Ok(Self { inner, fd })
     }
 
-    /// Whether this device can make GBM **surfaces** at all.
-    ///
-    /// A display-only DRM node has no render node, so Mesa gives it the
-    /// minimal GBM backend: buffers work, surfaces do not. That backend does
-    /// not *refuse* a surface — `gbm_surface_create` returns a handle whose
-    /// entry points are absent, and the first call through one takes the
-    /// process down with `SIGSEGV`. Measured on vkms, where
-    /// `gbm_surface_create` succeeds and `gbm_surface_has_free_buffers`
-    /// segfaults immediately.
-    ///
-    /// So the question has to be answered before asking for a surface, and
-    /// the only answer available is whether the kernel gave this device a
-    /// render node: that is the DRI backend's precondition, and without the
-    /// DRI backend there are no surfaces. Read from sysfs by device number,
-    /// rather than from the driver name — vkms reports `faux_driver` there,
-    /// and a name-based check would be wrong on the first device that
-    /// disagrees.
-    ///
-    /// Conservative in the safe direction: an unreadable sysfs answers `false`
-    /// and costs a caller a surface it might have had, where the opposite
-    /// costs it the process.
-    ///
-    /// # Necessary, not sufficient
-    ///
-    /// A render node is what the DRI backend needs, not a promise it started.
-    /// Measured on this machine's amdgpu, which *has* one: Mesa's
-    /// `amdgpu_query_info(ACCEL_WORKING)` failed with `EACCES`, the DRI
-    /// backend fell back to the same minimal one, and the surface crashed
-    /// identically. GBM exposes nothing that separates the two — both report
-    /// backend `drm`, both allocate buffers, both create a surface — so a
-    /// caller on a device that passes this check can still be handed one that
-    /// is unsafe to touch. That is a defect in what GBM offers, and this is
-    /// the best answer available on top of it.
-    #[must_use]
-    pub fn supports_surfaces(&self) -> bool {
-        let Ok(stat) = rustix::fs::fstat(self.inner.as_fd()) else {
-            return false;
-        };
-        let (major, minor) = (
-            rustix::fs::major(stat.st_rdev),
-            rustix::fs::minor(stat.st_rdev),
-        );
-        let siblings = format!("/sys/dev/char/{major}:{minor}/device/drm");
-        let Ok(entries) = std::fs::read_dir(siblings) else {
-            return false;
-        };
-        entries
-            .flatten()
-            .any(|entry| entry.file_name().to_string_lossy().starts_with("renderD"))
-    }
-
     /// Create a rendering surface — a swap chain a GL or Vulkan producer
     /// draws into.
     ///
@@ -117,6 +66,15 @@ impl GbmDevice {
     /// every buffer locked from it: a libgbm that keeps no descriptor of its
     /// own frees them through this one.
     ///
+    /// # Bind before you touch it
+    ///
+    /// A `gbm_surface` is an EGL native window. Mesa routes
+    /// `gbm_surface_has_free_buffers`, `lock_front_buffer` and
+    /// `release_buffer` into the window surface EGL (or Vulkan) creates on it,
+    /// and until one exists each of them is a `SIGSEGV`, on every Mesa device
+    /// and not just one driver. An initialized EGL display alone is not enough.
+    /// Creating and dropping the surface is safe either way.
+    ///
     /// # Errors
     ///
     /// [`GbmError::Allocation`] if the format is not one GBM knows, or the
@@ -128,13 +86,6 @@ impl GbmDevice {
         fourcc: u32,
         modifiers: &[u64],
     ) -> Result<gbm::Surface<()>, GbmError> {
-        // Before anything else: a device with no surface backend hands back a
-        // handle that crashes on first use rather than refusing. See
-        // `supports_surfaces`.
-        if !self.supports_surfaces() {
-            return Err(GbmError::NoSurfaceSupport);
-        }
-
         let format = gbm::Format::try_from(fourcc)
             .map_err(|_| GbmError::Allocation(format!("unsupported format {fourcc:#x}")))?;
         let usage = gbm::BufferObjectFlags::SCANOUT | gbm::BufferObjectFlags::RENDERING;

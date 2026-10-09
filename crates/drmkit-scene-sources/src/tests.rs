@@ -1796,6 +1796,36 @@ fn a_ring_rotates_its_slots_and_holds_the_last_when_idle_vkms() {
     ring.release(third);
 }
 
+/// `RetiredRingReleasesItsScanningSlot`: a retired ring gets no newer frame,
+/// so its scanning slot would never be displaced. `on_retired` lets it go with
+/// the last acquisition.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_retired_ring_releases_its_scanning_slot_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some((mut ring, _fds)) = ring_of(&device, 2) else {
+        println!("note: skipped -- no importable dma-buf on this card");
+        return;
+    };
+    let released: std::sync::Arc<std::sync::Mutex<Vec<usize>>> = std::sync::Arc::default();
+    let recorder = std::sync::Arc::clone(&released);
+    ring.set_on_release(Box::new(move |slot, _fence| {
+        recorder.lock().expect("record the release").push(slot);
+    }));
+
+    ring.submit(1, None, &[]);
+    let live = ring.acquire().expect("slot 1");
+
+    ring.on_retired();
+    ring.release(live);
+    assert_eq!(
+        *released.lock().expect("read the releases"),
+        vec![1],
+        "the producer would never get its last frame's slot back"
+    );
+}
+
 /// Damage rides with the frame it was submitted for, and only that frame.
 ///
 /// A held frame reports none: nothing changed since it went up, so repeating
@@ -2200,6 +2230,45 @@ fn a_pool_releases_the_displaced_key_and_not_the_live_one_vkms() {
         1,
         "B is still on screen; handing it back would let the producer \
          overwrite what is being scanned out"
+    );
+}
+
+/// `RetiredPoolReleasesItsScanningKey`: a retired pool (its layer removed)
+/// gets no newer frame, so its scanning key would never be displaced.
+/// `on_retired` lets it go with the last acquisition, once.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_retired_pool_releases_its_scanning_key_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some(buffers) = two_pool_buffers(&device) else {
+        return;
+    };
+    let released: std::sync::Arc<std::sync::Mutex<Vec<usize>>> = std::sync::Arc::default();
+    let recorder = std::sync::Arc::clone(&released);
+    let mut pool = ExternalDmaBufPool::new(pool_format(), None);
+    pool.set_on_release(Box::new(move |key, _fence| {
+        recorder.lock().expect("record").push(key);
+    }));
+
+    pool.submit(&device, 0xA, &one_plane(&buffers[0]), None, &[])
+        .expect("submit");
+    let first = pool.acquire().expect("key A");
+    let hold = pool.acquire().expect("an idle hold, same token");
+
+    pool.release_with_fence(first, None);
+    assert!(
+        released.lock().expect("read").is_empty(),
+        "A is still on screen"
+    );
+
+    pool.on_retired();
+    pool.release_with_fence(hold, None);
+    assert_eq!(
+        *released.lock().expect("read"),
+        vec![0xA],
+        "a client making a new pool per geometry would lose a buffer to every \
+         resize"
     );
 }
 

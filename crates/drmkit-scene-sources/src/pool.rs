@@ -432,6 +432,10 @@ impl LayerBufferSource for ExternalDmaBufPool {
         self.presenter.has_fresh_frame()
     }
 
+    fn on_retired(&mut self) {
+        self.presenter.retire_scanning();
+    }
+
     fn format(&self) -> SourceFormat {
         *self.lock_format()
     }

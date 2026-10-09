@@ -161,6 +161,79 @@ fn three_frames_each_land_their_own_flip_vkms() {
     );
 }
 
+/// Dropping the sink with a flip still armed waits for it to land.
+///
+/// Port of `LayerSceneReleaseVkms.DestructorWaitsForArmedFlip` (`debd061`),
+/// on the owner of the scene: the scene itself holds no device to wait on.
+/// The caller neither dispatches the event nor calls `flip_landed`.
+///
+/// What this pins is the sink's half: the wait runs, so the scene learns the
+/// flip landed and its invariant-5 tripwire (a `debug_assert`) stays quiet; it
+/// is bounded; and the event is still queued afterwards, because the wait
+/// reads the vblank sequence and never the event queue. *When* the buffers go
+/// relative to the vblank is pinned on the backend, where a wrapping producer
+/// can watch its source drop -- the sink's ring is internal. Comparing the
+/// sequence after the drop returns would pass without the wait: removing the
+/// framebuffer still on screen makes the kernel wait out a vblank anyway.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn dropping_the_sink_waits_for_the_armed_flip_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some(output) = pick_output(&device) else {
+        drmkit_testkit::skipped("no connected output");
+        return;
+    };
+
+    let mut sink = DumbScanoutSink::create(
+        &device,
+        output.crtc_id,
+        output.crtc_index,
+        output.connector_id,
+        &output.mode,
+        &Config::default(),
+    )
+    .expect("build a sink over the connected output");
+    let (width, height) = sink.size();
+    let stride = width * 4;
+    let frame = vec![0x40_u8; stride as usize * height as usize];
+
+    let mut flip = PageFlip::new(&device).expect("page flip");
+    let flips = Arc::new(AtomicU32::new(0));
+    let counted = Arc::clone(&flips);
+    flip.set_handler(Box::new(move |_| {
+        counted.fetch_add(1, Ordering::Relaxed);
+    }));
+
+    // The modeset, with no event, then the frame whose flip is left armed.
+    sink.present(&device, &frame, stride, &[], AtomicCommitFlags::empty())
+        .expect("modeset frame");
+    sink.present(
+        &device,
+        &frame,
+        stride,
+        &[],
+        AtomicCommitFlags::PAGE_FLIP_EVENT | AtomicCommitFlags::NONBLOCK,
+    )
+    .expect("armed frame");
+
+    let started = std::time::Instant::now();
+    drop(sink); // no dispatch, no flip_landed
+    let took = started.elapsed();
+
+    assert!(
+        took < std::time::Duration::from_millis(150),
+        "the wait is bounded, took {took:?}"
+    );
+    flip.dispatch(Timeout::Bounded(std::time::Duration::from_millis(500)))
+        .expect("dispatch");
+    assert_eq!(
+        flips.load(Ordering::Relaxed),
+        1,
+        "the wait must leave the event queued for the caller"
+    );
+}
+
 /// A frame shorter than `height * stride` is refused before any IO.
 ///
 /// The reference checks the same thing. It matters because the copy would

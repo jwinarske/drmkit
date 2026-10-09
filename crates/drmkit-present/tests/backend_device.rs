@@ -8,10 +8,16 @@
 //! producer, build the single-layer scene, and commit. These modeset, so they
 //! take DRM master and run one at a time.
 
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::{Mutex, MutexGuard};
 
 use drmkit_core::{AtomicCommitFlags, Device};
 use drmkit_present::{BackendConfig, GbmScanoutProducer, RestorePolicy, ScanoutBackend, VrrPolicy};
+use drmkit_scene::{
+    AcquiredBuffer, BindingModel, DmaBufDesc, LayerBufferSource, SourceError, SourceFormat,
+};
+use drmkit_sync::SyncFence;
 
 static CARD_LOCK: Mutex<()> = Mutex::new(());
 
@@ -321,4 +327,206 @@ fn a_saved_crtc_is_put_back_on_teardown_vkms() {
     );
 
     let _ = device.set_crtc(crtc, None, (0, 0), &[], None);
+}
+
+/// Wraps a producer's sources so each records the CRTC's vblank sequence at
+/// the moment it is dropped -- which is when its buffer and framebuffer go.
+struct SeqOnDrop<'a> {
+    inner: GbmScanoutProducer<'a>,
+    fd: std::os::fd::RawFd,
+    crtc_id: Rc<Cell<u32>>,
+    seqs: Rc<RefCell<Vec<u64>>>,
+}
+
+impl drmkit_present::ScanoutProducer for SeqOnDrop<'_> {
+    fn exportable_modifiers(&mut self, fourcc: u32) -> Vec<u64> {
+        self.inner.exportable_modifiers(fourcc)
+    }
+
+    fn create_buffer(
+        &mut self,
+        width: u32,
+        height: u32,
+        fourcc: u32,
+        allowed: &[u64],
+    ) -> Result<Box<dyn LayerBufferSource>, drmkit_present::ProducerError> {
+        let inner = self.inner.create_buffer(width, height, fourcc, allowed)?;
+        Ok(Box::new(SeqSource {
+            inner,
+            fd: self.fd,
+            crtc_id: Rc::clone(&self.crtc_id),
+            seqs: Rc::clone(&self.seqs),
+        }))
+    }
+}
+
+struct SeqSource {
+    inner: Box<dyn LayerBufferSource>,
+    fd: std::os::fd::RawFd,
+    crtc_id: Rc<Cell<u32>>,
+    seqs: Rc<RefCell<Vec<u64>>>,
+}
+
+impl Drop for SeqSource {
+    fn drop(&mut self) {
+        // Runs before `inner` drops, so this is the sequence the buffer and
+        // its framebuffer are torn down at.
+        //
+        // SAFETY: the test's device outlives the backend, and so this source.
+        let fd = unsafe { std::os::fd::BorrowedFd::borrow_raw(self.fd) };
+        if let Ok(seq) = drmkit_core::crtc_sequence(&fd, self.crtc_id.get()) {
+            self.seqs.borrow_mut().push(seq);
+        }
+    }
+}
+
+impl LayerBufferSource for SeqSource {
+    fn acquire(&mut self) -> Result<AcquiredBuffer, SourceError> {
+        self.inner.acquire()
+    }
+
+    fn release(&mut self, acquired: AcquiredBuffer) {
+        self.inner.release(acquired);
+    }
+
+    fn release_with_fence(&mut self, acquired: AcquiredBuffer, fence: Option<SyncFence>) {
+        self.inner.release_with_fence(acquired, fence);
+    }
+
+    fn wants_release_fence(&self) -> bool {
+        self.inner.wants_release_fence()
+    }
+
+    fn has_fresh_content(&self) -> bool {
+        self.inner.has_fresh_content()
+    }
+
+    fn on_retired(&mut self) {
+        self.inner.on_retired();
+    }
+
+    fn binding_model(&self) -> BindingModel {
+        self.inner.binding_model()
+    }
+
+    fn format(&self) -> SourceFormat {
+        self.inner.format()
+    }
+
+    fn map(
+        &mut self,
+        access: drmkit_dumb::MapAccess,
+    ) -> Result<drmkit_dumb::Mapping<'_>, SourceError> {
+        self.inner.map(access)
+    }
+
+    fn export_dma_buf(&mut self) -> Result<DmaBufDesc<'_>, SourceError> {
+        self.inner.export_dma_buf()
+    }
+
+    fn bind_to_plane(&mut self, plane_id: u32) -> Result<(), SourceError> {
+        self.inner.bind_to_plane(plane_id)
+    }
+
+    fn unbind_from_plane(&mut self, plane_id: u32) {
+        self.inner.unbind_from_plane(plane_id);
+    }
+
+    fn on_session_paused(&mut self) {
+        self.inner.on_session_paused();
+    }
+
+    fn on_session_resumed(&mut self, device: &Device) -> Result<(), SourceError> {
+        self.inner.on_session_resumed(device)
+    }
+}
+
+/// Dropping the backend with a flip still armed waits for it to land.
+///
+/// Port of `LayerSceneReleaseVkms.DestructorWaitsForArmedFlip` (`debd061`),
+/// on the owner of the scene: the scene itself holds no device to wait on.
+/// The caller neither dispatches the event nor calls `flip_landed`. The
+/// layer's source must be torn down after the armed vblank, and the event
+/// must still be queued, because the wait never reads the event queue.
+///
+/// Upstream reads the sequence when the scene hands each buffer back. The
+/// port's scene hands nothing back at teardown -- it drops its sources, and
+/// their buffers with them -- so the sequence is read as the source drops.
+/// Reading it after the whole drop returns instead would prove nothing: the
+/// framebuffer still on screen is removed on the way out, and the kernel's
+/// disable commit for that waits out a vblank of its own.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn dropping_the_backend_waits_for_the_armed_flip_vkms() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::{Duration, Instant};
+
+    use drmkit_modeset::{PageFlip, Timeout};
+
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+
+    let crtc_id = Rc::new(Cell::new(0));
+    let seqs = Rc::new(RefCell::new(Vec::new()));
+    let mut producer = SeqOnDrop {
+        inner: GbmScanoutProducer::new(&device),
+        fd: device.raw_fd(),
+        crtc_id: Rc::clone(&crtc_id),
+        seqs: Rc::clone(&seqs),
+    };
+    let mut backend =
+        match ScanoutBackend::create(&device, &mut producer, &BackendConfig::default()) {
+            Ok(backend) => backend,
+            Err(error) => {
+                drmkit_testkit::skipped(&format!("no scanout output here ({error})"));
+                return;
+            }
+        };
+    crtc_id.set(backend.target().crtc.id);
+
+    let mut flip = PageFlip::new(&device).expect("page flip");
+    let flips = Arc::new(AtomicU32::new(0));
+    let counted = Arc::clone(&flips);
+    flip.set_handler(Box::new(move |_| {
+        counted.fetch_add(1, Ordering::Relaxed);
+    }));
+
+    // The modeset, with no event, then the frame whose flip is left armed.
+    backend
+        .present(&device, AtomicCommitFlags::empty(), None)
+        .expect("modeset frame");
+    backend
+        .present(
+            &device,
+            AtomicCommitFlags::PAGE_FLIP_EVENT | AtomicCommitFlags::NONBLOCK,
+            None,
+        )
+        .expect("armed frame");
+    let armed = drmkit_core::crtc_sequence(&device, crtc_id.get()).expect("read the sequence");
+    seqs.borrow_mut().clear();
+
+    let started = Instant::now();
+    drop(backend); // no dispatch, no flip_landed
+    let took = started.elapsed();
+
+    let seqs = seqs.borrow();
+    assert!(!seqs.is_empty(), "teardown should drop the layer's source");
+    for seq in seqs.iter() {
+        assert!(
+            *seq > armed,
+            "a buffer was torn down before the flip landed ({seq} <= {armed})"
+        );
+    }
+    assert!(
+        took < Duration::from_millis(150),
+        "the wait is bounded, took {took:?}"
+    );
+    flip.dispatch(Timeout::Bounded(Duration::from_millis(500)))
+        .expect("dispatch");
+    assert_eq!(
+        flips.load(Ordering::Relaxed),
+        1,
+        "the wait must leave the event queued for the caller"
+    );
 }

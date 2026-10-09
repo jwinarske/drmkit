@@ -140,6 +140,15 @@ impl Default for Config {
 /// present loop has other descriptors to poll — input, a timer, a socket — and
 /// a sink that blocked on vblank inside `present` would own the loop rather
 /// than serve it.
+///
+/// # Teardown
+///
+/// Dropping the sink while a flip it armed is still outstanding waits, up to
+/// 100 ms, for the CRTC's vblank sequence to move past that commit before the
+/// scene lets go of its buffers. It never reads the event queue, so the event
+/// stays queued for the caller. Dispatching it and calling
+/// [`flip_landed`](Self::flip_landed) first means there is nothing to wait for.
+/// The device must outlive the sink: the wait reads the sequence on it.
 pub struct DumbScanoutSink {
     scene: LayerScene,
     ring: Rc<RefCell<DumbRingSource>>,
@@ -157,6 +166,13 @@ pub struct DumbScanoutSink {
     /// re-modesets — which is a full-frame stall.
     needs_modeset: bool,
     layer: LayerHandle,
+    /// The descriptor teardown's flip wait reads the vblank sequence on. Held
+    /// raw because `Drop` has no device argument -- the ring's dumb buffers
+    /// hold it the same way, for the same reason.
+    device_fd: std::os::fd::RawFd,
+    /// The CRTC's vblank sequence right after the last commit that armed a
+    /// flip, which teardown waits past. `None` when unknown.
+    armed_flip_seq: Option<u64>,
 }
 
 /// How many bytes a `height`-row frame at `stride` occupies.
@@ -252,6 +268,8 @@ impl DumbScanoutSink {
             format,
             needs_modeset: true,
             layer,
+            device_fd: device.raw_fd(),
+            armed_flip_seq: None,
         })
     }
 
@@ -397,6 +415,7 @@ impl DumbScanoutSink {
             self.map.note_color_committed(plane_id);
         }
         self.needs_modeset = false;
+        self.armed_flip_seq = crate::armed_flip::armed_sequence(device, self.crtc_id, arms_flip);
         Ok(self.scene.finalize_frame(build, result))
     }
 
@@ -439,5 +458,23 @@ impl DumbScanoutSink {
     /// As [`scene`](Self::scene).
     pub const fn scene_mut(&mut self) -> &mut LayerScene {
         &mut self.scene
+    }
+}
+
+impl Drop for DumbScanoutSink {
+    fn drop(&mut self) {
+        // SAFETY: the descriptor belongs to the device this sink was built
+        // against, which outlives it -- the ring's buffers free themselves on
+        // it too. The borrow is only for this body.
+        let borrowed = unsafe { std::os::fd::BorrowedFd::borrow_raw(self.device_fd) };
+        // A flip the last commit armed may still be reading a ring slot the
+        // scene releases when it drops. Let it land first, bounded, without
+        // touching the event queue.
+        crate::armed_flip::settle(
+            &mut self.scene,
+            &borrowed,
+            self.crtc_id,
+            self.armed_flip_seq,
+        );
     }
 }

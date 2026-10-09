@@ -95,6 +95,15 @@ struct SavedCrtc {
 /// `DumbScanoutSink` does not: the scene deliberately has no `commit()` of its
 /// own, so the caller drives its own `PageFlip` and calls
 /// [`flip_landed`](Self::flip_landed).
+///
+/// # Teardown
+///
+/// Dropping the backend while a flip it armed is still outstanding waits, up to
+/// 100 ms, for the CRTC's vblank sequence to move past that commit before the
+/// scene lets go of its buffers. It never reads the event queue, so the event
+/// stays queued for the caller. Dispatching it and calling
+/// [`flip_landed`](Self::flip_landed) first means there is nothing to wait for.
+/// The device must outlive the backend: the wait reads the sequence on it.
 pub struct ScanoutBackend {
     target: ScanoutTarget,
     profile: DriverProfile,
@@ -116,9 +125,13 @@ pub struct ScanoutBackend {
     needs_modeset: bool,
     restore: RestorePolicy,
     saved: Option<SavedCrtc>,
-    /// The descriptor the restore is issued on. Held raw because `Drop` has no
-    /// device argument, and the restore is a legacy ioctl either way.
+    /// The descriptor the restore and the teardown flip wait are issued on.
+    /// Held raw because `Drop` has no device argument, and the restore is a
+    /// legacy ioctl either way.
     device_fd: std::os::fd::RawFd,
+    /// The CRTC's vblank sequence right after the last commit that armed a
+    /// flip, which teardown waits past. `None` when unknown.
+    armed_flip_seq: Option<u64>,
 }
 
 impl std::fmt::Debug for ScanoutBackend {
@@ -256,6 +269,7 @@ impl ScanoutBackend {
             restore: config.restore,
             saved,
             device_fd: device.raw_fd(),
+            armed_flip_seq: None,
         })
     }
 
@@ -446,6 +460,7 @@ impl ScanoutBackend {
         }
         self.needs_modeset = false;
         self.vrr_armed = self.vrr_wanted;
+        self.armed_flip_seq = crate::armed_flip::armed_sequence(device, crtc_id, arms_flip);
         Ok(self
             .scene
             .finalize_frame_with_fence(build, KernelResult::Ok, release_fence.as_ref()))
@@ -539,6 +554,19 @@ impl ScanoutBackend {
 
 impl Drop for ScanoutBackend {
     fn drop(&mut self) {
+        // SAFETY: the descriptor belongs to the device this backend was built
+        // against, which outlives it -- the borrow is only for this body.
+        let borrowed = unsafe { std::os::fd::BorrowedFd::borrow_raw(self.device_fd) };
+        // A flip the last commit armed may still be reading the buffers the
+        // scene releases below. Let it land first, bounded, without touching
+        // the event queue.
+        crate::armed_flip::settle(
+            &mut self.scene,
+            &borrowed,
+            self.target.crtc.id,
+            self.armed_flip_seq,
+        );
+
         if self.restore != RestorePolicy::SavedCrtc {
             return;
         }
@@ -557,10 +585,6 @@ impl Drop for ScanoutBackend {
         // atomic commits this backend issues never touched the legacy
         // framebuffer field, so putting back what was read from it is the only
         // thing that restores what was on screen.
-        //
-        // SAFETY: the descriptor belongs to the device this backend was built
-        // against, which outlives it -- the borrow is only for this ioctl.
-        let borrowed = unsafe { std::os::fd::BorrowedFd::borrow_raw(self.device_fd) };
         let device = RawDevice { fd: borrowed };
         // No saved framebuffer means the CRTC was dark before this backend took
         // it over, so put it back dark -- no connector, no mode -- rather than

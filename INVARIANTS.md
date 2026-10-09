@@ -186,11 +186,11 @@ destructor tears down (the RmFB-on-in-flight-FB hazard). Land it first: call
 `LayerScene::drain(pf, timeout)` — a no-op when nothing is armed — or dispatch
 the event yourself, before the scene goes out of scope.
 
-`Drop` must stay non-blocking; `drain` stays an explicit method and never moves
-into `Drop`. The port adds observability the C++ side cannot cheaply provide: a
-`tracing::warn!` (and `debug_assert!`) in `Drop` when an armed flip is still
-outstanding, so the hazard is loud in development instead of silent until it
-tears.
+`LayerScene`'s `Drop` must stay non-blocking; `drain` stays an explicit method
+and never moves into it. The port adds observability the C++ side cannot
+cheaply provide: a `tracing::warn!` (and `debug_assert!`) in `Drop` when an
+armed flip is still outstanding, so the hazard is loud in development instead
+of silent until it tears.
 
 - **Partly defined:** `drmkit-scene`, `ReleaseQueue::drain` and
   `ScenePendingFlip`. `drain` returns every held buffer without waiting on the
@@ -204,6 +204,25 @@ tears.
   the hazard itself: draining returns buffers but does **not** wait on the
   kernel, so the flip stays outstanding and teardown stays unsafe until the
   event is dispatched.
+
+Upstream's `~LayerScene` now waits, bounded, for the armed flip (`debd061`): the
+commit records the CRTC's vblank sequence, and the destructor polls until the
+sequence moves past it, for at most 100 ms, without reading the event queue.
+The port's scene holds no device to poll, so the wait lives one level up, in
+the two types that own both a scene and the descriptor it commits on:
+`ScanoutBackend` and `DumbScanoutSink` wait the same way in their `Drop`, then
+tell the scene the flip landed. A bare `LayerScene` still does not wait, and
+the heading above still holds for it. Upstream has since retitled this
+invariant "Teardown waits, bounded, for the last armed flip" (`cc87618`,
+drm-cxx#354). The heading here follows the tracked tree, and changes when the
+pin moves past that commit.
+
+- **Wait defined:** `drmkit-present` `src/armed_flip.rs` (`settle`), over
+  `drmkit_core::crtc_sequence`.
+- **Wait pinned by:** `dropping_the_backend_waits_for_the_armed_flip_vkms`,
+  which reads the sequence as the layer's source drops and fails with the wait
+  removed, and `dropping_the_sink_waits_for_the_armed_flip_vkms`. Both check
+  the event is still queued afterwards.
 
 ## 6. `dumb::Buffer::map` is a zero-cost view of a lifetime mmap
 

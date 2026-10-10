@@ -964,6 +964,9 @@ impl LayerScene {
         if self.is_empty() {
             disables.clear();
         }
+        let canvas_id = canvas_plane
+            .as_ref()
+            .map(|composition| composition.plane_id);
         let disables = if let Some(composition) = canvas_plane {
             let plane_id = composition.plane_id;
             plan.push(PlanePlan {
@@ -985,19 +988,7 @@ impl LayerScene {
             disables
         };
 
-        // One stack over everything armed -- allocated, pinned and the canvas,
-        // which asks to sit above every layer and so lands just above the
-        // highest armed one. Numbering only the armed planes is what keeps
-        // composited layers from using up the range (drm-cxx `1384526`).
-        let armed: Vec<(u32, Option<u64>)> = plan
-            .iter()
-            .map(|entry| (entry.plane_id, entry.layer.property(PropTag::Zpos)))
-            .collect();
-        for (plane_id, zpos) in drmkit_planes::stacked_zpos(registry, &armed) {
-            if let Some(entry) = plan.iter_mut().find(|entry| entry.plane_id == plane_id) {
-                entry.zpos = Some(zpos);
-            }
-        }
+        self.stack_plan(&mut plan, canvas_id, registry);
 
         Ok(FrameBuild {
             acquisitions,
@@ -1364,6 +1355,40 @@ impl LayerScene {
         Ok((refused, tests))
     }
 
+    /// Number the zpos of everything `plan` arms in one stack -- allocated,
+    /// pinned and the canvas on `canvas`.
+    ///
+    /// Numbering only the armed planes is what keeps composited layers from
+    /// using up the range (drm-cxx `1384526`). The canvas asks for the
+    /// allocator's slot and stacks under the placed layer that shares it;
+    /// where the slot leaves no room in the range it goes on top, as upstream
+    /// drops it (`07226e4`).
+    fn stack_plan(&self, plan: &mut [PlanePlan], canvas: Option<u32>, registry: &PlaneRegistry) {
+        let armed = |plan: &[PlanePlan]| -> Vec<(u32, Option<u64>)> {
+            plan.iter()
+                .map(|entry| (entry.plane_id, entry.layer.property(PropTag::Zpos)))
+                .collect()
+        };
+        let slot = self.allocator.canvas_zpos();
+        let slotted = canvas
+            .filter(|_| slot.is_some())
+            .and_then(|canvas| drmkit_planes::stacked_zpos_beneath(registry, &armed(plan), canvas));
+        let stack = slotted.unwrap_or_else(|| {
+            if let Some(canvas) = canvas
+                && slot.is_some()
+                && let Some(entry) = plan.iter_mut().find(|entry| entry.plane_id == canvas)
+            {
+                entry.layer.set_property(PropTag::Zpos, self.canvas_zpos());
+            }
+            drmkit_planes::stacked_zpos(registry, &armed(plan))
+        });
+        for (plane_id, zpos) in stack {
+            if let Some(entry) = plan.iter_mut().find(|entry| entry.plane_id == plane_id) {
+                entry.zpos = Some(zpos);
+            }
+        }
+    }
+
     /// Where the canvas sits in the allocator's tests: above every layer.
     ///
     /// The tests run before anything is composited, so they cannot know the
@@ -1457,19 +1482,25 @@ impl LayerScene {
         // it.
         targets.sort_unstable();
 
-        // Where the run asked to be: at its topmost layer's zpos, so placed
-        // layers above the run stay above the canvas and those below stay
-        // below. Above every layer, as this used to be, the canvas covered
-        // any placed layer stacked over what it carries (P-44, drm-cxx#343),
+        // Just under the lowest placed layer that overlaps a composited one
+        // and must cover it, the slot the allocator found (drm-cxx `07226e4`,
+        // P-44, drm-cxx#343); above every layer when no placed layer must
+        // cover the canvas. Above every layer regardless, as this once was,
+        // the canvas covered any placed layer stacked over what it carries,
         // which overlay-first placement makes the common case: on a Pi 5 the
         // plane-limit scene's top tile went under a canvas carrying the
-        // background. A run with placed layers inside it still cannot stack
-        // right; on these CRTCs the search does not keep the run contiguous.
+        // background. The allocator keeps a placed layer from having to sit on
+        // both sides of the canvas, so where planes take a zpos the slot
+        // exists; `build_frame` stacks the canvas under the layer whose zpos
+        // the slot shares.
         //
         // The tests armed the canvas above every layer (see `canvas_zpos`),
         // since which layers are composited is not known before the search;
         // the planes and buffers are the ones tested, only the order differs.
-        let zpos = targets.last().map_or(0, |(order, _)| *order);
+        let zpos = self
+            .allocator
+            .canvas_zpos()
+            .unwrap_or_else(|| self.canvas_zpos());
 
         // Disjoint field borrows: the sources live in `slots`, the canvas does
         // not, and the blend needs both at once.

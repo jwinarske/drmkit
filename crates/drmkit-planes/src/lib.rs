@@ -81,7 +81,8 @@ pub use scoring::{
     split_independent_groups,
 };
 pub use zpos_order::{
-    StackEntry, effective_zpos, stack_zpos, stacked_zpos, stacking_consistent, zpos_fixed,
+    StackEntry, effective_zpos, stack_zpos, stacked_zpos, stacked_zpos_beneath,
+    stacking_consistent, zpos_fixed,
 };
 
 #[cfg(test)]

@@ -82,6 +82,16 @@ pub(crate) struct Output {
     mode: drmkit_core::Mode,
 }
 
+impl Output {
+    /// The mode this output would be driven at, in pixels.
+    pub(crate) fn mode_size(&self) -> (u32, u32) {
+        (
+            drmkit_modeset::ModeInfo::width(&self.mode),
+            drmkit_modeset::ModeInfo::height(&self.mode),
+        )
+    }
+}
+
 /// The connector names `DRMKIT_TEST_CONNECTORS` asks for, in preference order.
 ///
 /// A board can have connected outputs a test must not light -- a virtual one
@@ -408,6 +418,21 @@ impl Fixture {
             }
         }
         None
+    }
+
+    /// Planes the kernel has holding a framebuffer on `crtc_id`.
+    pub(crate) fn lit_planes(&self, crtc_id: u32) -> Vec<u32> {
+        let Ok(planes) = self.device.plane_handles() else {
+            return Vec::new();
+        };
+        planes
+            .iter()
+            .filter_map(|handle| {
+                let info = self.device.get_plane(*handle).ok()?;
+                let on_crtc = info.crtc().map(u32::from) == Some(crtc_id);
+                (info.framebuffer().is_some() && on_crtc).then(|| u32::from(*handle))
+            })
+            .collect()
     }
 
     /// A second connected output, on a CRTC other than this one.

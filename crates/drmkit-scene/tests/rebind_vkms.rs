@@ -309,3 +309,73 @@ fn a_rebind_to_another_crtc_hands_a_shared_plane_over_vkms() {
 
     fx.teardown();
 }
+
+/// Rebinding to another CRTC turns off the planes the scene lit on the old
+/// one, and the new output gets planes rather than the canvas.
+///
+/// Port of `RebindToAnotherCrtcReleasesTheOldPlanes` (`a335bef`,
+/// drm-cxx#340). Left lit, the old planes keep the old frame on screen, and a
+/// plane both CRTCs can use fails every test that moves it, so upstream's
+/// new output composited. The port fixed this first (P-37), through the
+/// pending detach the caller commits; the case is the same as upstream's but
+/// for that step. Needs two connected outputs on different CRTCs, which
+/// `validation/vkms-two-crtc.sh` builds.
+#[test]
+#[ignore = "needs a DRM device, DRM master and two connected outputs"]
+fn a_rebind_to_another_crtc_releases_the_old_planes_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some(mut fx) = fixture(device) else {
+        drmkit_testkit::skipped("no connected output");
+        return;
+    };
+    let Some(other) = fx.another_output() else {
+        drmkit_testkit::skipped("no second connected output on another CRTC");
+        return;
+    };
+    let old_crtc = fx.crtc_id();
+    let ((aw, ah), (bw, bh)) = (fx.mode_size(), other.mode_size());
+    let (w, h) = (aw.min(bw), ah.min(bh));
+    for (size, zpos) in [((w, h), 3), ((LAYER_W, LAYER_H), 4)] {
+        let Some(handle) = fx.add_layer(0, 0, size.0, size.1) else {
+            drmkit_testkit::skipped("no dumb buffer for a layer");
+            fx.teardown();
+            return;
+        };
+        fx.set_zpos(handle, zpos);
+    }
+
+    let before = fx.lit_planes(old_crtc);
+    fx.commit().expect("the cold frame on the first output");
+    fx.commit().expect("the steady frame");
+    let scene_lit: Vec<u32> = fx
+        .lit_planes(old_crtc)
+        .into_iter()
+        .filter(|id| !before.contains(id))
+        .collect();
+    assert!(
+        !scene_lit.is_empty(),
+        "the scene lit nothing on the first CRTC"
+    );
+
+    fx.switch_to(&other)
+        .expect("learn the second output's planes");
+    let (width, height) = fx.mode_size();
+    assert!(fx.scene.rebind(fx.crtc_id(), width, height).is_empty());
+    fx.commit_detach().expect("the detach commits");
+    let report = fx.commit().expect("the first frame on the second output");
+    assert_eq!(report.layers_assigned, 2, "{report:?}");
+    assert_eq!(
+        report.layers_composited, 0,
+        "the old CRTC's planes were not handed over: {report:?}"
+    );
+
+    let after = fx.lit_planes(old_crtc);
+    for id in &scene_lit {
+        assert!(
+            !after.contains(id),
+            "plane {id} still lit on the old CRTC: {after:?}"
+        );
+    }
+    fx.teardown();
+}

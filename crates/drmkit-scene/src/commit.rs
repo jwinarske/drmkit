@@ -370,7 +370,8 @@ pub fn emit_disable(
 /// the new frame may want. The CRTC goes off with its planes because some
 /// drivers reject an active CRTC whose primary is disarmed; `ACTIVE = 0` keeps
 /// its mode and connector, so a caller that wants the old output back sets it
-/// active again. Upstream has no equivalent yet (drm-cxx#340).
+/// active again. Upstream's fix for the same defect (`a335bef`, drm-cxx#340)
+/// leaves the old CRTC active, and retries without the primary instead.
 ///
 /// Returns whether there was anything to commit. On success the scene can
 /// build frames again; on failure the detach stays pending and

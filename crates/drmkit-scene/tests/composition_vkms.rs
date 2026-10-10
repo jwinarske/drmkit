@@ -807,7 +807,6 @@ fn the_canvas_plane_turns_off_when_composition_stops_vkms() {
 #[test]
 #[ignore = "needs a DRM device"]
 fn composited_layers_return_to_planes_after_removal_vkms() {
-    const LAYERS: usize = 16; // more than vkms has planes
     const SIDE: u32 = 64;
     const OVERFLOW: usize = 4;
 
@@ -824,8 +823,11 @@ fn composited_layers_return_to_planes_after_removal_vkms() {
         return;
     }
 
+    // Upstream's 16 is more than vkms has planes, but not more than a Pi 5's
+    // 17: size the stack so it overflows on any card.
+    let layers = (fx.eligible_planes() + 2 * OVERFLOW).max(16);
     let mut handles = Vec::new();
-    for i in 0..LAYERS {
+    for i in 0..layers {
         let index = u32::try_from(i).expect("small");
         let offset = i32::try_from(index * 8).expect("on screen");
         let Some(handle) = fx.add_layer(offset, offset, SIDE, SIDE) else {

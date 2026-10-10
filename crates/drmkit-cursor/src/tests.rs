@@ -1455,9 +1455,61 @@ fn a_cursor_plane_wins() {
         plane(32, PlaneType::Overlay),
         plane(33, PlaneType::Cursor),
     ]);
-    let chosen = select_plane(&registry, 0, None, true, &all_free).expect("select");
+    let chosen = select_plane(&registry, 0, None, true, false, &all_free).expect("select");
     assert_eq!(chosen.plane_id, 33);
     assert_eq!(chosen.path, PlanePath::AtomicCursor);
+}
+
+/// `prefer_legacy` takes the legacy ioctls over the CRTC's cursor plane, and
+/// records that plane: the kernel drives it, so a caller must still keep its
+/// own commits off it (drm-cxx `0925491`).
+#[test]
+fn prefer_legacy_drives_the_cursor_plane_through_the_legacy_ioctls() {
+    let registry = registry_of(vec![
+        plane(31, PlaneType::Primary),
+        plane(32, PlaneType::Overlay),
+        plane(33, PlaneType::Cursor),
+    ]);
+    let chosen = select_plane(&registry, 0, None, true, true, &all_free).expect("select");
+    assert_eq!(chosen.path, PlanePath::Legacy);
+    assert_eq!(chosen.plane_id, 0, "the legacy path addresses the CRTC");
+    assert_eq!(chosen.legacy_plane_id, 33);
+
+    // Not without leave to go legacy.
+    let chosen = select_plane(&registry, 0, None, false, true, &all_free).expect("select");
+    assert_eq!(chosen.path, PlanePath::AtomicCursor);
+    assert_eq!(chosen.legacy_plane_id, 0);
+
+    // A forced plane overrides it.
+    let chosen = select_plane(&registry, 0, Some(32), true, true, &all_free).expect("select");
+    assert_eq!(chosen.path, PlanePath::AtomicOverlay);
+    assert_eq!(chosen.plane_id, 32);
+}
+
+/// Without a cursor plane there is nothing for the legacy ioctls to drive
+/// asynchronously, so `prefer_legacy` changes nothing: an overlay is still
+/// better than a legacy cursor the kernel emulates.
+#[test]
+fn prefer_legacy_needs_a_cursor_plane() {
+    let registry = registry_of(vec![
+        plane(31, PlaneType::Primary),
+        plane(32, PlaneType::Overlay),
+    ]);
+    let chosen = select_plane(&registry, 0, None, true, true, &all_free).expect("select");
+    assert_eq!(chosen.path, PlanePath::AtomicOverlay);
+    assert_eq!(chosen.plane_id, 32);
+}
+
+/// The legacy ioctls hand the kernel an `ARGB8888` buffer, so a cursor plane
+/// that takes only another channel order (Tegra's `RGBA8888`) stays atomic.
+#[test]
+fn prefer_legacy_needs_a_cursor_plane_that_takes_argb8888() {
+    let mut cursor = plane(33, PlaneType::Cursor);
+    cursor.formats = vec![drmkit_fmt::fourcc::RGBA8888];
+    let registry = registry_of(vec![plane(31, PlaneType::Primary), cursor]);
+    let chosen = select_plane(&registry, 0, None, true, true, &all_free).expect("select");
+    assert_eq!(chosen.path, PlanePath::AtomicCursor);
+    assert_eq!(chosen.fourcc, drmkit_fmt::fourcc::RGBA8888);
 }
 
 #[test]
@@ -1466,7 +1518,7 @@ fn an_overlay_is_taken_when_there_is_no_cursor_plane() {
         plane(31, PlaneType::Primary),
         plane(32, PlaneType::Overlay),
     ]);
-    let chosen = select_plane(&registry, 0, None, true, &all_free).expect("select");
+    let chosen = select_plane(&registry, 0, None, true, false, &all_free).expect("select");
     assert_eq!(chosen.plane_id, 32);
     assert_eq!(chosen.path, PlanePath::AtomicOverlay);
 }
@@ -1479,7 +1531,7 @@ fn a_cursor_plane_that_cannot_do_alpha_is_not_a_cursor_plane() {
         opaque_plane(33, PlaneType::Cursor),
         plane(32, PlaneType::Overlay),
     ]);
-    let chosen = select_plane(&registry, 0, None, true, &all_free).expect("select");
+    let chosen = select_plane(&registry, 0, None, true, false, &all_free).expect("select");
     assert_eq!(chosen.plane_id, 32);
     assert_eq!(chosen.path, PlanePath::AtomicOverlay);
 }
@@ -1493,7 +1545,7 @@ fn a_free_overlay_is_preferred_to_a_busy_one() {
         plane(34, PlaneType::Overlay),
     ]);
     let busy = |id: u32| id == 32;
-    let chosen = select_plane(&registry, 0, None, true, &busy).expect("select");
+    let chosen = select_plane(&registry, 0, None, true, false, &busy).expect("select");
     assert_eq!(chosen.plane_id, 34, "the free overlay, not the first one");
 }
 
@@ -1502,7 +1554,7 @@ fn a_busy_overlay_beats_no_cursor_at_all() {
     // Sharing an overlay is a cost; dropping to legacy is a bigger one,
     // because the cursor then cannot be committed with the frame.
     let registry = registry_of(vec![plane(32, PlaneType::Overlay)]);
-    let chosen = select_plane(&registry, 0, None, true, &|_| true).expect("select");
+    let chosen = select_plane(&registry, 0, None, true, false, &|_| true).expect("select");
     assert_eq!(chosen.plane_id, 32);
     assert_eq!(chosen.path, PlanePath::AtomicOverlay);
 }
@@ -1512,7 +1564,7 @@ fn the_primary_plane_is_never_taken() {
     // It is carrying the desktop. Putting the cursor on it would replace what
     // is on screen with a pointer.
     let registry = registry_of(vec![plane(31, PlaneType::Primary)]);
-    let chosen = select_plane(&registry, 0, None, true, &all_free).expect("select");
+    let chosen = select_plane(&registry, 0, None, true, false, &all_free).expect("select");
     assert_eq!(chosen.path, PlanePath::Legacy);
     assert_eq!(chosen.plane_id, 0);
 }
@@ -1521,7 +1573,7 @@ fn the_primary_plane_is_never_taken() {
 fn legacy_is_the_last_resort_and_only_if_allowed() {
     let registry = registry_of(vec![opaque_plane(32, PlaneType::Overlay)]);
     assert_eq!(
-        select_plane(&registry, 0, None, true, &all_free)
+        select_plane(&registry, 0, None, true, false, &all_free)
             .expect("select")
             .path,
         PlanePath::Legacy
@@ -1529,7 +1581,7 @@ fn legacy_is_the_last_resort_and_only_if_allowed() {
     // A compositor that must commit the cursor atomically with everything else
     // would rather be told than be quietly downgraded.
     assert_eq!(
-        select_plane(&registry, 0, None, false, &all_free).unwrap_err(),
+        select_plane(&registry, 0, None, false, false, &all_free).unwrap_err(),
         CursorError::NoPlane
     );
 }
@@ -1539,7 +1591,7 @@ fn a_plane_on_another_crtc_is_not_a_candidate() {
     let mut elsewhere = plane(33, PlaneType::Cursor);
     elsewhere.possible_crtcs = 0b10; // CRTC 1 only
     let registry = registry_of(vec![elsewhere, plane(32, PlaneType::Overlay)]);
-    let chosen = select_plane(&registry, 0, None, true, &all_free).expect("select");
+    let chosen = select_plane(&registry, 0, None, true, false, &all_free).expect("select");
     assert_eq!(chosen.plane_id, 32, "the cursor plane cannot feed CRTC 0");
 }
 
@@ -1550,7 +1602,7 @@ fn a_forced_plane_is_taken_as_asked() {
         plane(32, PlaneType::Overlay),
     ]);
     // The overlay, even though a cursor plane is available and would win.
-    let chosen = select_plane(&registry, 0, Some(32), true, &all_free).expect("select");
+    let chosen = select_plane(&registry, 0, Some(32), true, false, &all_free).expect("select");
     assert_eq!(chosen.plane_id, 32);
     assert_eq!(chosen.path, PlanePath::AtomicOverlay);
 }
@@ -1573,7 +1625,7 @@ fn a_forced_plane_that_will_not_work_is_refused_not_replaced() {
         (&registry_with, 35, "a plane on another CRTC"),
     ] {
         assert_eq!(
-            select_plane(registry, 0, Some(forced), true, &all_free).unwrap_err(),
+            select_plane(registry, 0, Some(forced), true, false, &all_free).unwrap_err(),
             CursorError::PlaneUnusable,
             "{why}"
         );
@@ -1585,7 +1637,7 @@ fn a_forced_plane_does_not_fall_back_to_legacy_either() {
     // Even with legacy allowed: the caller named a plane.
     let registry = registry_of(vec![plane(33, PlaneType::Cursor)]);
     assert_eq!(
-        select_plane(&registry, 0, Some(999), true, &all_free).unwrap_err(),
+        select_plane(&registry, 0, Some(999), true, false, &all_free).unwrap_err(),
         CursorError::PlaneUnusable
     );
 }
@@ -1599,14 +1651,14 @@ fn the_cursor_plane_reports_its_size_limit() {
     cursor.cursor_max_h = 64;
     let registry = registry_of(vec![cursor, plane(32, PlaneType::Overlay)]);
 
-    let chosen = select_plane(&registry, 0, None, true, &all_free).expect("select");
+    let chosen = select_plane(&registry, 0, None, true, false, &all_free).expect("select");
     assert_eq!(
         (chosen.cursor_max_w, chosen.cursor_max_h),
         (64, 64),
         "the cursor plane's own maximum"
     );
 
-    let overlay = select_plane(&registry, 0, Some(32), true, &all_free).expect("select");
+    let overlay = select_plane(&registry, 0, Some(32), true, false, &all_free).expect("select");
     assert_eq!(
         (overlay.cursor_max_w, overlay.cursor_max_h),
         (0, 0),
@@ -1618,13 +1670,13 @@ fn the_cursor_plane_reports_its_size_limit() {
 fn an_empty_registry_falls_back() {
     let registry = registry_of(Vec::new());
     assert_eq!(
-        select_plane(&registry, 0, None, true, &all_free)
+        select_plane(&registry, 0, None, true, false, &all_free)
             .expect("select")
             .path,
         PlanePath::Legacy
     );
     assert_eq!(
-        select_plane(&registry, 0, None, false, &all_free).unwrap_err(),
+        select_plane(&registry, 0, None, false, false, &all_free).unwrap_err(),
         CursorError::NoPlane
     );
 }
@@ -1632,8 +1684,8 @@ fn an_empty_registry_falls_back() {
 #[test]
 fn the_selection_is_a_value_worth_comparing() {
     let registry = registry_of(vec![plane(33, PlaneType::Cursor)]);
-    let a = select_plane(&registry, 0, None, true, &all_free).expect("select");
-    let b = select_plane(&registry, 0, None, true, &all_free).expect("select");
+    let a = select_plane(&registry, 0, None, true, false, &all_free).expect("select");
+    let b = select_plane(&registry, 0, None, true, false, &all_free).expect("select");
     assert_eq!(a, b, "the same registry gives the same answer");
     assert_eq!(
         a,
@@ -1643,6 +1695,7 @@ fn the_selection_is_a_value_worth_comparing() {
             cursor_max_w: 0,
             cursor_max_h: 0,
             fourcc: drmkit_fmt::fourcc::ARGB8888,
+            legacy_plane_id: 0,
         }
     );
 }
@@ -1665,7 +1718,7 @@ fn a_cursor_plane_offering_only_rgba_is_used_rather_than_spending_an_overlay() {
     };
     let registry = registry_of(vec![cursor, plane(44, PlaneType::Overlay)]);
 
-    let selected = select_plane(&registry, 0, None, true, &all_free).expect("select");
+    let selected = select_plane(&registry, 0, None, true, false, &all_free).expect("select");
     assert_eq!(
         selected.path,
         PlanePath::AtomicCursor,
@@ -1687,7 +1740,7 @@ fn argb_is_preferred_so_the_common_case_copies_the_shadow_unchanged() {
         ..plane(50, PlaneType::Cursor)
     };
     let registry = registry_of(vec![both]);
-    let selected = select_plane(&registry, 0, None, true, &all_free).expect("select");
+    let selected = select_plane(&registry, 0, None, true, false, &all_free).expect("select");
     assert_eq!(selected.fourcc, drmkit_fmt::fourcc::ARGB8888);
 }
 
@@ -1695,7 +1748,7 @@ fn argb_is_preferred_so_the_common_case_copies_the_shadow_unchanged() {
 #[test]
 fn widening_the_format_list_did_not_let_an_opaque_plane_through() {
     let registry = registry_of(vec![opaque_plane(60, PlaneType::Cursor)]);
-    let selected = select_plane(&registry, 0, None, true, &all_free).expect("select");
+    let selected = select_plane(&registry, 0, None, true, false, &all_free).expect("select");
     assert_eq!(
         selected.path,
         PlanePath::Legacy,

@@ -55,6 +55,10 @@ pub struct SelectedPlane {
     /// nothing else, and a plane that differs only in channel order is
     /// perfectly able to carry a cursor -- see [`CURSOR_FORMATS`].
     pub fourcc: u32,
+    /// On the legacy path, the CRTC's cursor plane the legacy ioctls drive
+    /// when [`RendererConfig::prefer_legacy`](crate::RendererConfig::prefer_legacy)
+    /// chose them over it; `0` otherwise.
+    pub legacy_plane_id: u32,
 }
 
 /// The formats a cursor can be drawn in, best first.
@@ -100,6 +104,10 @@ fn usable(plane: &PlaneCapabilities) -> Option<u32> {
 /// is using costs that output a layer; the search prefers a free one but will
 /// take a busy one rather than fall back to legacy.
 ///
+/// `prefer_legacy` takes the legacy path over a cursor plane that can carry
+/// `ARGB8888`, which is the plane the legacy ioctls then drive. It needs
+/// `allow_legacy`, and a forced plane overrides it.
+///
 /// # Errors
 ///
 /// - [`CursorError::NoPlane`] when nothing on this CRTC can carry a cursor and
@@ -111,6 +119,7 @@ pub fn select_plane(
     crtc_index: u32,
     forced: Option<u32>,
     allow_legacy: bool,
+    prefer_legacy: bool,
     bound_elsewhere: &dyn Fn(u32) -> bool,
 ) -> Result<SelectedPlane, CursorError> {
     if let Some(plane_id) = forced {
@@ -129,6 +138,16 @@ pub fn select_plane(
         .filter(|plane| plane.plane_type == PlaneType::Cursor)
         .find_map(|plane| usable(plane).map(|fourcc| (plane, fourcc)))
     {
+        // The legacy ioctls drive this same plane, as an async update that
+        // does not wait for vblank, so a moving pointer does not contend with
+        // the caller's flips (drm-cxx `0925491`). They hand the kernel an
+        // ARGB8888 buffer, so only a plane that takes one.
+        if prefer_legacy && allow_legacy && plane.supports_format(drmkit_fmt::fourcc::ARGB8888) {
+            return Ok(SelectedPlane {
+                legacy_plane_id: plane.id,
+                ..legacy()
+            });
+        }
         return Ok(selected(plane, fourcc));
     }
 
@@ -152,17 +171,23 @@ pub fn select_plane(
     }
 
     if allow_legacy {
-        return Ok(SelectedPlane {
-            plane_id: 0,
-            path: PlanePath::Legacy,
-            cursor_max_w: 0,
-            cursor_max_h: 0,
-            // `drmModeSetCursor` has no format argument: the kernel reads the
-            // buffer as ARGB8888 and there is nothing to negotiate.
-            fourcc: drmkit_fmt::fourcc::ARGB8888,
-        });
+        return Ok(legacy());
     }
     Err(CursorError::NoPlane)
+}
+
+/// The legacy path, which addresses the CRTC rather than a plane.
+const fn legacy() -> SelectedPlane {
+    SelectedPlane {
+        plane_id: 0,
+        path: PlanePath::Legacy,
+        cursor_max_w: 0,
+        cursor_max_h: 0,
+        // `drmModeSetCursor` has no format argument: the kernel reads the
+        // buffer as ARGB8888 and there is nothing to negotiate.
+        fourcc: drmkit_fmt::fourcc::ARGB8888,
+        legacy_plane_id: 0,
+    }
 }
 
 /// Describe a chosen plane.
@@ -181,5 +206,6 @@ fn selected(plane: &PlaneCapabilities, fourcc: u32) -> SelectedPlane {
         cursor_max_w: plane.cursor_max_w,
         cursor_max_h: plane.cursor_max_h,
         fourcc,
+        legacy_plane_id: 0,
     }
 }

@@ -16,7 +16,8 @@ use crate::plane_order::{PlaneOrder, Position, plane_order_consistent, stacks_by
 use crate::prop::PropTag;
 use crate::registry::{PlaneCapabilities, PlaneRegistry, PlaneType};
 use crate::scoring::{
-    ScoreContext, keep_priority, plane_statically_compatible, score_pair, split_independent_groups,
+    ScoreContext, keep_priority, layers_intersect, plane_statically_compatible, score_pair,
+    split_independent_groups,
 };
 
 /// Stable identity for a layer across frames.
@@ -404,6 +405,9 @@ pub struct Allocator {
     /// when it decided that.
     previous_composited: Vec<LayerId>,
     previous_free: Vec<u32>,
+    /// Where planes take a `zpos`: the zpos the canvas asks for after the
+    /// last pass. See [`canvas_zpos`](Self::canvas_zpos).
+    canvas_slot: Option<u64>,
 }
 
 impl Default for Allocator {
@@ -438,6 +442,7 @@ impl Allocator {
             canvas_hold: None,
             previous_composited: Vec::new(),
             previous_free: Vec::new(),
+            canvas_slot: None,
         }
     }
 
@@ -757,6 +762,36 @@ impl Allocator {
         crtc_index: u32,
         committer: &mut C,
     ) -> Result<Allocation, TestFailure> {
+        self.canvas_slot = None;
+        let allocation = self.allocate_planes(layers, registry, crtc_index, committer)?;
+        if !allocation.composited.is_empty() && !stacks_by_plane_id(registry, crtc_index) {
+            let bounds = canvas_bounds(&allocation.assignment, layers);
+            self.canvas_slot = bounds.above.filter(|_| bounds.feasible());
+        }
+        Ok(allocation)
+    }
+
+    /// Where planes take a `zpos`, the zpos the composition canvas asks for
+    /// after the last [`allocate`](Self::allocate): that of the lowest placed
+    /// layer that overlaps a composited one and must cover it, for the canvas
+    /// to stack just under (drm-cxx `07226e4`, #343). `None` when no placed
+    /// layer must cover the canvas, which may then stack on top, and where
+    /// planes stack by id, where the canvas plane's id places it.
+    ///
+    /// The slot asks for a placed layer's own zpos, so the canvas has to stack
+    /// under ties: [`stacked_zpos_beneath`](crate::stacked_zpos_beneath).
+    #[must_use]
+    pub const fn canvas_zpos(&self) -> Option<u64> {
+        self.canvas_slot
+    }
+
+    fn allocate_planes<C: TestCommitter>(
+        &mut self,
+        layers: &[LayerRef<'_>],
+        registry: &PlaneRegistry,
+        crtc_index: u32,
+        committer: &mut C,
+    ) -> Result<Allocation, TestFailure> {
         self.test_commits_this_frame = 0;
         self.budget_exhausted_this_frame = false;
         self.canvas_plane = None;
@@ -792,6 +827,11 @@ impl Allocator {
         // just stacked in the old order, and nothing but this notices
         // (drm-cxx#239).
         let order_holds = !by_plane_id || self.plane_order_holds(&stacked);
+        // Where planes take a zpos, a move or restack can leave a placed layer
+        // that would have to sit on both sides of the one canvas; the cached
+        // assignment cannot fix that, so search again (drm-cxx `07226e4`).
+        let order_holds =
+            order_holds && (by_plane_id || canvas_bounds(&self.previous, layers).feasible());
 
         let has_new_layer =
             self.previous_valid && self.has_new_layer(&placeable, layers, registry, crtc_index);
@@ -843,7 +883,13 @@ impl Allocator {
         } else {
             self.canvas_plane = self.canvas_hold;
             self.arm_canvas(self.canvas_hold, committer);
-            let searched = self.full_search(&placeable, registry, crtc_index, committer);
+            let searched = self
+                .full_search(&placeable, registry, crtc_index, committer)
+                .and_then(|searched| {
+                    self.keep_canvas_bounds(
+                        searched, &placeable, layers, registry, crtc_index, committer,
+                    )
+                });
             self.arm_canvas(None, committer);
             searched?
         };
@@ -910,6 +956,110 @@ impl Allocator {
                 Ok(None)
             }
         }
+    }
+
+    /// A full search's assignment, or one the one canvas can stack with.
+    ///
+    /// One canvas stacks at one zpos. When a placed layer would have to sit
+    /// on both sides of it, composite one contiguous zpos run instead;
+    /// failing that, move the caught layers into the composition and keep the
+    /// smaller set if the kernel takes it. Otherwise the search's assignment
+    /// stands, and the canvas stacks on top. Port of upstream's
+    /// `full_search` tail (`07226e4`).
+    fn keep_canvas_bounds<C: TestCommitter>(
+        &mut self,
+        searched: PlaneAssignment,
+        placeable: &[LayerRef<'_>],
+        layers: &[LayerRef<'_>],
+        registry: &PlaneRegistry,
+        crtc_index: u32,
+        committer: &mut C,
+    ) -> Result<PlaneAssignment, TestFailure> {
+        if canvas_bounds(&searched, layers).feasible() {
+            return Ok(searched);
+        }
+        if let Some(run) =
+            self.place_around_run(searched.len(), layers, registry, crtc_index, committer)?
+        {
+            return Ok(run);
+        }
+        let planes: Vec<&PlaneCapabilities> = registry.for_crtc(crtc_index).collect();
+        let mut resolved = searched.clone();
+        if resolve_canvas_bounds(&mut resolved, layers, &planes)
+            && (resolved.is_empty() || self.try_test(&resolved, placeable, committer)?)
+        {
+            return Ok(resolved);
+        }
+        Ok(searched)
+    }
+
+    /// Place every layer outside one contiguous zpos run of at least the
+    /// layers the search left unplaced: for each run length, smallest first,
+    /// the run with the lowest total keep-priority, the higher on a tie (a
+    /// run at the top keeps the canvas on top). Layers the caller or the
+    /// scene sent to the canvas must be in the run. `None` when no run leaves
+    /// the canvas bounds feasible within the test budget.
+    fn place_around_run<C: TestCommitter>(
+        &mut self,
+        placed: usize,
+        layers: &[LayerRef<'_>],
+        registry: &PlaneRegistry,
+        crtc_index: u32,
+        committer: &mut C,
+    ) -> Result<Option<PlaneAssignment>, TestFailure> {
+        let mut candidates: Vec<LayerRef<'_>> = layers
+            .iter()
+            .filter(|entry| {
+                !entry.layer.is_composition_layer()
+                    && !entry.layer.is_externally_bound()
+                    && !entry.layer.is_pinned()
+            })
+            .copied()
+            .collect();
+        candidates.sort_by_key(|entry| entry.layer.property(PropTag::Zpos).unwrap_or(0));
+        let n = candidates.len();
+        let forced: Vec<usize> = (0..n)
+            .filter(|&i| forced_composited(candidates[i].layer))
+            .collect();
+        let available: Vec<&PlaneCapabilities> = registry
+            .for_crtc(crtc_index)
+            .filter(|plane| !self.reserved.contains(&plane.id))
+            .collect();
+
+        for width in (n - placed.min(n)).max(1)..n {
+            if self.test_commits_this_frame >= self.max_test_commits {
+                self.budget_exhausted_this_frame = true;
+                break;
+            }
+            let mut best: Option<(usize, i64)> = None;
+            for start in 0..=n - width {
+                let covers_forced = forced.iter().all(|&i| (start..start + width).contains(&i));
+                if !covers_forced {
+                    continue;
+                }
+                let cost: i64 = candidates[start..start + width]
+                    .iter()
+                    .map(|entry| i64::from(keep_priority(entry.layer)))
+                    .sum();
+                if best.is_none_or(|(_, best_cost)| cost <= best_cost) {
+                    best = Some((start, cost));
+                }
+            }
+            let Some((start, _)) = best else {
+                continue;
+            };
+            let outside: Vec<LayerRef<'_>> = candidates
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !(start..start + width).contains(i))
+                .map(|(_, entry)| *entry)
+                .collect();
+            let assignment = self.place_group(&outside, &available, crtc_index, committer)?;
+            if !assignment.is_empty() && canvas_bounds(&assignment, layers).feasible() {
+                return Ok(Some(assignment));
+            }
+        }
+        Ok(None)
     }
 
     /// Whether a layer present this frame needs a full search to have a
@@ -1541,4 +1691,138 @@ fn stacking_consistent_all(
             .find(|entry| entry.id == *layer_id)
             .is_none_or(|entry| fits_stacking(planes, assignment, present, *plane_id, entry.layer))
     })
+}
+
+/// Which side of the one composition canvas the placed layers must keep.
+///
+/// A placed layer that overlaps a composited one stays on the side of the
+/// canvas its zpos asks for: `below` is the highest zpos that must stay under
+/// the canvas, `above` the lowest that must cover it. Port of upstream's
+/// `Allocator::CanvasBounds` (`07226e4`).
+#[derive(Debug, Clone, Copy, Default)]
+struct CanvasBounds {
+    below: Option<u64>,
+    above: Option<u64>,
+}
+
+impl CanvasBounds {
+    /// Whether one canvas zpos satisfies every placed layer: not when one
+    /// would have to sit on both sides.
+    fn feasible(self) -> bool {
+        match (self.below, self.above) {
+            (Some(below), Some(above)) => below < above,
+            _ => true,
+        }
+    }
+}
+
+/// The layers `assignment` places, with the pinned layers on planes of their
+/// own, and the layers it leaves to the canvas.
+fn placed_and_composited<'a>(
+    assignment: &PlaneAssignment,
+    layers: &[LayerRef<'a>],
+) -> (Vec<&'a Layer>, Vec<&'a Layer>) {
+    let mut placed = Vec::new();
+    let mut composited = Vec::new();
+    for entry in layers {
+        let layer = entry.layer;
+        if layer.is_composition_layer() || layer.is_externally_bound() {
+            continue;
+        }
+        if assignment.get_plane_of(entry.id).is_some() {
+            placed.push(layer);
+        } else if layer.is_pinned() {
+            if layer
+                .assigned_plane()
+                .is_some_and(|plane_id| assignment.get(plane_id).is_none())
+            {
+                placed.push(layer);
+            }
+        } else {
+            composited.push(layer);
+        }
+    }
+    (placed, composited)
+}
+
+/// The canvas bounds `assignment` imposes on the layers it leaves composited.
+fn canvas_bounds(assignment: &PlaneAssignment, layers: &[LayerRef<'_>]) -> CanvasBounds {
+    let (placed, composited) = placed_and_composited(assignment, layers);
+    let mut bounds = CanvasBounds::default();
+    for placed in &placed {
+        let Some(zp) = placed.property(PropTag::Zpos) else {
+            continue;
+        };
+        for composited in &composited {
+            let Some(zc) = composited.property(PropTag::Zpos) else {
+                continue;
+            };
+            if zc == zp || !layers_intersect(placed, composited) {
+                continue;
+            }
+            if zc < zp {
+                bounds.above = Some(bounds.above.map_or(zp, |above| above.min(zp)));
+            } else {
+                bounds.below = Some(bounds.below.map_or(zp, |below| below.max(zp)));
+            }
+        }
+    }
+    bounds
+}
+
+/// Move placed layers into the composition until the canvas bounds are
+/// feasible: each round, the lowest keep-priority layer caught between them
+/// that overlaps a composited one, with any multirect virtual plane riding on
+/// its plane. `false` when nothing placed by the search is caught, which
+/// leaves the pinned layers.
+fn resolve_canvas_bounds(
+    assignment: &mut PlaneAssignment,
+    layers: &[LayerRef<'_>],
+    planes: &[&PlaneCapabilities],
+) -> bool {
+    loop {
+        let bounds = canvas_bounds(assignment, layers);
+        let (Some(above), Some(below)) = (bounds.above, bounds.below) else {
+            return true;
+        };
+        if below < above {
+            return true;
+        }
+        let (_, composited) = placed_and_composited(assignment, layers);
+        let mut victim: Option<(u32, i32)> = None;
+        for (plane_id, layer_id) in assignment.entries() {
+            let Some(entry) = layers.iter().find(|entry| entry.id == *layer_id) else {
+                continue;
+            };
+            let Some(z) = entry.layer.property(PropTag::Zpos) else {
+                continue;
+            };
+            let caught = z >= above
+                && z <= below
+                && composited.iter().any(|c| {
+                    c.property(PropTag::Zpos)
+                        .is_some_and(|zc| zc != z && layers_intersect(entry.layer, c))
+                });
+            if !caught {
+                continue;
+            }
+            let keep = keep_priority(entry.layer);
+            if victim.is_none_or(|(_, victim_keep)| keep < victim_keep) {
+                victim = Some((*plane_id, keep));
+            }
+        }
+        let Some((victim, _)) = victim else {
+            return false;
+        };
+        assignment.remove(victim);
+        let children: Vec<u32> = assignment
+            .entries()
+            .iter()
+            .map(|(id, _)| *id)
+            .filter(|id| caps_in(planes, *id).is_some_and(|c| c.multirect_parent == Some(victim)))
+            .collect();
+        for child in children {
+            assignment.remove(child);
+        }
+    }
 }

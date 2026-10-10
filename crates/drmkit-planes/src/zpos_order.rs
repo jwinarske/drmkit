@@ -70,6 +70,10 @@ pub struct StackEntry<'a> {
     pub requested: Option<u64>,
     /// The zpos to write, filled by [`stack_zpos`].
     pub written: Option<u64>,
+    /// Stack under the other entries requesting the same zpos, whatever the
+    /// plane ids: the composition canvas's slot under the placed layer that
+    /// must cover it (drm-cxx `07226e4`).
+    pub below_ties: bool,
 }
 
 impl<'a> StackEntry<'a> {
@@ -80,6 +84,7 @@ impl<'a> StackEntry<'a> {
             plane,
             requested,
             written: None,
+            below_ties: false,
         }
     }
 }
@@ -91,7 +96,8 @@ impl<'a> StackEntry<'a> {
 /// composited do not use up the range, and the stack stays clear of its top,
 /// which some controllers advertise but refuse (the SA8155P advertises
 /// `[0, 10]` and rejects 9 and 10 even on a lone plane). Ties are broken by
-/// plane id. Order is preserved, so [`stacking_consistent`]'s rulings stand.
+/// plane id, except that a `below_ties` entry goes under the others. Order is
+/// preserved, so [`stacking_consistent`]'s rulings stand.
 ///
 /// Greedy-lowest is optimal, so when it overflows a plane's `zpos_max`, or meets
 /// a fixed slot at or below the previous value, no dense numbering exists:
@@ -101,6 +107,7 @@ pub fn stack_zpos(entries: &mut [StackEntry<'_>]) -> bool {
     struct Rankable {
         index: usize,
         requested: u64,
+        after_ties: bool,
         plane_id: u32,
         min: u64,
         max: u64,
@@ -116,6 +123,7 @@ pub fn stack_zpos(entries: &mut [StackEntry<'_>]) -> bool {
             order.push(Rankable {
                 index,
                 requested,
+                after_ties: !entry.below_ties,
                 plane_id: entry.plane.id,
                 min,
                 max,
@@ -123,7 +131,7 @@ pub fn stack_zpos(entries: &mut [StackEntry<'_>]) -> bool {
             });
         }
     }
-    order.sort_by_key(|rank| (rank.requested, rank.plane_id));
+    order.sort_by_key(|rank| (rank.requested, rank.after_ties, rank.plane_id));
 
     let mut values = Vec::with_capacity(order.len());
     let mut previous: Option<u64> = None;
@@ -170,4 +178,36 @@ pub fn stacked_zpos(registry: &PlaneRegistry, armed: &[(u32, Option<u64>)]) -> V
         .zip(entries)
         .filter_map(|(id, entry)| entry.written.map(|value| (id, value)))
         .collect()
+}
+
+/// [`stacked_zpos`] with `beneath` stacked under the planes requesting the
+/// same zpos: the composition canvas in the slot
+/// [`Allocator::canvas_zpos`](crate::Allocator::canvas_zpos) gives it.
+///
+/// `None` when no dense numbering fits. Unlike [`stacked_zpos`], which then
+/// writes the requested values, the slot asks for a placed layer's own zpos,
+/// so the requested values tie, and the caller stacks the canvas on top
+/// instead (upstream drops the slot the same way).
+#[must_use]
+pub fn stacked_zpos_beneath(
+    registry: &PlaneRegistry,
+    armed: &[(u32, Option<u64>)],
+    beneath: u32,
+) -> Option<Vec<(u32, u64)>> {
+    let mut entries = Vec::with_capacity(armed.len());
+    let mut ids = Vec::with_capacity(armed.len());
+    for &(plane_id, requested) in armed {
+        if let Some(plane) = registry.by_id(plane_id) {
+            let mut entry = StackEntry::new(plane, requested);
+            entry.below_ties = plane_id == beneath;
+            entries.push(entry);
+            ids.push(plane_id);
+        }
+    }
+    stack_zpos(&mut entries).then(|| {
+        ids.into_iter()
+            .zip(entries)
+            .filter_map(|(id, entry)| entry.written.map(|value| (id, value)))
+            .collect()
+    })
 }

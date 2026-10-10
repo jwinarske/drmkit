@@ -1644,6 +1644,23 @@ fn the_stack_separates_ties() {
     assert_eq!(written(&e), vec![1, 0]);
 }
 
+/// `ZposOrder.StackPutsBelowTiesUnderEqualRequests` (`07226e4`): the canvas
+/// slot stacks under the planes requesting the same zpos, whatever the plane
+/// ids.
+#[test]
+fn the_stack_puts_below_ties_under_equal_requests() {
+    let (a, b, c) = (sde(97), sde(115), sde(118));
+    let mut slot = StackEntry::new(&c, Some(7));
+    slot.below_ties = true;
+    let mut e = [
+        StackEntry::new(&b, Some(3)),
+        StackEntry::new(&a, Some(7)),
+        slot,
+    ];
+    assert!(stack_zpos(&mut e));
+    assert_eq!(written(&e), vec![0, 2, 1]);
+}
+
 /// `ZposOrder.StackHonorsPlaneMinimum`
 #[test]
 fn the_stack_honors_each_planes_minimum() {

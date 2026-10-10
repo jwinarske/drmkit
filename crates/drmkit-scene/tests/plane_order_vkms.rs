@@ -88,30 +88,28 @@ fn the_canvas_stacks_where_its_layers_asked_vkms() {
     fx.teardown();
 }
 
-/// Plane pressure with the low-priority layers mid-stack. Only they may go to
-/// the canvas, and the stack must still render top-down: the composited run
-/// is contiguous, so the canvas can sit between its neighbors.
-#[test]
-#[ignore = "needs a DRM device"]
-fn the_composited_run_takes_the_low_priority_layers_vkms() {
+/// Stacks four more overlapping layers than the CRTC has planes, `low(k, i)`
+/// marking the low-priority ones among `k`, and checks the composited layers
+/// form one zpos run and the top layer is what shows. `only_low` also requires
+/// every composited layer to be low priority.
+///
+/// Port of upstream's `check_composited_stack` (`07226e4`). On vkms the planes
+/// stack by id; pointed at a card whose planes take a `zpos`
+/// (`DRMKIT_TEST_CARD`), it is the canvas slot under the placed layers that
+/// cover the run that makes the top layer show (drm-cxx#343, P-44).
+fn check_composited_stack(low: impl Fn(u32, u32) -> bool, only_low: bool) {
     let _guard = card_guard();
     let Some(mut fx) = composing_fixture() else {
         drmkit_testkit::skipped("no connected output or no canvas");
         return;
     };
-    let count = u32::try_from(fx.eligible_planes() + 4).expect("few planes");
-    // The middle half is cheap to composite, the rest is not.
-    let low = |index: u32| index >= count / 4 && index < count * 3 / 4;
-    // Every high-priority layer needs a plane of its own, beside the canvas's.
-    let high = (0..count).filter(|index| !low(*index)).count();
-    if high + 1 > fx.eligible_planes() {
-        drmkit_testkit::skipped(&format!(
-            "{} plane(s) cannot hold {high} high-priority layers and the canvas",
-            fx.eligible_planes()
-        ));
+    let planes = fx.eligible_planes();
+    if planes < 4 {
+        drmkit_testkit::skipped(&format!("{planes} plane(s); the stack needs at least 4"));
         fx.teardown();
         return;
     }
+    let count = u32::try_from(planes + 4).expect("few planes");
     let Some(handles) = stack(&mut fx, count) else {
         drmkit_testkit::skipped("no dumb buffer for a layer");
         return;
@@ -120,30 +118,77 @@ fn the_composited_run_takes_the_low_priority_layers_vkms() {
         fx.scene
             .layer_mut(*handle)
             .expect("the layer")
-            .set_app_priority(if low(index) { 10 } else { 200 });
+            .set_app_priority(if low(count, index) { 10 } else { 200 });
     }
 
     let report = fx.commit().expect("the frame");
-    assert!(report.layers_composited > 0, "{report:?}");
+    assert!(
+        report.layers_composited > 0,
+        "the stack should overflow into the canvas: {report:?}"
+    );
     assert_eq!(report.layers_unassigned, 0, "{report:?}");
+    let mut run: Option<(u32, u32)> = None;
     for (index, handle) in (0..count).zip(&handles) {
         let placed = report
             .placements
             .iter()
             .find(|entry| entry.layer == handle.layer_id())
             .is_some_and(|entry| entry.placement == Placement::AssignedToPlane);
+        if placed {
+            continue;
+        }
         assert!(
-            placed || low(index),
+            !only_low || low(count, index),
             "layer {index} (high priority) was composited"
         );
+        run = Some(run.map_or((index, index), |(first, _)| (first, index)));
     }
+    let (first, last) = run.expect("something composited");
+    assert_eq!(
+        usize::try_from(last - first + 1).expect("small"),
+        report.layers_composited,
+        "the composited layers must be one zpos run, layers {first}..{last}"
+    );
     let Some(shown) = center(&fx) else {
         drmkit_testkit::skipped("the CRTC cannot be read back");
         fx.teardown();
         return;
     };
-    assert_eq!(shown, color(count - 1));
+    assert_eq!(shown, color(count - 1), "the topmost layer must show");
     fx.teardown();
+}
+
+/// Plane pressure with the low-priority layers mid-stack. Only they may go to
+/// the canvas, and the stack must still render top-down: the composited run
+/// is contiguous, so the canvas can sit between its neighbors.
+///
+/// The middle half, at least six, is low priority, so the overflow plus the
+/// canvas plane fits in it (`07226e4`).
+#[test]
+#[ignore = "needs a DRM device"]
+fn the_composited_run_takes_the_low_priority_layers_vkms() {
+    check_composited_stack(
+        |count, index| {
+            let low = (count / 2).max(6);
+            let first = (count - low) / 2;
+            (first..first + low).contains(&index)
+        },
+        true,
+    );
+}
+
+/// Low-priority layers at both ends of the stack, three each: compositing the
+/// lowest-priority ones would leave placed layers between them, on both sides
+/// of the one canvas. One contiguous run goes to the canvas instead.
+///
+/// Port of `SplitLowPriorityLayersCompositeOneRun` (`07226e4`).
+#[test]
+#[ignore = "needs a DRM device"]
+fn split_low_priority_layers_composite_one_run_vkms() {
+    check_composited_stack(
+        |count, index| (1..=3).contains(&index) || (count - 4..=count - 2).contains(&index),
+        false,
+    );
 }
 
 /// Reversing the zpos of overlapping layers after steady frames must reach the

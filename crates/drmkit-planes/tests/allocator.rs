@@ -1393,3 +1393,124 @@ fn plane_order_leaves_virtual_planes_out() {
     assert_eq!(result.assignment.get(31), Some(LayerId(1)));
     assert_eq!(result.assignment.get(33), Some(LayerId(2)));
 }
+
+// --- the canvas slot where planes take a zpos (drm-cxx `07226e4`) -------------
+
+/// Where planes take a zpos, a mid-stack run of low-priority layers goes to
+/// the canvas, and the canvas asks for the zpos of the lowest placed layer
+/// above the run that covers it, to stack just under it. It used to stack
+/// above every layer and cover them (drm-cxx#343, P-44).
+#[test]
+fn the_canvas_stacks_under_the_placed_layers_that_cover_its_run() {
+    let registry = zpos_registry();
+    let mut layers = stacked_layers(8);
+    for (id, layer) in &mut layers {
+        layer.set_app_priority(if (3..=6).contains(&id.0) { 10 } else { 200 });
+    }
+    let mut allocator = Allocator::new();
+    allocator.set_canvas(&[32, 33, 34], Some(&Layer::new()));
+
+    let allocation = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    let placed: Vec<bool> = planes_in_zpos_order(&allocation, &layers)
+        .iter()
+        .map(Option::is_some)
+        .collect();
+    assert_eq!(
+        placed,
+        [true, true, false, false, false, false, true, true],
+        "{:?}",
+        allocation.assignment
+    );
+    assert_eq!(
+        allocator.canvas_zpos(),
+        Some(6),
+        "the canvas slot is under layer 6, the lowest placed one above the run"
+    );
+}
+
+/// Low-priority layers at both ends of the stack, where planes take a zpos.
+/// Compositing those leaves placed layers between them, on both sides of the
+/// one canvas, so one contiguous run goes to the canvas instead: of the runs
+/// that long, all cost the same here, and the highest wins, which keeps the
+/// canvas on top. Port of `SplitLowPriorityLayersCompositeOneRun`'s premise.
+#[test]
+fn split_low_priority_layers_composite_one_run() {
+    let registry = zpos_registry();
+    let mut layers = stacked_layers(8);
+    for (id, layer) in &mut layers {
+        let low = matches!(id.0, 2 | 3 | 6 | 7);
+        layer.set_app_priority(if low { 10 } else { 200 });
+    }
+    let mut allocator = Allocator::new();
+    allocator.set_canvas(&[32, 33, 34], Some(&Layer::new()));
+
+    let allocation = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    let placed: Vec<bool> = planes_in_zpos_order(&allocation, &layers)
+        .iter()
+        .map(Option::is_some)
+        .collect();
+    let first = placed
+        .iter()
+        .position(|p| !p)
+        .expect("something composited");
+    let last = placed
+        .iter()
+        .rposition(|p| !p)
+        .expect("something composited");
+    assert!(
+        placed[first..=last].iter().all(|p| !p),
+        "the composited layers must be one zpos run: {placed:?}"
+    );
+    assert_eq!(
+        allocator.canvas_zpos(),
+        None,
+        "the run is the top of the stack, so the canvas stacks on top: {placed:?}"
+    );
+}
+
+/// A restack that leaves a placed layer on both sides of the one canvas is
+/// not served from the cache: the cached assignment is still valid to the
+/// kernel, so only the allocator can notice, and it searches again.
+#[test]
+fn a_restack_that_splits_the_run_is_searched_again() {
+    let registry = zpos_registry();
+    let mut layers = stacked_layers(8);
+    for (id, layer) in &mut layers {
+        layer.set_app_priority(if (3..=6).contains(&id.0) { 10 } else { 200 });
+    }
+    let mut allocator = Allocator::new();
+    allocator.set_canvas(&[32, 33, 34], Some(&Layer::new()));
+    allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("the first frame");
+
+    // Layer 4 (zpos 3, composited) moves above layers 7 and 8 (zpos 6 and 7,
+    // placed), which are now between it and the rest of the run.
+    layers[3].1.set_property(PropTag::Zpos, 10);
+    let allocation = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("the restacked frame");
+
+    let placed: Vec<bool> = planes_in_zpos_order(&allocation, &layers)
+        .iter()
+        .map(Option::is_some)
+        .collect();
+    let first = placed
+        .iter()
+        .position(|p| !p)
+        .expect("something composited");
+    let last = placed
+        .iter()
+        .rposition(|p| !p)
+        .expect("something composited");
+    assert!(
+        placed[first..=last].iter().all(|p| !p),
+        "the composited layers must be one zpos run again: {placed:?}"
+    );
+}

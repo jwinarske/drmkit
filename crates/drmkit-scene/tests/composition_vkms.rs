@@ -882,6 +882,69 @@ fn composited_layers_return_to_planes_after_removal_vkms() {
     fx.teardown();
 }
 
+/// Planes holding a framebuffer on `crtc_id`.
+fn lit_planes(device: &Device, crtc_id: u32) -> Vec<u32> {
+    use drm::control::Device as _;
+
+    let Ok(planes) = device.plane_handles() else {
+        return Vec::new();
+    };
+    planes
+        .iter()
+        .filter_map(|handle| {
+            let info = device.get_plane(*handle).ok()?;
+            let on_crtc = info.crtc().map(u32::from) == Some(crtc_id);
+            (info.framebuffer().is_some() && on_crtc).then(|| u32::from(*handle))
+        })
+        .collect()
+}
+
+/// A plane another client left lit goes off on the first commit when the
+/// scene does not use it.
+///
+/// Port of `FirstCommitTurnsOffForeignPlanes` (`9cb4a19`, drm-cxx#342). The
+/// fbdev console restores its framebuffer on last close, so a scene starts
+/// with it lit. Every `TEST_ONLY` disabled it while upstream's real commit
+/// left it scanning out. The port fixed this first (P-43), and passes as is;
+/// `until_a_commit_lands_every_unused_plane_is_turned_off` in `scene_flow.rs`
+/// pins the same rule with a synthetic committer.
+#[test]
+#[ignore = "needs a DRM device"]
+fn the_first_commit_turns_off_foreign_planes_vkms() {
+    let _guard = card_guard();
+    let Some(device) = common::open_card() else {
+        return;
+    };
+    let Some(mut fx) = common::fixture(device) else {
+        drmkit_testkit::skipped("no connected output");
+        return;
+    };
+    let crtc_id = fx.scene.crtc_id();
+    if lit_planes(&fx.device, crtc_id).is_empty() {
+        drmkit_testkit::skipped("no plane lit on the CRTC before the scene (no fbdev console)");
+        return;
+    }
+
+    // Topmost zpos: where planes stack by id, the layer lands on the last
+    // plane, not on the one the console holds.
+    let Some(layer) = fx.add_layer(64, 64, 64, 64) else {
+        drmkit_testkit::skipped("no dumb buffer for a layer");
+        return;
+    };
+    fx.paint(layer, 0x0000_FF00).expect("paint");
+    fx.set_zpos(layer, 64);
+
+    let report = fx.commit().expect("the first frame");
+    assert_eq!(report.layers_assigned, 1, "{report:?}");
+    let lit = lit_planes(&fx.device, crtc_id);
+    fx.teardown();
+    assert_eq!(
+        lit.len(),
+        1,
+        "a plane the scene does not use is still lit: {lit:?}"
+    );
+}
+
 /// Refuses, the way msm does, any test that arms a multirect virtual plane
 /// without its parent, and counts them. vkms has no such planes, so the pair
 /// is declared in the registry and imposed here.

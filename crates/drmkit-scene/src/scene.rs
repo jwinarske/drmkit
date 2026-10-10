@@ -1695,7 +1695,8 @@ impl LayerScene {
     /// single commit, so a plane both pipes can use is rejected outright on the
     /// new one; and a plane the new pipe cannot use would go on showing this
     /// scene's last frame on the old output indefinitely. A rebind to the same
-    /// CRTC queues nothing. Upstream has the same defect (drm-cxx#340).
+    /// CRTC queues nothing. Upstream fixed the same defect in `a335bef`
+    /// (drm-cxx#340), from inside its `rebind`, which owns a device.
     ///
     /// Returns what will not fit. A layer whose destination lies outside the
     /// new mode is **not** dropped — the caller may be about to move it, and

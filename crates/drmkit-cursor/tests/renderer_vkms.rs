@@ -643,3 +643,59 @@ fn repeated_pauses_do_not_leak_mappings_vkms() {
         "16 pause/resume cycles grew DRM mappings from {baseline} to {after}"
     );
 }
+
+/// `prefer_legacy` drives the CRTC's cursor plane through the legacy ioctls,
+/// and `reserved_plane_id` still names that plane, so a caller keeps its own
+/// commits off it (drm-cxx `0925491`). On the atomic path it names the plane
+/// the cursor draws on. The kernel is asked which plane the legacy cursor
+/// actually lit.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn a_preferred_legacy_cursor_reserves_the_cursor_plane_vkms() {
+    use drm::control::Device as _;
+
+    let _guard = card_guard();
+    let Some((device, registry, crtc_id, crtc_index)) = fixture() else {
+        return;
+    };
+    let Some(cursor_plane) = registry
+        .for_crtc(crtc_index)
+        .find(|plane| plane.plane_type == drmkit_planes::PlaneType::Cursor)
+        .map(|plane| plane.id)
+    else {
+        drmkit_testkit::skipped("no cursor plane on this CRTC");
+        return;
+    };
+
+    let atomic = Renderer::create(&device, &registry, &config(crtc_id, crtc_index))
+        .expect("an atomic cursor");
+    assert_eq!(atomic.plane().path, PlanePath::AtomicCursor);
+    assert_eq!(atomic.reserved_plane_id(), atomic.plane().plane_id);
+    drop(atomic);
+
+    let preferred = RendererConfig {
+        prefer_legacy: true,
+        ..config(crtc_id, crtc_index)
+    };
+    let Ok(mut renderer) = Renderer::create(&device, &registry, &preferred) else {
+        drmkit_testkit::skipped("this driver has no legacy cursor");
+        return;
+    };
+    assert_eq!(renderer.plane().path, PlanePath::Legacy);
+    assert_eq!(renderer.reserved_plane_id(), cursor_plane);
+
+    renderer.set_cursor(square()).expect("set cursor");
+    renderer.move_to(10, 10);
+    renderer.commit().expect("install");
+    let handle = drm::control::plane::Handle::from(
+        std::num::NonZeroU32::new(cursor_plane).expect("non-zero"),
+    );
+    let lit = device
+        .get_plane(handle)
+        .expect("the cursor plane")
+        .framebuffer()
+        .is_some();
+    renderer.set_visible(false);
+    renderer.commit().expect("hide");
+    assert!(lit, "the legacy cursor did not land on the cursor plane");
+}

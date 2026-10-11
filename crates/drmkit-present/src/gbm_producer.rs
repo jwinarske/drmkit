@@ -60,6 +60,14 @@ impl ScanoutProducer for GbmScanoutProducer<'_> {
         fourcc: u32,
         allowed: &[u64],
     ) -> Result<Box<dyn LayerBufferSource>, ProducerError> {
+        // LINEAR is all this producer claims, so a set without it is one it
+        // cannot honor. Refused here because the allocation below would not
+        // refuse it: where the driver turns down every modifier offered, it
+        // falls back to an unconstrained buffer, outside the set (drm-cxx
+        // `f5bed8f`). Empty means no constraint.
+        if !allowed.is_empty() && !allowed.contains(&LINEAR) {
+            return Err(ProducerError::Unsupported);
+        }
         let source = GbmBufferSource::create(self.device, width, height, fourcc, allowed)
             .map_err(|error| ProducerError::Allocate(error.to_string()))?;
         Ok(Box::new(source))

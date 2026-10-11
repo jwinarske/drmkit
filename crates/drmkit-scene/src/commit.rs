@@ -552,7 +552,18 @@ impl TestCommitter for DeviceCommitter<'_> {
             }
         }
 
-        match request.test(self.device, self.flags) {
+        // A request that carries the modeset brings the CRTC up, which the
+        // kernel refuses to validate without ALLOW_MODESET ("requires full
+        // modeset") wherever the CRTC was off or in another mode. Every test
+        // came back EINVAL there and nothing was ever placed (P-41, found on
+        // the SA8155P's DP-4). Upstream tests the first frame under the same
+        // allowance.
+        let flags = if self.modeset.is_some() {
+            self.flags | AtomicCommitFlags::ALLOW_MODESET
+        } else {
+            self.flags
+        };
+        match request.test(self.device, flags) {
             Ok(()) => Ok(()),
             Err(CoreError::NotMaster) => Err(TestFailure::NotMaster),
             Err(_) => Err(TestFailure::Rejected),

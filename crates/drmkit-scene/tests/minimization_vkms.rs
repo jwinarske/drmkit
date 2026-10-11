@@ -323,3 +323,42 @@ fn an_emptied_scene_writes_nothing_and_keeps_its_last_frame_vkms() {
     );
     fx.teardown();
 }
+
+/// The first frame on a CRTC that is off places its layer.
+///
+/// Its allocator tests carry the modeset that brings the CRTC up, and the
+/// kernel refuses such a request without `ALLOW_MODESET` ("requires full
+/// modeset"). On vkms the console usually leaves the CRTC lit in the same
+/// mode, so nothing changes and the flag is not needed; on the SA8155P's DP-4,
+/// which starts dark, every test was refused and nothing was ever placed
+/// (P-41). Switched off here, so vkms starts the same way.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn the_first_frame_on_a_dark_crtc_places_its_layer_vkms() {
+    use drm::control::Device as _;
+
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let Some(mut fx) = fixture(device) else {
+        drmkit_testkit::skipped("no connected output");
+        return;
+    };
+    let crtc = drm::control::crtc::Handle::from(
+        std::num::NonZeroU32::new(fx.crtc_id()).expect("non-zero"),
+    );
+    fx.device
+        .set_crtc(crtc, None, (0, 0), &[], None)
+        .expect("switch the CRTC off");
+    if fx.add_layer(0, 0, LAYER_W, LAYER_H).is_none() {
+        drmkit_testkit::skipped("no dumb buffer for a layer");
+        return;
+    }
+
+    let first = fx.commit().expect("the first frame");
+    assert_eq!(
+        first.layers_assigned, 1,
+        "the layer must reach a plane on the frame that lights the CRTC: {first:?}"
+    );
+    assert!(first.fbs_attached >= 1, "{first:?}");
+    fx.teardown();
+}

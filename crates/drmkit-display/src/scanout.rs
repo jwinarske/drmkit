@@ -141,6 +141,18 @@ pub enum ScanoutError {
     #[error("no connected connector with any mode")]
     NothingConnected,
 
+    /// The connector a caller asked for is not connected, advertises no
+    /// mode, or does not exist.
+    ///
+    /// Distinct from [`ScanoutError::NothingConnected`]: other outputs may be
+    /// up, and driving one of them instead is exactly what pinning a
+    /// connector is meant to rule out.
+    #[error("connector {connector_id} is not connected or has no mode")]
+    ConnectorUnavailable {
+        /// The connector asked for.
+        connector_id: u32,
+    },
+
     /// A display is attached but no CRTC can drive it.
     ///
     /// Every CRTC its encoders allow is already taken by another output --
@@ -201,6 +213,37 @@ impl ScanoutTarget {
         device: &Device,
         ranks: &[Interface],
     ) -> Result<std::result::Result<Self, ScanoutError>> {
+        Self::discover_among(device, ranks, None)
+    }
+
+    /// As [`ScanoutTarget::discover`], for one connector; `0` is
+    /// [`ScanoutTarget::discover`] itself.
+    ///
+    /// For shared-display controllers, which publish one connected connector
+    /// per display consumer and light only the one actually presenting: the
+    /// first connected connector can be an unlit output that reports perfect
+    /// flips (drm-cxx `882dbf8`). Never falls back to another output.
+    ///
+    /// # Errors
+    ///
+    /// As [`ScanoutTarget::discover`], with
+    /// [`ScanoutError::ConnectorUnavailable`] when that connector is not
+    /// connected or has no mode.
+    pub fn discover_connector(
+        device: &Device,
+        connector_id: u32,
+    ) -> Result<std::result::Result<Self, ScanoutError>> {
+        if connector_id == 0 {
+            return Self::discover(device);
+        }
+        Self::discover_among(device, rank::MAIN, Some(connector_id))
+    }
+
+    fn discover_among(
+        device: &Device,
+        ranks: &[Interface],
+        only: Option<u32>,
+    ) -> Result<std::result::Result<Self, ScanoutError>> {
         device.enable_universal_planes()?;
 
         let resources = device.resource_handles().map_err(|error| errno(&error))?;
@@ -210,6 +253,9 @@ impl ScanoutTarget {
         // a modeset with nothing to set.
         let mut eligible = Vec::new();
         for handle in resources.connectors() {
+            if only.is_some_and(|id| id != u32::from(*handle)) {
+                continue;
+            }
             let Ok(info) = device.get_connector(*handle, true) else {
                 continue;
             };
@@ -218,7 +264,10 @@ impl ScanoutTarget {
             }
         }
         if eligible.is_empty() {
-            return Ok(Err(ScanoutError::NothingConnected));
+            return Ok(Err(only
+                .map_or(ScanoutError::NothingConnected, |connector_id| {
+                    ScanoutError::ConnectorUnavailable { connector_id }
+                })));
         }
 
         let kinds: Vec<Interface> = eligible.iter().map(connector::Info::interface).collect();

@@ -530,3 +530,44 @@ fn dropping_the_backend_waits_for_the_armed_flip_vkms() {
         "the wait must leave the event queued for the caller"
     );
 }
+
+/// `Config::connector_id` pins the output the backend drives (drm-cxx
+/// `882dbf8`), whichever connector the kernel lists first.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn a_pinned_connector_is_the_output_driven_vkms() {
+    use drm::control::Device as _;
+
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let resources = device.resource_handles().expect("resources");
+    let Some(last) = resources
+        .connectors()
+        .iter()
+        .filter(|handle| {
+            device.get_connector(**handle, false).is_ok_and(|info| {
+                info.state() == drm::control::connector::State::Connected
+                    && !info.modes().is_empty()
+            })
+        })
+        .map(|handle| u32::from(*handle))
+        .next_back()
+    else {
+        drmkit_testkit::skipped("no display attached");
+        return;
+    };
+
+    let mut producer = GbmScanoutProducer::new(&device);
+    let config = BackendConfig {
+        connector_id: last,
+        ..BackendConfig::default()
+    };
+    let backend = match ScanoutBackend::create(&device, &mut producer, &config) {
+        Ok(backend) => backend,
+        Err(error) => {
+            drmkit_testkit::skipped(&format!("no scanout output here ({error})"));
+            return;
+        }
+    };
+    assert_eq!(backend.target().connector_id, last);
+}

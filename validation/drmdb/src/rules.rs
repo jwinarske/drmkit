@@ -365,14 +365,15 @@ fn cursor_paths(devices: &[Device]) -> Survey {
                 cursor_plane_without_argb += 1;
             }
 
-            let label = match drmkit_cursor::select_plane(&registry, crtc, None, true, &|_| false) {
-                Ok(selected) => match selected.path {
-                    drmkit_cursor::PlanePath::AtomicCursor => "a dedicated cursor plane",
-                    drmkit_cursor::PlanePath::AtomicOverlay => "an overlay, atomically",
-                    drmkit_cursor::PlanePath::Legacy => "drmModeSetCursor, the legacy path",
-                },
-                Err(_) => "nothing can carry a cursor",
-            };
+            let label =
+                match drmkit_cursor::select_plane(&registry, crtc, None, true, false, &|_| false) {
+                    Ok(selected) => match selected.path {
+                        drmkit_cursor::PlanePath::AtomicCursor => "a dedicated cursor plane",
+                        drmkit_cursor::PlanePath::AtomicOverlay => "an overlay, atomically",
+                        drmkit_cursor::PlanePath::Legacy => "drmModeSetCursor, the legacy path",
+                    },
+                    Err(_) => "nothing can carry a cursor",
+                };
             *counts.entry(label).or_default() += 1;
         }
     }

@@ -45,6 +45,18 @@ pub struct RendererConfig {
     pub forced_plane_id: u32,
     /// Whether falling back to `drmModeSetCursor` is acceptable.
     pub allow_legacy: bool,
+    /// Drive the CRTC's cursor plane through `drmModeSetCursor` and
+    /// `drmModeMoveCursor` rather than atomic commits.
+    ///
+    /// On an atomic driver the legacy cursor ioctls run as an async plane
+    /// update that does not wait for vblank, so a moving pointer does not
+    /// contend with the caller's scanout commits. The atomic path's blocking
+    /// one-plane commit per move does: on vc4 it cost the scanout two vblanks
+    /// in three while the pointer moved (drm-cxx `0925491`). Only when the
+    /// CRTC has a cursor plane that takes `ARGB8888`; needs `allow_legacy`;
+    /// ignored with `forced_plane_id`. See
+    /// [`Renderer::reserved_plane_id`].
+    pub prefer_legacy: bool,
     /// Which way up the cursor is drawn.
     pub rotation: Rotation,
 }
@@ -59,6 +71,7 @@ impl Default for RendererConfig {
             // A cursor that cannot be committed with the frame is still better
             // than none, so the permissive default matches the reference.
             allow_legacy: true,
+            prefer_legacy: false,
             rotation: Rotation::None,
         }
     }
@@ -122,6 +135,7 @@ impl<'a> Renderer<'a> {
             config.crtc_index,
             forced,
             config.allow_legacy,
+            config.prefer_legacy,
             &bound_elsewhere,
         )?;
 
@@ -270,6 +284,19 @@ impl<'a> Renderer<'a> {
     #[must_use]
     pub const fn plane(&self) -> SelectedPlane {
         self.plane
+    }
+
+    /// The plane the cursor occupies, for a caller keeping its own commits
+    /// off it: the plane it draws on on the atomic paths; on the legacy path,
+    /// the CRTC's cursor plane the kernel drives when
+    /// [`RendererConfig::prefer_legacy`] chose the legacy ioctls over it, else
+    /// `0`.
+    #[must_use]
+    pub const fn reserved_plane_id(&self) -> u32 {
+        match self.plane.path {
+            PlanePath::Legacy => self.plane.legacy_plane_id,
+            PlanePath::AtomicCursor | PlanePath::AtomicOverlay => self.plane.plane_id,
+        }
     }
 
     /// The size of the cursor buffer, in pixels.

@@ -15,7 +15,7 @@
 
 use drmkit_planes::LayerId;
 
-use crate::release::{Acquisition, ReleaseQueue, Released, ScenePendingFlip};
+use crate::release::{Acquisition, ReleaseQueue, ReleaseReason, Released, ScenePendingFlip};
 use crate::report::CommitReport;
 
 /// What the kernel said about a commit.
@@ -70,6 +70,9 @@ pub struct FrameLifecycle {
     suspended: bool,
     /// Whether the fast-path rejection warning has already been emitted.
     warned_fast_path_reject: bool,
+    /// [`CommitReport::commit_seq`] of the most recent real commit; 0 before
+    /// one.
+    last_commit_seq: u64,
 }
 
 impl FrameLifecycle {
@@ -81,6 +84,7 @@ impl FrameLifecycle {
             pending_flip: ScenePendingFlip::new(),
             suspended: false,
             warned_fast_path_reject: false,
+            last_commit_seq: 0,
         }
     }
 
@@ -158,6 +162,8 @@ impl FrameLifecycle {
                 if matches!(kind, CommitKind::Real { arms_flip: true }) {
                     self.pending_flip.arm();
                 }
+                self.last_commit_seq += 1;
+                report.commit_seq = self.last_commit_seq;
                 let released =
                     self.releases
                         .commit_succeeded(acquisitions, release_fence, wants_fence);
@@ -204,6 +210,24 @@ impl FrameLifecycle {
     #[must_use]
     pub const fn has_warned_fast_path_reject(&self) -> bool {
         self.warned_fast_path_reject
+    }
+
+    /// The buffers the flip of real commit `commit_seq` took off screen, for
+    /// handing back at that flip rather than at the next commit.
+    ///
+    /// Nothing unless `commit_seq` names the most recent real commit: after
+    /// an older one, a newer commit has rotated buffers still on screen into
+    /// the generation this would release. So a late or repeated call cannot
+    /// release a buffer still on screen. Port of upstream's
+    /// `release_displaced` (`ee90026`).
+    pub fn release_displaced(&mut self, commit_seq: u64) -> Released {
+        if commit_seq == 0 || commit_seq != self.last_commit_seq {
+            return Released {
+                acquisitions: Vec::new(),
+                reason: ReleaseReason::Retired,
+            };
+        }
+        self.releases.release_displaced()
     }
 
     /// Hand back every held buffer, for teardown, pause, or rebind.

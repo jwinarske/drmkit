@@ -1794,6 +1794,28 @@ impl LayerScene {
         })
     }
 
+    /// Hand back now the buffers that the page flip of real commit
+    /// `commit_seq` (its [`CommitReport::commit_seq`]) took off screen,
+    /// instead of at the next real commit.
+    ///
+    /// A buffer leaves the screen when the flip of the commit after the one
+    /// that showed it completes, and the scene hands it back at the commit
+    /// after that (invariant 1) -- right for a caller that commits ahead of its
+    /// flips. A caller that waits for each flip before committing again,
+    /// feeding producers that wait for a free buffer before rendering, may
+    /// never make that next commit: a producer with two buffers then waits for
+    /// good, and one with three gets each buffer a frame late. Call this once
+    /// the flip completes -- after dispatching its event, or at the start of
+    /// the next frame -- to hand those buffers back then.
+    ///
+    /// A no-op unless `commit_seq` names the most recent real commit, so a
+    /// late or repeated call cannot release a buffer still on screen. Port of
+    /// upstream's `release_displaced` (`ee90026`).
+    pub fn release_displaced(&mut self, commit_seq: u64) {
+        let released = self.lifecycle.release_displaced(commit_seq);
+        self.deliver(released);
+    }
+
     /// Hand every held buffer back, without waiting on the kernel.
     ///
     /// **Invariant 5.** For teardown, session pause, and rebind. Landing an

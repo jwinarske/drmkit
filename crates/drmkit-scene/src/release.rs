@@ -182,6 +182,21 @@ impl ReleaseQueue {
         }
     }
 
+    /// Return frame N-2's buffers now, ahead of the next commit.
+    ///
+    /// Only sound once the flip of the most recent real commit has completed:
+    /// that flip is what took them off screen. [`FrameLifecycle`] gates it on
+    /// the commit's sequence for that reason; see
+    /// [`LayerScene::release_displaced`](crate::LayerScene::release_displaced).
+    ///
+    /// [`FrameLifecycle`]: crate::FrameLifecycle
+    pub fn release_displaced(&mut self) -> Released {
+        Released {
+            acquisitions: std::mem::take(&mut self.two_ago),
+            reason: ReleaseReason::Retired,
+        }
+    }
+
     /// Record a **failed** commit and return this frame's buffers at once.
     ///
     /// **Invariant 2.** No flip is in flight to gate them on, so deferring

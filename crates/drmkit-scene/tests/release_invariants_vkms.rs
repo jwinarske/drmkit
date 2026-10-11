@@ -283,6 +283,73 @@ fn defers_release_two_commits_deep_vkms() {
     h.scene.drain();
 }
 
+/// `release_displaced` hands back what the most recent commit's flip took off
+/// screen at that flip, not at the next commit -- and only for that commit, so
+/// a late or repeated call cannot release a buffer still on screen. Port of
+/// `ReleaseDisplacedHandsBackAtTheFlip` (`ee90026`).
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn release_displaced_hands_back_at_the_flip_vkms() {
+    let _guard = card_guard();
+    let Some(mut h) = harness() else { return };
+    let released = |h: &Harness| h.log.borrow().released.len();
+
+    let c1 = cycle(&mut h, KernelResult::Ok);
+    assert_eq!(c1.commit_seq, 1, "real commits count from 1");
+    h.scene.release_displaced(c1.commit_seq);
+    assert_eq!(released(&h), 0, "nothing was on screen before commit 1");
+
+    let c2 = cycle(&mut h, KernelResult::Ok);
+    assert_eq!(c2.commit_seq, 2);
+    // Commit 1's flip is stale now: commit 2 rotated the buffer it shows into
+    // the generation a release would take.
+    h.scene.release_displaced(c1.commit_seq);
+    assert_eq!(released(&h), 0, "a stale flip released a buffer");
+
+    // Commit 2's flip took commit 1's buffer off screen: back now.
+    h.scene.release_displaced(c2.commit_seq);
+    assert_eq!(released(&h), 1);
+    h.scene.release_displaced(c2.commit_seq);
+    assert_eq!(released(&h), 1, "a repeated call released again");
+
+    // The next commit has nothing left to release; its flip hands back
+    // commit 2's buffer.
+    let c3 = cycle(&mut h, KernelResult::Ok);
+    assert_eq!(released(&h), 1);
+    h.scene.release_displaced(c3.commit_seq);
+    assert_eq!(released(&h), 2);
+
+    // A rejected commit took nothing off screen, and names no flip.
+    let rejected = cycle(&mut h, KernelResult::Rejected);
+    assert_eq!(rejected.commit_seq, 0);
+    h.scene.release_displaced(c3.commit_seq);
+    assert_eq!(
+        released(&h),
+        3,
+        "the rejected frame's own buffer, and nothing displaced"
+    );
+
+    // A test commit is not a real commit: it names none.
+    let mut committer = DeviceCommitter::new(
+        &h.device,
+        &h.map,
+        &h.registry,
+        h.crtc_index,
+        AtomicCommitFlags::empty(),
+        None,
+    );
+    let build = h
+        .scene
+        .build_frame(&h.registry, h.crtc_index, CommitKind::Test, &mut committer)
+        .expect("build");
+    assert_eq!(
+        h.scene.finalize_frame(build, KernelResult::Ok).commit_seq,
+        0
+    );
+
+    h.scene.drain();
+}
+
 // --- invariant 2 -------------------------------------------------------------
 
 /// **Invariant 2.** A rejected commit releases that frame's acquisitions

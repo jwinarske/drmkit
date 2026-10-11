@@ -1514,3 +1514,92 @@ fn a_restack_that_splits_the_run_is_searched_again() {
         "the composited layers must be one zpos run again: {placed:?}"
     );
 }
+
+// --- the CRTC's blend stage limit (P-46) ---------------------------------------
+
+/// Four overlays on a CRTC that can stack only three planes.
+fn stage_limited_registry() -> PlaneRegistry {
+    let mut registry = PlaneRegistry::from_capabilities(vec![
+        plane(31, PlaneType::Primary, Some((0, 10))),
+        plane(32, PlaneType::Overlay, Some((0, 10))),
+        plane(33, PlaneType::Overlay, Some((0, 10))),
+        plane(34, PlaneType::Overlay, Some((0, 10))),
+        plane(35, PlaneType::Overlay, Some((0, 10))),
+    ]);
+    registry.set_blend_stage_limit(0, Some(3));
+    registry
+}
+
+/// No test arms more planes than the CRTC can stack: the answer is known, and
+/// on the SA8155P every such test came back EINVAL and spent the budget (P-46).
+/// What is placed is what fits.
+#[test]
+fn no_test_arms_more_planes_than_the_crtc_can_stack() {
+    let registry = stage_limited_registry();
+    let layers = stacked_layers(5);
+    let mut allocator = Allocator::new();
+    let mut committer = Committer::default();
+
+    let allocation = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut committer)
+        .expect("allocate");
+
+    assert_eq!(
+        allocation.assignment.len(),
+        3,
+        "{:?}",
+        allocation.assignment
+    );
+    assert_eq!(allocation.composited.len(), 2);
+    assert!(!committer.seen.is_empty());
+    assert!(
+        committer.seen.iter().all(|planes| planes.len() <= 3),
+        "a test armed more than the CRTC stacks: {:?}",
+        committer.seen
+    );
+}
+
+/// The canvas is a plane too: with it armed, two layers fill the CRTC.
+#[test]
+fn the_canvas_counts_against_the_stage_limit() {
+    let registry = stage_limited_registry();
+    let layers = stacked_layers(5);
+    let mut allocator = Allocator::new();
+    allocator.set_canvas(&[32, 33, 34, 35], Some(&Layer::new()));
+    allocator.set_reserved_planes(&[35]);
+    allocator.hold_canvas_plane(Some(35));
+    let mut committer = Committer::default();
+
+    let allocation = allocator
+        .allocate(&refs(&layers), &registry, 0, &mut committer)
+        .expect("allocate");
+
+    assert_eq!(
+        allocation.assignment.len(),
+        2,
+        "{:?}",
+        allocation.assignment
+    );
+    assert!(
+        committer
+            .seen
+            .iter()
+            .zip(&committer.extras_seen)
+            .all(|(planes, extra)| planes.len() + usize::from(extra.is_some()) <= 3),
+        "a test armed more than the CRTC stacks: {:?} {:?}",
+        committer.seen,
+        committer.extras_seen
+    );
+}
+
+/// Without a known limit nothing changes: every plane is offered.
+#[test]
+fn without_a_limit_every_plane_is_offered() {
+    let mut registry = stage_limited_registry();
+    registry.set_blend_stage_limit(0, None);
+    let layers = stacked_layers(5);
+    let allocation = Allocator::new()
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+    assert_eq!(allocation.assignment.len(), 5);
+}

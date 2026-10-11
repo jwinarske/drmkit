@@ -296,13 +296,19 @@ impl PlaneCapabilities {
 #[derive(Debug, Clone, Default)]
 pub struct PlaneRegistry {
     planes: Vec<PlaneCapabilities>,
+    /// How many planes each CRTC can stack, by CRTC index, where the driver
+    /// says. See [`blend_stage_limit`](Self::blend_stage_limit).
+    stage_limits: Vec<Option<usize>>,
 }
 
 impl PlaneRegistry {
     /// An empty registry.
     #[must_use]
     pub const fn new() -> Self {
-        Self { planes: Vec::new() }
+        Self {
+            planes: Vec::new(),
+            stage_limits: Vec::new(),
+        }
     }
 
     /// Build a registry from a caller-supplied capability list.
@@ -321,7 +327,38 @@ impl PlaneRegistry {
         }
         Self {
             planes: capabilities,
+            stage_limits: Vec::new(),
         }
+    }
+
+    /// How many planes the CRTC at `crtc_index` can stack at once, where the
+    /// driver publishes it; `None` for no limit known.
+    ///
+    /// Not the plane count, and not the width of the advertised zpos range:
+    /// the SA8155P offers more planes than it has blend stages, and
+    /// advertises zpos up to 10 while only 0 to 8 are usable. The allocator
+    /// never asks the kernel about more armed planes than this. Read by
+    /// [`probe`](Self::probe) from the CRTC's `capabilities` blob
+    /// ([`parse_blend_stage_limit`](crate::parse_blend_stage_limit)).
+    #[must_use]
+    pub fn blend_stage_limit(&self, crtc_index: u32) -> Option<usize> {
+        self.stage_limits
+            .get(usize::try_from(crtc_index).ok()?)
+            .copied()
+            .flatten()
+    }
+
+    /// Set [`blend_stage_limit`](Self::blend_stage_limit) for one CRTC, for
+    /// a registry built with
+    /// [`from_capabilities`](Self::from_capabilities).
+    pub fn set_blend_stage_limit(&mut self, crtc_index: u32, limit: Option<usize>) {
+        let Ok(index) = usize::try_from(crtc_index) else {
+            return;
+        };
+        if self.stage_limits.len() <= index {
+            self.stage_limits.resize(index + 1, None);
+        }
+        self.stage_limits[index] = limit;
     }
 
     /// Every plane.

@@ -408,6 +408,10 @@ pub struct Allocator {
     /// Where planes take a `zpos`: the zpos the canvas asks for after the
     /// last pass. See [`canvas_zpos`](Self::canvas_zpos).
     canvas_slot: Option<u64>,
+    /// How many planes this pass's CRTC can stack, where the registry knows
+    /// (P-46), and the plane the canvas is armed on beside each test.
+    stage_limit: Option<usize>,
+    canvas_armed: Option<u32>,
 }
 
 impl Default for Allocator {
@@ -443,6 +447,8 @@ impl Allocator {
             previous_composited: Vec::new(),
             previous_free: Vec::new(),
             canvas_slot: None,
+            stage_limit: None,
+            canvas_armed: None,
         }
     }
 
@@ -792,6 +798,7 @@ impl Allocator {
         crtc_index: u32,
         committer: &mut C,
     ) -> Result<Allocation, TestFailure> {
+        self.stage_limit = registry.blend_stage_limit(crtc_index);
         self.test_commits_this_frame = 0;
         self.budget_exhausted_this_frame = false;
         self.canvas_plane = None;
@@ -925,7 +932,11 @@ impl Allocator {
         committer: &mut C,
     ) -> Result<Option<Allocation>, TestFailure> {
         let pairs = Self::pairs_for(&self.previous, placeable);
-        if pairs.len() != self.previous.len() {
+        if pairs.len() != self.previous.len()
+            || self.stage_limit.is_some_and(|limit| {
+                pairs.len() + usize::from(canvas.is_some() && self.canvas_layer.is_some()) > limit
+            })
+        {
             return Ok(None);
         }
         self.test_commits_this_frame += 1;
@@ -1319,11 +1330,24 @@ impl Allocator {
     }
 
     /// Arm the canvas on `plane` in the tests that follow, or disarm it.
-    fn arm_canvas<C: TestCommitter>(&self, plane: Option<u32>, committer: &mut C) {
-        match (plane, &self.canvas_layer) {
-            (Some(plane_id), Some(layer)) => committer.set_extra_plane(plane_id, layer.clone()),
-            _ => committer.clear_extra_plane(),
+    fn arm_canvas<C: TestCommitter>(&mut self, plane: Option<u32>, committer: &mut C) {
+        if let (Some(plane_id), Some(layer)) = (plane, &self.canvas_layer) {
+            committer.set_extra_plane(plane_id, layer.clone());
+            self.canvas_armed = Some(plane_id);
+        } else {
+            committer.clear_extra_plane();
+            self.canvas_armed = None;
         }
+    }
+
+    /// Whether `planes` placed planes, with the canvas when it is armed, are
+    /// more than the CRTC can stack. Such an assignment is refused without
+    /// asking the kernel: the answer is known, and on the SA8155P each such
+    /// test came back `EINVAL` and spent the search's budget getting there
+    /// (P-46).
+    fn over_stage_limit(&self, planes: usize) -> bool {
+        self.stage_limit
+            .is_some_and(|limit| planes + usize::from(self.canvas_armed.is_some()) > limit)
     }
 
     /// Full search: split into independent groups, place each from a shared
@@ -1489,7 +1513,7 @@ impl Allocator {
             return Ok(false);
         }
         let pairs = Self::pairs_for(assignment, present);
-        if pairs.len() != assignment.len() {
+        if pairs.len() != assignment.len() || self.over_stage_limit(pairs.len()) {
             return Ok(false);
         }
 

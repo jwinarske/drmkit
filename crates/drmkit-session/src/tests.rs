@@ -318,7 +318,7 @@ fn events_arrive_in_the_order_they_happened() {
 
 #[test]
 fn switching_asks_the_seat_and_waits() {
-    // Asynchronous: the seat pauses when it honours the request. Nothing
+    // Asynchronous: the seat pauses when it honors the request. Nothing
     // changes at the moment of asking.
     let mut session = with_card();
     session.switch_session(3).expect("switch");

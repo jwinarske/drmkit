@@ -13,16 +13,19 @@ use std::collections::HashMap;
 use std::os::fd::{AsFd as _, AsRawFd as _, RawFd};
 use std::path::Path;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use crate::SessionError;
 use crate::session::{Backend, DeviceId, RawEvent};
 
-/// How many dispatches to give the seat to activate before giving up.
+/// How long [`LibseatBackend::open`] waits for the seat to activate.
 ///
-/// A blocking dispatch does not spin, so in practice this is never reached; it
-/// is here so a seat that answers without ever enabling cannot hang a process
-/// at startup with nothing to show for it.
-const ACTIVATION_ATTEMPTS: u32 = 64;
+/// Port of upstream's `Seat::k_default_enable_timeout` (`60c6f10`).
+pub const DEFAULT_ENABLE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The longest single dispatch while the wait is bounded, so the deadline is
+/// checked often enough to be kept.
+const DISPATCH_SLICE_MS: u128 = 100;
 
 /// Events the seat has delivered but the session has not collected.
 ///
@@ -62,8 +65,25 @@ impl LibseatBackend {
     ///   a CI runner -- and a caller that only wants to look at a display can
     ///   open devices directly instead. What it gives up is surviving a VT
     ///   switch.
-    /// - [`SessionError::Seat`] if the seat answers but never activates.
+    ///   The same when the backend connects but does not activate the seat
+    ///   within [`DEFAULT_ENABLE_TIMEOUT`] -- seatd over SSH, with no VT to
+    ///   take -- so the caller falls back the same way.
+    /// - [`SessionError::Seat`] if a dispatch fails.
     pub fn open() -> Result<Self, SessionError> {
+        Self::open_within(Some(DEFAULT_ENABLE_TIMEOUT))
+    }
+
+    /// As [`open`](Self::open), waiting up to `timeout` for the seat to
+    /// activate; `None` waits indefinitely.
+    ///
+    /// Without a bound, a backend that connects but never activates the seat
+    /// blocked forever, and SIGINT could not break the wait, so the process
+    /// kept DRM master (drm-cxx `60c6f10`). On timeout the seat is closed.
+    ///
+    /// # Errors
+    ///
+    /// As [`open`](Self::open).
+    pub fn open_within(timeout: Option<Duration>) -> Result<Self, SessionError> {
         let inbox: Inbox = Rc::new(RefCell::new(Vec::new()));
         let listener = {
             let inbox = Rc::clone(&inbox);
@@ -92,7 +112,8 @@ impl LibseatBackend {
             inbox,
             poll_fd,
         };
-        backend.wait_for_activation()?;
+        // Dropped on a timeout, which closes the seat.
+        backend.wait_for_activation(timeout)?;
         Ok(backend)
     }
 
@@ -111,17 +132,55 @@ impl LibseatBackend {
     /// The enable is swallowed rather than queued. [`Session`](crate::Session)
     /// starts active, and a resume it never paused for would have it close and
     /// reopen every device for nothing.
-    fn wait_for_activation(&mut self) -> Result<(), SessionError> {
-        for _ in 0..ACTIVATION_ATTEMPTS {
-            self.seat
-                .dispatch(-1)
-                .map_err(|errno| SessionError::Seat(format!("dispatch: {errno}")))?;
-            if drain_through_activation(&mut self.inbox.borrow_mut()) {
-                drmkit_log::log_info!("seat {} is ours", self.seat.name());
-                return Ok(());
+    fn wait_for_activation(&mut self, timeout: Option<Duration>) -> Result<(), SessionError> {
+        let Self { seat, inbox, .. } = self;
+        wait_until_active(
+            |timeout_ms| {
+                seat.dispatch(timeout_ms)
+                    .map(|_| ())
+                    .map_err(|errno| SessionError::Seat(format!("dispatch: {errno}")))
+            },
+            inbox,
+            timeout,
+        )?;
+        drmkit_log::log_info!("seat {} is ours", self.seat.name());
+        Ok(())
+    }
+}
+
+/// Dispatch until the seat's first enable arrives in `inbox`, or `timeout`
+/// passes; `None` waits indefinitely.
+///
+/// `dispatch` is the seat's, taking a timeout in milliseconds with `-1` to
+/// block. While bounded, no single dispatch outlasts [`DISPATCH_SLICE_MS`] or
+/// the time left, so the deadline is kept. A timeout is
+/// [`SessionError::NoBackend`], the "no seat" a caller already falls back on.
+fn wait_until_active(
+    mut dispatch: impl FnMut(i32) -> Result<(), SessionError>,
+    inbox: &Inbox,
+    timeout: Option<Duration>,
+) -> Result<(), SessionError> {
+    let deadline = timeout.map(|timeout| Instant::now() + timeout);
+    loop {
+        let timeout_ms = match deadline {
+            None => -1,
+            Some(deadline) => {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    drmkit_log::log_warn!(
+                        "seat not enabled within {} ms; open devices directly instead",
+                        timeout.unwrap_or_default().as_millis()
+                    );
+                    return Err(SessionError::NoBackend);
+                }
+                // At most DISPATCH_SLICE_MS, so it fits.
+                i32::try_from(left.as_millis().min(DISPATCH_SLICE_MS)).unwrap_or(0)
             }
+        };
+        dispatch(timeout_ms)?;
+        if drain_through_activation(&mut inbox.borrow_mut()) {
+            return Ok(());
         }
-        Err(SessionError::Seat("the seat never activated".to_owned()))
     }
 }
 
@@ -220,7 +279,7 @@ impl Backend for LibseatBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{RawEvent, drain_through_activation};
+    use super::*;
 
     #[test]
     fn activation_swallows_the_enable_that_announced_it() {
@@ -245,5 +304,88 @@ mod tests {
         let mut events = vec![RawEvent::Disable];
         assert!(!drain_through_activation(&mut events));
         assert!(events.is_empty(), "and nothing is left to act on");
+    }
+
+    /// A seat that answers but never enables -- seatd over SSH, with no VT to
+    /// take -- gives up within the bound, as "no seat", and never blocks
+    /// longer than the time left. Port of upstream's
+    /// `OpenTimesOutWhenSeatNeverEnabled` (`60c6f10`).
+    #[test]
+    fn a_seat_that_never_enables_times_out_as_no_seat() {
+        let inbox: Inbox = Rc::new(RefCell::new(Vec::new()));
+        let mut waits = Vec::new();
+        let started = Instant::now();
+        let result = wait_until_active(
+            |timeout_ms| {
+                waits.push(timeout_ms);
+                std::thread::sleep(Duration::from_millis(
+                    u64::try_from(timeout_ms.max(0)).unwrap_or(0),
+                ));
+                Ok(())
+            },
+            &inbox,
+            Some(Duration::from_millis(50)),
+        );
+        assert_eq!(result, Err(SessionError::NoBackend));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!waits.is_empty());
+        assert!(
+            waits.iter().all(|ms| (0..=50).contains(ms)),
+            "no dispatch may block past the deadline: {waits:?}"
+        );
+    }
+
+    /// The first enable ends the wait, and what came after it stays for the
+    /// session.
+    #[test]
+    fn the_first_enable_ends_the_wait() {
+        let inbox: Inbox = Rc::new(RefCell::new(Vec::new()));
+        let mut calls = 0;
+        let result = wait_until_active(
+            |_| {
+                calls += 1;
+                if calls == 3 {
+                    inbox
+                        .borrow_mut()
+                        .extend([RawEvent::Enable, RawEvent::Disable]);
+                }
+                Ok(())
+            },
+            &inbox,
+            Some(DEFAULT_ENABLE_TIMEOUT),
+        );
+        assert_eq!(result, Ok(()));
+        assert_eq!(calls, 3);
+        assert_eq!(*inbox.borrow(), [RawEvent::Disable]);
+    }
+
+    /// Unbounded, each dispatch blocks until the seat says something.
+    #[test]
+    fn an_unbounded_wait_blocks_in_dispatch() {
+        let inbox: Inbox = Rc::new(RefCell::new(Vec::new()));
+        let mut waits = Vec::new();
+        let result = wait_until_active(
+            |timeout_ms| {
+                waits.push(timeout_ms);
+                inbox.borrow_mut().push(RawEvent::Enable);
+                Ok(())
+            },
+            &inbox,
+            None,
+        );
+        assert_eq!(result, Ok(()));
+        assert_eq!(waits, [-1]);
+    }
+
+    /// A failed dispatch ends the wait with its error, not a timeout.
+    #[test]
+    fn a_failed_dispatch_is_reported() {
+        let inbox: Inbox = Rc::new(RefCell::new(Vec::new()));
+        let result = wait_until_active(
+            |_| Err(SessionError::Seat("dispatch: EIO".to_owned())),
+            &inbox,
+            Some(DEFAULT_ENABLE_TIMEOUT),
+        );
+        assert_eq!(result, Err(SessionError::Seat("dispatch: EIO".to_owned())));
     }
 }

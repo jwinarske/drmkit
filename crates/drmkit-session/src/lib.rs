@@ -36,7 +36,7 @@
 //! capability-revoking backends leave it valid. Plausible, and it saves a
 //! reopen per device per switch, but it is an optimisation over a path that is
 //! already correct -- and getting it wrong means scanning out through a
-//! descriptor the kernel has stopped honouring, on a machine none of the CI
+//! descriptor the kernel has stopped honoring, on a machine none of the CI
 //! lanes resemble. It waits for a device to be proved on.
 //!
 //! `Seat::input_opener` routes libinput's privileged device opens through the
@@ -63,7 +63,7 @@ mod tests;
 pub use session::{Backend, DeviceId, RawEvent, Session, SessionEvent, TakenDevice};
 
 #[cfg(feature = "libseat")]
-pub use seat::LibseatBackend;
+pub use seat::{DEFAULT_ENABLE_TIMEOUT, LibseatBackend};
 
 /// What can go wrong holding a session.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

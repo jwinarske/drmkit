@@ -205,7 +205,7 @@ impl<B: Backend> Session<B> {
 
     /// Ask to switch to another session, by VT number.
     ///
-    /// Asynchronous: the seat pauses this session when it honours the request,
+    /// Asynchronous: the seat pauses this session when it honors the request,
     /// and resumes it when the user comes back. Useful where the process owns
     /// the TTY in graphics mode and the kernel is no longer handling
     /// `Ctrl+Alt+F<n>` itself.

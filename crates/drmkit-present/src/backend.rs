@@ -62,6 +62,9 @@ pub struct Config {
     pub vrr: VrrPolicy,
     /// What to leave on screen at teardown.
     pub restore: RestorePolicy,
+    /// The connector to drive; `0` for the first connected one. See
+    /// [`ScanoutTarget::discover_connector`].
+    pub connector_id: u32,
 }
 
 impl Default for Config {
@@ -71,6 +74,7 @@ impl Default for Config {
             rotation: drmkit_fmt::Rotation::Rotate0,
             vrr: VrrPolicy::Off,
             restore: RestorePolicy::None,
+            connector_id: 0,
         }
     }
 }
@@ -157,7 +161,7 @@ impl ScanoutBackend {
         producer: &mut dyn ScanoutProducer,
         config: &Config,
     ) -> Result<Self, PresentError> {
-        let target = ScanoutTarget::discover(device)
+        let target = ScanoutTarget::discover_connector(device, config.connector_id)
             .map_err(|error| PresentError::Bind(format!("discovering an output: {error}")))?
             .map_err(|error| PresentError::Bind(format!("discovering an output: {error}")))?;
         let profile = DriverProfile::probe(device)

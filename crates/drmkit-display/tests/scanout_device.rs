@@ -249,3 +249,74 @@ fn the_rank_decides_which_display_when_there_is_a_choice() {
         "reversing the rank changed nothing, so the rank is not being read"
     );
 }
+
+/// Every connected connector that advertises a mode, in the kernel's order.
+fn eligible_connectors(device: &Device) -> Vec<u32> {
+    let resources = device.resource_handles().expect("resources");
+    resources
+        .connectors()
+        .iter()
+        .filter(|handle| {
+            device
+                .get_connector(**handle, false)
+                .is_ok_and(|info| info.state() == State::Connected && !info.modes().is_empty())
+        })
+        .map(|handle| u32::from(*handle))
+        .collect()
+}
+
+/// A pinned connector is the one discovered, whichever the kernel lists first
+/// (drm-cxx `882dbf8`): on a shared-display controller the first connected
+/// one can be unlit. `0` is plain discovery.
+#[test]
+#[ignore = "needs a DRM device"]
+fn a_pinned_connector_is_the_one_discovered() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let eligible = eligible_connectors(&device);
+    let Some(&last) = eligible.last() else {
+        drmkit_testkit::skipped("no display attached");
+        return;
+    };
+
+    let pinned = ScanoutTarget::discover_connector(&device, last)
+        .expect("discover")
+        .expect("a connected connector with a mode is drivable");
+    assert_eq!(pinned.connector_id, last);
+
+    let unpinned = ScanoutTarget::discover_connector(&device, 0)
+        .expect("discover")
+        .expect("discover");
+    let plain = ScanoutTarget::discover(&device)
+        .expect("discover")
+        .expect("discover");
+    assert_eq!(unpinned.connector_id, plain.connector_id);
+    if eligible.len() < 2 {
+        println!("note: one connected output, so pinning chose what discovery would");
+    }
+}
+
+/// A pinned connector that cannot be driven is refused, never swapped for
+/// another output: that is what pinning is for.
+#[test]
+#[ignore = "needs a DRM device"]
+fn a_pinned_connector_that_is_not_there_is_refused() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    if eligible_connectors(&device).is_empty() {
+        drmkit_testkit::skipped("no display attached");
+        return;
+    }
+    // A CRTC id is a KMS object id, but never a connector's.
+    let resources = device.resource_handles().expect("resources");
+    let not_a_connector = u32::from(*resources.crtcs().first().expect("a CRTC"));
+    let refused = ScanoutTarget::discover_connector(&device, not_a_connector).expect("discover");
+    assert!(
+        matches!(
+            refused,
+            Err(ScanoutError::ConnectorUnavailable { connector_id }) if connector_id == not_a_connector
+        ),
+        "{:?}",
+        refused.map(|target| target.connector_id)
+    );
+}

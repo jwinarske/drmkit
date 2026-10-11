@@ -571,3 +571,38 @@ fn a_pinned_connector_is_the_output_driven_vkms() {
     };
     assert_eq!(backend.target().connector_id, last);
 }
+
+/// The GBM producer honors the negotiated set: `LINEAR`, or no constraint,
+/// allocates; a set it can make nothing in is refused, not ignored (drm-cxx
+/// `f5bed8f`). Port of `GbmProducerHonorsAllowedModifiers`.
+#[test]
+#[ignore = "needs a DRM device"]
+fn the_gbm_producer_honors_the_allowed_modifiers_vkms() {
+    use drmkit_present::ScanoutProducer as _;
+
+    const LINEAR: u64 = 0;
+    // I915_FORMAT_MOD_X_TILED: a layout vkms's allocator cannot make.
+    const X_TILED: u64 = (1 << 56) | 1;
+
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let mut producer = GbmScanoutProducer::new(&device);
+    let xrgb = drmkit_fmt::fourcc::XRGB8888;
+
+    for allowed in [&[][..], &[LINEAR], &[X_TILED, LINEAR]] {
+        let source = producer
+            .create_buffer(64, 64, xrgb, allowed)
+            .unwrap_or_else(|error| panic!("{allowed:?}: {error}"));
+        let modifier = source.format().modifier;
+        assert!(
+            allowed.is_empty() || allowed.contains(&modifier),
+            "{allowed:?} allocated {modifier:#x}"
+        );
+    }
+    let refused = producer.create_buffer(64, 64, xrgb, &[X_TILED]);
+    assert!(
+        matches!(refused, Err(drmkit_present::ProducerError::Unsupported)),
+        "a set the producer can make nothing in must be refused: {:?}",
+        refused.map(|source| source.format().modifier)
+    );
+}

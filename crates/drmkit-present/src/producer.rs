@@ -15,6 +15,13 @@ pub enum ProducerError {
     /// The producer could not allocate what was asked for.
     #[error("the producer could not allocate: {0}")]
     Allocate(String),
+    /// The producer can make none of the layouts it was allowed.
+    ///
+    /// Refused rather than allocated outside the set: a buffer in a layout no
+    /// plane takes fails at the atomic commit, naming the framebuffer rather
+    /// than the layout that made it unscannable (drm-cxx `f5bed8f`).
+    #[error("the producer can make none of the allowed modifiers")]
+    Unsupported,
 }
 
 /// Something that allocates the buffers a scanout path presents.
@@ -38,7 +45,7 @@ pub trait ScanoutProducer {
     ///
     /// `allowed` is the negotiated intersection: the layouts that both this
     /// producer said it can export and some plane on the CRTC can scan out.
-    /// **Honour it.** A buffer allocated outside that set is one no plane will
+    /// **Honor it.** A buffer allocated outside that set is one no plane will
     /// take, and the refusal arrives at the atomic commit, naming the
     /// framebuffer rather than the layout that made it unscannable.
     ///
@@ -47,7 +54,9 @@ pub trait ScanoutProducer {
     ///
     /// # Errors
     ///
-    /// [`ProducerError::Allocate`] if the buffer cannot be produced.
+    /// [`ProducerError::Allocate`] if the buffer cannot be produced;
+    /// [`ProducerError::Unsupported`] if the producer can make none of the
+    /// `allowed` layouts.
     fn create_buffer(
         &mut self,
         width: u32,

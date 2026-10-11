@@ -1898,3 +1898,61 @@ fn the_key_is_found_in_bytes_that_are_not_utf8() {
         Some(118)
     );
 }
+
+// --- blend stage limit (P-46) --------------------------------------------------
+
+/// The SA8155P's DP-4 CRTC: eleven stages, the tenth held for secure UI, and
+/// stage 0 the base, so nine planes stack.
+#[test]
+fn the_sa8155p_capabilities_stack_nine_planes() {
+    let blob = b"dim_layer_v1_max_layers=7\nhw_version=1342177281\nmax_linewidth=2560\n\
+max_blendstages=11\nqseed_type=qseed3\nhas_src_split=1\nsec_ui_blendstage=10\n\
+use_baselayer_for_stage=0\n";
+    assert_eq!(crate::parse_blend_stage_limit(blob), Some(9));
+}
+
+#[test]
+fn without_a_secure_ui_stage_every_stage_above_the_base_is_usable() {
+    assert_eq!(
+        crate::parse_blend_stage_limit(b"max_blendstages=11\n"),
+        Some(10)
+    );
+    // A secure-UI stage past the last one holds nothing back.
+    assert_eq!(
+        crate::parse_blend_stage_limit(b"max_blendstages=7\nsec_ui_blendstage=9\n"),
+        Some(6)
+    );
+}
+
+#[test]
+fn a_blob_that_does_not_say_sets_no_limit() {
+    assert_eq!(crate::parse_blend_stage_limit(b""), None);
+    assert_eq!(
+        crate::parse_blend_stage_limit(b"primary_smart_plane_id=97\n"),
+        None
+    );
+    assert_eq!(
+        crate::parse_blend_stage_limit(b"not_max_blendstages=11\n"),
+        None,
+        "only a key at the start of a line counts"
+    );
+    assert_eq!(
+        crate::parse_blend_stage_limit(b"max_blendstages=abc\n"),
+        None
+    );
+    assert_eq!(
+        crate::parse_blend_stage_limit(b"max_blendstages=1\n"),
+        None,
+        "a mixer with only its base stacks nothing"
+    );
+}
+
+#[test]
+fn a_registry_reports_each_crtcs_limit() {
+    let mut registry = PlaneRegistry::new();
+    assert_eq!(registry.blend_stage_limit(0), None);
+    registry.set_blend_stage_limit(2, Some(9));
+    assert_eq!(registry.blend_stage_limit(2), Some(9));
+    assert_eq!(registry.blend_stage_limit(1), None);
+    assert_eq!(registry.blend_stage_limit(7), None);
+}

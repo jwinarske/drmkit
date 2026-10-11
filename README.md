@@ -25,8 +25,8 @@ composition, and scanout.
 > `vgem`, `vivid` or `vicodec` modules, or NVIDIA silicon for EGL streams.
 > [`TEST_PARITY.md`](TEST_PARITY.md) records
 > which, per file, and [`docs/parity-findings.md`](docs/parity-findings.md)
-> records the four findings still open: two wait on hardware (P-30, P-33),
-> P-42 is partly by design, and P-46 is a zpos limit on the SA8155P.
+> records the three findings still open: two wait on hardware (P-30, P-33),
+> and P-42 is partly by design.
 > See [`plan.md`](plan.md) for the full porting plan.
 >
 > It has run on more than vkms. amdgpu and vc4 (Raspberry Pi 5) by hand, a

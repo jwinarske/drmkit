@@ -67,7 +67,7 @@ pub use allocator::{
 };
 pub use layer::{ContentType, Layer, PropertySnapshot, Rect};
 pub use matching::BipartiteMatching;
-pub use multirect::{multirect_pairing_ok, parse_multirect_parent};
+pub use multirect::{multirect_pairing_ok, parse_blend_stage_limit, parse_multirect_parent};
 pub use output::Output;
 pub use plane_order::stacks_by_plane_id;
 pub use prop::{NUM_PROPS, PropClass, PropTag};

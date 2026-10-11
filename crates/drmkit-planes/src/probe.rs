@@ -60,7 +60,14 @@ impl PlaneRegistry {
             }
             capabilities.push(probe_plane(device, &resources, &properties, id, &plane));
         }
-        Ok(Self::from_capabilities(capabilities))
+        let mut registry = Self::from_capabilities(capabilities);
+        for (index, crtc) in resources.crtcs().iter().enumerate() {
+            let Ok(index) = u32::try_from(index) else {
+                break;
+            };
+            registry.set_blend_stage_limit(index, blend_stage_limit(device, (*crtc).into()));
+        }
+        Ok(registry)
     }
 }
 
@@ -173,6 +180,20 @@ fn multirect_parent(device: &Device, properties: &PropertyStore, id: u32) -> Opt
     }
     let blob = device.property_blob(blob_id).ok()?;
     crate::parse_multirect_parent(&blob)
+}
+
+/// The CRTC's stacking limit, from the driver-private `capabilities` blob.
+fn blend_stage_limit(device: &Device, crtc_id: u32) -> Option<usize> {
+    let mut properties = PropertyStore::new();
+    properties
+        .cache_properties(device, crtc_id, ObjectType::Crtc)
+        .ok()?;
+    let blob_id = properties.property_value(crtc_id, "capabilities").ok()?;
+    if blob_id == 0 {
+        return None;
+    }
+    let blob = device.property_blob(blob_id).ok()?;
+    crate::parse_blend_stage_limit(&blob)
 }
 
 fn io_errno(error: &std::io::Error) -> rustix::io::Errno {

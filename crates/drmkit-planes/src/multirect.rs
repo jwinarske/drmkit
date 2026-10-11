@@ -52,3 +52,42 @@ pub fn parse_multirect_parent(caps_text: &[u8]) -> Option<u32> {
 pub fn multirect_pairing_ok(parent: Option<u32>, in_use: impl Fn(u32) -> bool) -> bool {
     parent.is_none_or(in_use)
 }
+
+/// How many planes a CRTC can stack, from its `capabilities` blob, or `None`
+/// when the blob does not say.
+///
+/// The downstream SDE driver publishes `max_blendstages=<n>` and, where a
+/// stage is held back for secure UI, `sec_ui_blendstage=<s>`. A plane's zpos
+/// `z` goes to stage `z + 1` -- stage 0 is the mixer's base -- so ordinary
+/// planes have the stages below whichever of the two comes first. The
+/// SA8155P publishes 11 and 10, so it stacks nine planes, zpos 0 to 8, while
+/// every plane advertises a zpos range of `[0, 10]`; a zpos of 9 or 10 is
+/// refused even on a lone plane (P-46).
+#[must_use]
+pub fn parse_blend_stage_limit(caps_text: &[u8]) -> Option<usize> {
+    let max = key_value(caps_text, b"max_blendstages=")?;
+    let first_unusable = key_value(caps_text, b"sec_ui_blendstage=")
+        .filter(|stage| *stage < max)
+        .unwrap_or(max);
+    usize::try_from(first_unusable.checked_sub(1)?)
+        .ok()
+        .filter(|limit| *limit > 0)
+}
+
+/// The unsigned number after `key` at the start of a line of `caps_text`.
+fn key_value(caps_text: &[u8], key: &[u8]) -> Option<u64> {
+    let mut from = 0;
+    while let Some(offset) = caps_text[from..]
+        .windows(key.len())
+        .position(|window| window == key)
+    {
+        let pos = from + offset;
+        if pos == 0 || caps_text[pos - 1] == b'\n' {
+            let value = &caps_text[pos + key.len()..];
+            let digits = value.iter().take_while(|b| b.is_ascii_digit()).count();
+            return std::str::from_utf8(&value[..digits]).ok()?.parse().ok();
+        }
+        from = pos + key.len();
+    }
+    None
+}

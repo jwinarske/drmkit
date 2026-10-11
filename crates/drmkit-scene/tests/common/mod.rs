@@ -377,11 +377,16 @@ impl Fixture {
     ///
     /// Measured rather than assumed: it is the number a pressure case has to
     /// exceed, and it differs by an order of magnitude between vkms and a
-    /// real `SoC`.
+    /// real `SoC`. No more than the CRTC can stack, where the driver says: the
+    /// SA8155P offers more planes than it has blend stages (P-46).
     pub(crate) fn eligible_planes(&self) -> usize {
-        self.registry
+        let planes = self
+            .registry
             .force_disable_candidates(self.crtc_index)
-            .count()
+            .count();
+        self.registry
+            .blend_stage_limit(self.crtc_index)
+            .map_or(planes, |limit| planes.min(limit))
     }
 
     /// A non-primary, non-cursor plane on this CRTC.

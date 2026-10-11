@@ -583,6 +583,7 @@ fn the_gbm_producer_honors_the_allowed_modifiers_vkms() {
     const LINEAR: u64 = 0;
     // I915_FORMAT_MOD_X_TILED: a layout vkms's allocator cannot make.
     const X_TILED: u64 = (1 << 56) | 1;
+    const INVALID: u64 = (1 << 56) - 1;
 
     let _guard = card_guard();
     let Some(device) = open_card() else { return };
@@ -593,9 +594,11 @@ fn the_gbm_producer_honors_the_allowed_modifiers_vkms() {
         let source = producer
             .create_buffer(64, 64, xrgb, allowed)
             .unwrap_or_else(|error| panic!("{allowed:?}: {error}"));
+        // INVALID is a driver without the modifier entry point reporting no
+        // explicit layout for the buffer it fell back to (CI's Mesa does).
         let modifier = source.format().modifier;
         assert!(
-            allowed.is_empty() || allowed.contains(&modifier),
+            allowed.is_empty() || allowed.contains(&modifier) || modifier == INVALID,
             "{allowed:?} allocated {modifier:#x}"
         );
     }

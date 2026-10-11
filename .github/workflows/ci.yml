@@ -132,7 +132,7 @@ jobs:
           repository: jwinarske/drm-cxx
           # Full 40-character SHA: actions/checkout cannot resolve an
           # abbreviated one.
-          ref: d374767382bae60a4e0ee502cfc2a9c8b68cb042
+          ref: bf3e6be0920055c8750b0f8885565d4e038835ca
           path: .drm-cxx-ref
       - uses: Swatinem/rust-cache@v2
       - run: cargo xtask check --ref .drm-cxx-ref

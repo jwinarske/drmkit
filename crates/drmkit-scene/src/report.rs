@@ -165,6 +165,12 @@ pub struct CommitReport {
     /// confirm it is paying one atomic commit per frame rather than two.
     pub fb_delta_fast_path: bool,
 
+    /// Names this commit for
+    /// [`LayerScene::release_displaced`](crate::LayerScene::release_displaced):
+    /// real commits that the kernel took count from 1. 0 for a test commit
+    /// and for a rejected one.
+    pub commit_seq: u64,
+
     /// Whether the per-frame test-commit budget, not the hardware, is what
     /// stopped more layers reaching planes.
     ///

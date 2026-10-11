@@ -48,6 +48,12 @@ tear: the scene holds each `AcquiredBuffer` in a two-deep queue and cannot hand
 it back while it is still owned. The **timing** contract is not expressible in
 the type system, so the vkms pin carries it.
 
+A caller that waits for each flip before its next commit may hand those buffers
+back at the flip instead, with `LayerScene::release_displaced` (drm-cxx
+`ee90026`). It releases only what the most recent real commit's flip displaced,
+named by `CommitReport::commit_seq`, so it never releases a buffer still on
+screen.
+
 - **Defined:** `drmkit-scene`, `LayerBufferSource::release` /
   `release_with_fence`. The commit path that enforces the timing is still to
   come in phase 3.
@@ -60,6 +66,8 @@ the type system, so the vkms pin carries it.
   `the_ring_holds_exactly_two_generations`, against `ReleaseQueue` directly —
   no device, no source, no kernel. Verified by breaking the ring to release one
   deep and watching seven cases fail.
+- **The early release pinned by:** `release_displaced_hands_back_at_the_flip_vkms`,
+  which fails when a stale call is allowed to release.
 - **End-to-end pinned by:** `defers_release_two_commits_deep_vkms`, which
   drives the same ring through a real device: the allocator's `TEST_ONLY`
   commits go to the kernel, and only the finalize answer is supplied.

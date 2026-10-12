@@ -21,6 +21,24 @@ use drmkit_sync::SyncFence;
 
 static CARD_LOCK: Mutex<()> = Mutex::new(());
 
+/// The default configuration, on the output `DRMKIT_TEST_CONNECTORS` names
+/// when it is set.
+fn backend_config() -> BackendConfig {
+    BackendConfig {
+        connector_id: std::env::var_os("DRMKIT_TEST_CONNECTORS")
+            .and_then(|_| open_card_for_names())
+            .unwrap_or(0),
+        ..BackendConfig::default()
+    }
+}
+
+/// The named connector's id, looked up on its own descriptor so the config can
+/// be built before the case opens the card.
+fn open_card_for_names() -> Option<u32> {
+    let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
+    drmkit_testkit::connector::wanted(&Device::open(&path).ok()?)
+}
+
 fn card_guard() -> MutexGuard<'static, ()> {
     CARD_LOCK
         .lock()
@@ -63,14 +81,13 @@ fn a_full_screen_layer_reaches_a_plane_vkms() {
     let Some(device) = open_card() else { return };
 
     let mut producer = GbmScanoutProducer::new(&device);
-    let mut backend =
-        match ScanoutBackend::create(&device, &mut producer, &BackendConfig::default()) {
-            Ok(backend) => backend,
-            Err(error) => {
-                drmkit_testkit::skipped(&format!("no scanout output here ({error})"));
-                return;
-            }
-        };
+    let mut backend = match ScanoutBackend::create(&device, &mut producer, &backend_config()) {
+        Ok(backend) => backend,
+        Err(error) => {
+            drmkit_testkit::skipped(&format!("no scanout output here ({error})"));
+            return;
+        }
+    };
 
     assert_eq!(backend.profile().name, "vkms");
     assert_ne!(
@@ -107,14 +124,13 @@ fn an_unchanged_frame_is_suppressed_but_never_the_first_vkms() {
     let Some(device) = open_card() else { return };
 
     let mut producer = GbmScanoutProducer::new(&device);
-    let mut backend =
-        match ScanoutBackend::create(&device, &mut producer, &BackendConfig::default()) {
-            Ok(backend) => backend,
-            Err(error) => {
-                drmkit_testkit::skipped(&format!("no scanout output here ({error})"));
-                return;
-            }
-        };
+    let mut backend = match ScanoutBackend::create(&device, &mut producer, &backend_config()) {
+        Ok(backend) => backend,
+        Err(error) => {
+            drmkit_testkit::skipped(&format!("no scanout output here ({error})"));
+            return;
+        }
+    };
 
     let first = backend
         .present_if_changed(&device, false, AtomicCommitFlags::empty(), None)
@@ -155,14 +171,13 @@ fn a_commit_delivers_its_out_fence_vkms() {
     let Some(device) = open_card() else { return };
 
     let mut producer = GbmScanoutProducer::new(&device);
-    let mut backend =
-        match ScanoutBackend::create(&device, &mut producer, &BackendConfig::default()) {
-            Ok(backend) => backend,
-            Err(error) => {
-                drmkit_testkit::skipped(&format!("no scanout output here ({error})"));
-                return;
-            }
-        };
+    let mut backend = match ScanoutBackend::create(&device, &mut producer, &backend_config()) {
+        Ok(backend) => backend,
+        Err(error) => {
+            drmkit_testkit::skipped(&format!("no scanout output here ({error})"));
+            return;
+        }
+    };
 
     let mut first_fence = None;
     backend
@@ -201,7 +216,7 @@ fn variable_refresh_arms_from_the_profile_and_toggles_cleanly_vkms() {
     let mut producer = GbmScanoutProducer::new(&device);
     let config = BackendConfig {
         vrr: VrrPolicy::Auto,
-        ..BackendConfig::default()
+        ..backend_config()
     };
     let mut backend = match ScanoutBackend::create(&device, &mut producer, &config) {
         Ok(backend) => backend,
@@ -296,7 +311,7 @@ fn a_saved_crtc_is_put_back_on_teardown_vkms() {
         let mut producer = GbmScanoutProducer::new(&device);
         let config = BackendConfig {
             restore: RestorePolicy::SavedCrtc,
-            ..BackendConfig::default()
+            ..backend_config()
         };
         let backend = match ScanoutBackend::create(&device, &mut producer, &config) {
             Ok(backend) => backend,
@@ -335,7 +350,7 @@ struct SeqOnDrop<'a> {
     inner: GbmScanoutProducer<'a>,
     fd: std::os::fd::RawFd,
     crtc_id: Rc<Cell<u32>>,
-    seqs: Rc<RefCell<Vec<u64>>>,
+    seqs: Rc<RefCell<Vec<(u64, bool)>>>,
 }
 
 impl drmkit_present::ScanoutProducer for SeqOnDrop<'_> {
@@ -364,18 +379,21 @@ struct SeqSource {
     inner: Box<dyn LayerBufferSource>,
     fd: std::os::fd::RawFd,
     crtc_id: Rc<Cell<u32>>,
-    seqs: Rc<RefCell<Vec<u64>>>,
+    seqs: Rc<RefCell<Vec<(u64, bool)>>>,
 }
 
 impl Drop for SeqSource {
     fn drop(&mut self) {
         // Runs before `inner` drops, so this is the sequence the buffer and
-        // its framebuffer are torn down at.
+        // its framebuffer are torn down at, and whether the flip event was
+        // queued by then: a driver that completes the flip inside the commit
+        // (the SA8155P) has moved the sequence before it is first read.
         //
         // SAFETY: the test's device outlives the backend, and so this source.
         let fd = unsafe { std::os::fd::BorrowedFd::borrow_raw(self.fd) };
         if let Ok(seq) = drmkit_core::crtc_sequence(&fd, self.crtc_id.get()) {
-            self.seqs.borrow_mut().push(seq);
+            let queued = drmkit_core::event_pending(&fd);
+            self.seqs.borrow_mut().push((seq, queued));
         }
     }
 }
@@ -458,6 +476,24 @@ impl LayerBufferSource for SeqSource {
 #[test]
 #[ignore = "needs a DRM device and DRM master"]
 fn dropping_the_backend_waits_for_the_armed_flip_vkms() {
+    drop_with_a_flip_armed(AtomicCommitFlags::PAGE_FLIP_EVENT | AtomicCommitFlags::NONBLOCK);
+}
+
+/// As above, after a blocking commit, as upstream's case commits.
+///
+/// A driver that completes the flip inside the commit (the SA8155P) has
+/// already moved the CRTC's sequence when the backend reads it, and does not
+/// move it again until the next commit, so a wait that watched only the
+/// sequence ran to its 100 ms bound on every teardown. The queued event ends
+/// it (drm-cxx `42287bd`). On vkms the sequence keeps counting, so this passes
+/// either way there; the SA8155P's DP-4 is where it fails without the event.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn dropping_the_backend_after_a_blocking_flip_ends_the_wait_vkms() {
+    drop_with_a_flip_armed(AtomicCommitFlags::PAGE_FLIP_EVENT);
+}
+
+fn drop_with_a_flip_armed(flags: AtomicCommitFlags) {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::{Duration, Instant};
@@ -475,14 +511,13 @@ fn dropping_the_backend_waits_for_the_armed_flip_vkms() {
         crtc_id: Rc::clone(&crtc_id),
         seqs: Rc::clone(&seqs),
     };
-    let mut backend =
-        match ScanoutBackend::create(&device, &mut producer, &BackendConfig::default()) {
-            Ok(backend) => backend,
-            Err(error) => {
-                drmkit_testkit::skipped(&format!("no scanout output here ({error})"));
-                return;
-            }
-        };
+    let mut backend = match ScanoutBackend::create(&device, &mut producer, &backend_config()) {
+        Ok(backend) => backend,
+        Err(error) => {
+            drmkit_testkit::skipped(&format!("no scanout output here ({error})"));
+            return;
+        }
+    };
     crtc_id.set(backend.target().crtc.id);
 
     let mut flip = PageFlip::new(&device).expect("page flip");
@@ -496,13 +531,7 @@ fn dropping_the_backend_waits_for_the_armed_flip_vkms() {
     backend
         .present(&device, AtomicCommitFlags::empty(), None)
         .expect("modeset frame");
-    backend
-        .present(
-            &device,
-            AtomicCommitFlags::PAGE_FLIP_EVENT | AtomicCommitFlags::NONBLOCK,
-            None,
-        )
-        .expect("armed frame");
+    backend.present(&device, flags, None).expect("armed frame");
     let armed = drmkit_core::crtc_sequence(&device, crtc_id.get()).expect("read the sequence");
     seqs.borrow_mut().clear();
 
@@ -512,15 +541,19 @@ fn dropping_the_backend_waits_for_the_armed_flip_vkms() {
 
     let seqs = seqs.borrow();
     assert!(!seqs.is_empty(), "teardown should drop the layer's source");
-    for seq in seqs.iter() {
+    for (seq, queued) in seqs.iter() {
         assert!(
-            *seq > armed,
-            "a buffer was torn down before the flip landed ({seq} <= {armed})"
+            *seq > armed || *queued,
+            "a buffer was torn down before the flip landed ({seq} <= {armed}, no event queued)"
         );
     }
+    // Before its 100 ms bound, not at it: on a driver that lands the flip
+    // inside the commit the sequence never passes `armed`, and a wait that
+    // watched only the sequence ran to the bound every time (drm-cxx
+    // `42287bd`).
     assert!(
-        took < Duration::from_millis(150),
-        "the wait is bounded, took {took:?}"
+        took < Duration::from_millis(100),
+        "the wait must end when the flip lands, took {took:?}"
     );
     flip.dispatch(Timeout::Bounded(Duration::from_millis(500)))
         .expect("dispatch");
@@ -560,7 +593,7 @@ fn a_pinned_connector_is_the_output_driven_vkms() {
     let mut producer = GbmScanoutProducer::new(&device);
     let config = BackendConfig {
         connector_id: last,
-        ..BackendConfig::default()
+        ..backend_config()
     };
     let backend = match ScanoutBackend::create(&device, &mut producer, &config) {
         Ok(backend) => backend,

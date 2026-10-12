@@ -89,7 +89,10 @@ fn a_full_screen_layer_reaches_a_plane_vkms() {
         }
     };
 
-    assert_eq!(backend.profile().name, "vkms");
+    // The profile names the driver the device reports: vkms in the lane,
+    // whatever drives the card on hardware.
+    let driver = drm::Device::get_driver(&device).expect("the driver's name");
+    assert_eq!(backend.profile().name, driver.name().to_string_lossy());
     assert_ne!(
         backend.target().primary_plane_id,
         0,
@@ -268,13 +271,26 @@ fn a_saved_crtc_is_put_back_on_teardown_vkms() {
     let Some(device) = open_card() else { return };
 
     let resources = device.resource_handles().expect("resources");
+    // The output DRMKIT_TEST_CONNECTORS names, where set, and a CRTC its
+    // encoders can drive: the first CRTC is not one on hardware with more
+    // than one (vc4's HDMI is not on the first).
+    let wanted = drmkit_testkit::connector::wanted(&device);
     let Some((connector, crtc, mode)) = resources.connectors().iter().find_map(|handle| {
+        if wanted.is_some_and(|id| id != u32::from(*handle)) {
+            return None;
+        }
         let connector = device.get_connector(*handle, false).ok()?;
         if connector.state() != drm::control::connector::State::Connected {
             return None;
         }
         let mode = *connector.modes().first()?;
-        let crtc = *resources.crtcs().first()?;
+        let crtc = connector.encoders().iter().find_map(|encoder| {
+            let encoder = device.get_encoder(*encoder).ok()?;
+            resources
+                .filter_crtcs(encoder.possible_crtcs())
+                .first()
+                .copied()
+        })?;
         Some((*handle, crtc, mode))
     }) else {
         drmkit_testkit::skipped("no connected connector with a mode");

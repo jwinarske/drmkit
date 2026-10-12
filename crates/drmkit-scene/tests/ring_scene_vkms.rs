@@ -518,6 +518,14 @@ fn an_idle_producer_holds_its_buffer_until_something_supersedes_it_vkms() {
         drmkit_testkit::skipped("no connected output with an importable ring");
         return;
     };
+    if common::skip_if_primary_only(
+        &h.registry,
+        h.crtc_index,
+        "a plane that takes the ring's sub-screen buffers",
+    ) {
+        h.teardown();
+        return;
+    }
 
     h.submit(0);
     for frame in 0..4 {

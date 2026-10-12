@@ -114,6 +114,8 @@ struct Rig {
     map: PlanePropertyMap,
     scene: LayerScene,
     planes: usize,
+    /// Every layer's size: 64 x 64, unless a case says otherwise.
+    size: (u32, u32),
 }
 
 fn rig() -> Option<Rig> {
@@ -199,14 +201,19 @@ fn rig() -> Option<Rig> {
         map,
         scene,
         planes,
+        size: (64, 64),
     })
 }
 
 impl Rig {
     fn add(&mut self, x: i32, y: i32, zpos: u64) -> LayerHandle {
-        let source =
-            drmkit_scene_sources::DumbBufferSource::create(&self.device, 64, 64, fourcc::ARGB8888)
-                .expect("dumb source");
+        let source = drmkit_scene_sources::DumbBufferSource::create(
+            &self.device,
+            self.size.0,
+            self.size.1,
+            fourcc::ARGB8888,
+        )
+        .expect("dumb source");
         let handle = self.scene.add_layer(Box::new(Source { inner: source }));
         self.place(handle, x, y, zpos);
         handle
@@ -217,7 +224,12 @@ impl Rig {
             .layer_mut(handle)
             .expect("layer")
             .set_display(DisplayParams {
-                dst_rect: Rect { x, y, w: 64, h: 64 },
+                dst_rect: Rect {
+                    x,
+                    y,
+                    w: self.size.0,
+                    h: self.size.1,
+                },
                 zpos: Some(zpos),
                 ..DisplayParams::default()
             });
@@ -442,6 +454,11 @@ fn a_steady_frame_costs_no_test_commit_vkms() {
     // this test is about. `a_layer_past_the_budget_is_composited_and_says_so`
     // covers that case deliberately.
     let placeable = rig.planes.min(Allocator::DEFAULT_MAX_TEST_COMMITS);
+    // A lone full-screen primary (P-47) takes only a full-screen layer.
+    if common::primary_only(&rig.registry, rig.crtc_index) {
+        rig.size = common::current_mode_size(&rig.device, rig.scene.crtc_id())
+            .expect("the CRTC drives a mode");
+    }
     for i in 0..placeable {
         rig.add(
             i32::try_from(i).expect("small") * 64,

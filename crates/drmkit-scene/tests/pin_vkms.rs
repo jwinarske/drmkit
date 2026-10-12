@@ -102,7 +102,7 @@ fn an_impossible_pin_falls_back_and_is_counted_vkms() {
         drmkit_testkit::skipped("no connected output");
         return;
     };
-    let Some(handle) = fx.add_layer(0, 0, LAYER_W, LAYER_H) else {
+    let Some(handle) = fx.add_placeable_layer() else {
         drmkit_testkit::skipped("no dumb buffer for a layer");
         return;
     };

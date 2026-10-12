@@ -172,8 +172,16 @@ fn fixture() -> Option<Fixture> {
     let fence_slot = Rc::new(RefCell::new(None));
     let damage_slot: Rc<RefCell<Vec<DamageRect>>> = Rc::new(RefCell::new(Vec::new()));
     let mut scene = LayerScene::new(crtc_id);
-    let source = drmkit_scene_sources::DumbBufferSource::create(&device, 64, 64, fourcc::XRGB8888)
-        .expect("dumb buffer source");
+    // A plane on this CRTC has to be able to take it: on a lone full-screen
+    // primary (P-47), the whole mode.
+    let (layer_w, layer_h) = if common::primary_only(&registry, crtc_index) {
+        common::current_mode_size(&device, crtc_id).unwrap_or((64, 64))
+    } else {
+        (64, 64)
+    };
+    let source =
+        drmkit_scene_sources::DumbBufferSource::create(&device, layer_w, layer_h, fourcc::XRGB8888)
+            .expect("dumb buffer source");
     let handle = scene.add_layer(Box::new(DumbSource {
         inner: source,
         live: Rc::clone(&live),
@@ -187,8 +195,8 @@ fn fixture() -> Option<Fixture> {
             dst_rect: Rect {
                 x: 0,
                 y: 0,
-                w: 64,
-                h: 64,
+                w: layer_w,
+                h: layer_h,
             },
             ..DisplayParams::default()
         });
@@ -552,6 +560,14 @@ fn a_moving_layer_pays_one_test_commit_per_move_vkms() {
 
     let _guard = card_guard();
     let Some(mut fx) = fixture() else { return };
+    if common::skip_if_primary_only(
+        &fx.registry,
+        fx.crtc_index,
+        "a layer moved within the screen",
+    ) {
+        fx.scene.drain();
+        return;
+    }
     let handle = fx.handle;
 
     let reports = run(&mut fx, FRAMES, |fx, i| {
@@ -591,6 +607,10 @@ fn overlapping_layers_settle_to_no_search_vkms() {
 
     let _guard = card_guard();
     let Some(mut fx) = fixture() else { return };
+    if common::skip_if_primary_only(&fx.registry, fx.crtc_index, "a second plane") {
+        fx.scene.drain();
+        return;
+    }
 
     // Three more layers on top of the fixture's one, all overlapping it.
     for i in 0..3 {

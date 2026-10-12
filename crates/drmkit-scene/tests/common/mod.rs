@@ -401,6 +401,30 @@ impl Fixture {
             .map_or(planes, |limit| planes.min(limit))
     }
 
+    /// Whether the only plane that can take a layer here is a primary. See
+    /// [`primary_only`].
+    pub(crate) fn primary_only(&self) -> bool {
+        primary_only(&self.registry, self.crtc_index)
+    }
+
+    /// Skip, saying why, when the case needs more than a lone full-screen
+    /// primary. Returns whether it skipped.
+    pub(crate) fn skip_if_primary_only(&self, needs: &str) -> bool {
+        skip_if_primary_only(&self.registry, self.crtc_index, needs)
+    }
+
+    /// A layer at the origin that a plane on this CRTC can take: the usual
+    /// `LAYER_W` x `LAYER_H`, or the whole mode where only a primary can take
+    /// a layer (P-47).
+    pub(crate) fn add_placeable_layer(&mut self) -> Option<LayerHandle> {
+        let (w, h) = if self.primary_only() {
+            self.mode_size()
+        } else {
+            (LAYER_W, LAYER_H)
+        };
+        self.add_layer(0, 0, w, h)
+    }
+
     /// A non-primary, non-cursor plane on this CRTC.
     ///
     /// What a pin case needs: pinning to the plane the allocator would have
@@ -579,4 +603,37 @@ impl drmkit_planes::TestCommitter for PlaneLimit<'_> {
         self.extra = None;
         self.inner.clear_extra_plane();
     }
+}
+
+/// Whether the only plane that can take a layer on `crtc_index` is a primary:
+/// no overlay at all. The i.MX8M Plus's LCDIF is the case: one primary, which
+/// it scans out only across the whole CRTC, so a sub-screen layer reaches no
+/// plane there (P-47). Cases whose layer size is incidental make it the
+/// mode's; cases that need a second plane, or a layer moved within the
+/// screen, skip.
+pub(crate) fn primary_only(registry: &PlaneRegistry, crtc_index: u32) -> bool {
+    !registry
+        .for_crtc(crtc_index)
+        .any(|plane| plane.plane_type == drmkit_planes::PlaneType::Overlay)
+}
+
+/// The size of the mode the CRTC is driving now, for a harness that does not
+/// set one itself.
+pub(crate) fn current_mode_size(device: &Device, crtc_id: u32) -> Option<(u32, u32)> {
+    let crtc = drm::control::crtc::Handle::from(std::num::NonZeroU32::new(crtc_id)?);
+    let mode = device.get_crtc(crtc).ok()?.mode()?;
+    let (w, h) = mode.size();
+    Some((u32::from(w), u32::from(h)))
+}
+
+/// Skip, saying why, when the case needs more than a lone full-screen
+/// primary. Returns whether it skipped.
+pub(crate) fn skip_if_primary_only(registry: &PlaneRegistry, crtc_index: u32, needs: &str) -> bool {
+    let skip = primary_only(registry, crtc_index);
+    if skip {
+        drmkit_testkit::skipped(&format!(
+            "only a full-screen primary on this CRTC; the case needs {needs}"
+        ));
+    }
+    skip
 }

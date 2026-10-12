@@ -3,10 +3,10 @@
 Machine-checked mapping from every drm-cxx test file to its drmkit counterpart.
 
 **Upstream baseline:** `jwinarske/drm-cxx` @ `4a0b64a` (v2.0.1+6, PR #238)
-**Tracked tree:** `bf3e6be` (v4.3.0, PR #357) -- the test list below is upstream's
+**Tracked tree:** `2b260d0` (v5.0.0, PR #362) -- the test list below is upstream's
 current one, so new upstream tests surface as rows. The baseline above is the
 behavior drmkit claims to match, and moves when the behavior has caught up.
-**Coverage:** 107 test files (75 unit + 32 integration)
+**Coverage:** 108 test files (76 unit + 32 integration)
 
 `cargo xtask parity --ref <drm-cxx>` fails when this table and the upstream
 tree disagree in either direction: an upstream test with no row here, or a row
@@ -107,6 +107,7 @@ and runs in the vkms lane (plan §6, §13).
 | `tests/unit/test_v4l2_camera_source.cpp` | _drmkit-scene-v4l2_ (phase 6+) | pending |  |
 | `tests/unit/test_v4l2_decoder_source.cpp` | _drmkit-scene-v4l2_ (phase 6+) | pending |  |
 | `tests/unit/test_v4l2_plane_layout.cpp` | _drmkit-scene-v4l2_ (phase 6+) | pending |  |
+| `tests/unit/test_vk_handle.cpp` | _the Vulkan producer_ (not started) | pending | `87fc13a`: `VkImage` carried as its 64-bit value, so the producer builds on 32-bit ABIs. The port has no Vulkan producer yet |
 | `tests/unit/test_zpos_order.cpp` | `drmkit-planes` `src/tests.rs` | ported | All fourteen, against `zpos_order.rs`; `StackPutsBelowTiesUnderEqualRequests` (`07226e4`) is `the_stack_puts_below_ties_under_equal_requests`. Plus what the rules are for, which upstream's file does not reach: in `tests/allocator.rs`, a lone layer above 0 takes a fixed slot-0 primary, a zpos past an overlay's range still reaches it, an inverted stack is never chosen, and a warm start that would invert is not reused -- dropping the greedy, preseed or warm-start check each fails one; in `drmkit-scene`, the frame writes zpos densely over the armed planes and the next frame's baseline holds what was written while the fast path still holds -- recording either the requested value or the written bag's hash fails it |
 | `tests/integration/test_capture_vkms.cpp` | `drmkit-capture` `tests/snapshot_vkms.rs` | ported | `RoundTripPrimaryPlane` -- the same four-quadrant pattern through a real modeset and back -- plus three the reference does not have: the snapshot's size, a PNG that decodes back, and what happens without the atomic cap |
 | `tests/integration/test_crtc_color_pipeline_vkms.cpp` | `drmkit-display` `pipeline.rs` + `tests/pipeline_device.rs` | partial | Probe, absent-stage refusal, blob staging and replacement, and what an apply writes -- run on vkms, whose CRTC is gamma-only, and on amdgpu, whose CRTC has all three. `IdentityGammaApplyAndCommit`'s commit half is not ported: it needs DRM master, which these cases deliberately do not take |

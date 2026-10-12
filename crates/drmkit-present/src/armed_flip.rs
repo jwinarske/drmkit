@@ -13,7 +13,12 @@
 //! It never reads the event queue. Most callers dispatch the flip event
 //! themselves, and a teardown that consumed it would take it from them.
 //! Instead it watches the CRTC's vblank sequence: once that has moved past
-//! the one read right after the commit, the flip has landed.
+//! the one read right after the commit, the flip has landed. It also polls
+//! the queue, without reading it: a driver that completes the flip inside the
+//! commit (the SA8155P) has moved the sequence before it is read, and does
+//! not move it again until the next commit, so the wait would always run to
+//! its bound. The kernel queues the event only once the flip has landed
+//! (drm-cxx `42287bd`).
 
 use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
@@ -55,6 +60,10 @@ pub(crate) fn settle(scene: &mut LayerScene, device: &impl AsFd, crtc_id: u32, a
             }
             Ok(_) => {}
             Err(_) => return,
+        }
+        if drmkit_core::event_pending(device) {
+            scene.flip_landed();
+            return;
         }
         if Instant::now() >= deadline {
             return;

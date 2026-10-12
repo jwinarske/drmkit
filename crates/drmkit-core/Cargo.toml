@@ -14,7 +14,7 @@ keywords = ["drm", "kms", "atomic", "modesetting"]
 [dependencies]
 drm = { workspace = true }
 drm-ffi = { workspace = true }
-rustix = { workspace = true, features = ["std"] }
+rustix = { workspace = true, features = ["std", "event"] }
 thiserror = { workspace = true }
 drmkit-log = { workspace = true }
 

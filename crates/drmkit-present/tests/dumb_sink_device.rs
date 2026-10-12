@@ -63,7 +63,13 @@ fn open_card() -> Option<Device> {
 /// first mode.
 fn pick_output(device: &Device) -> Option<Output> {
     let resources = device.resource_handles().ok()?;
+    // The output DRMKIT_TEST_CONNECTORS names, where it is set: on some
+    // boards the first connected one is not the test's to light.
+    let wanted = drmkit_testkit::connector::wanted(device);
     for handle in resources.connectors() {
+        if wanted.is_some_and(|id| id != u32::from(*handle)) {
+            continue;
+        }
         let Ok(connector) = device.get_connector(*handle, false) else {
             continue;
         };
@@ -222,8 +228,8 @@ fn dropping_the_sink_waits_for_the_armed_flip_vkms() {
     let took = started.elapsed();
 
     assert!(
-        took < std::time::Duration::from_millis(150),
-        "the wait is bounded, took {took:?}"
+        took < std::time::Duration::from_millis(100),
+        "the wait must end when the flip lands, took {took:?}"
     );
     flip.dispatch(Timeout::Bounded(std::time::Duration::from_millis(500)))
         .expect("dispatch");

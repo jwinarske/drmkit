@@ -174,3 +174,40 @@ pub fn skipped(reason: &str) {
     // and lands in the same log the runner already collects.
     println!("{MARKER}\t{case}\t{reason}");
 }
+
+/// Picking the output a device suite should drive.
+pub mod connector {
+    use drm::control::Device as _;
+    use drmkit_core::Device;
+
+    /// The connector `DRMKIT_TEST_CONNECTORS` names, if it is set and one of
+    /// the names it lists, in order, is connected with a mode.
+    ///
+    /// `None` when unset, which keeps first-connected. Names are the kernel's
+    /// `<type>-<n>` (`DP-4`, `HDMI-A-1`). For boards whose other connected
+    /// outputs are not the test's to light: on the SA8155P the first one is
+    /// the platform's shared display. The scene fixture reads the same
+    /// variable.
+    #[must_use]
+    pub fn wanted(device: &Device) -> Option<u32> {
+        let list = std::env::var("DRMKIT_TEST_CONNECTORS").ok()?;
+        let resources = device.resource_handles().ok()?;
+        let connectors: Vec<_> = resources
+            .connectors()
+            .iter()
+            .filter_map(|handle| device.get_connector(*handle, false).ok())
+            .filter(|info| {
+                info.state() == drm::control::connector::State::Connected
+                    && !info.modes().is_empty()
+            })
+            .collect();
+        list.split(',').map(str::trim).find_map(|want| {
+            connectors
+                .iter()
+                .find(|info| {
+                    format!("{}-{}", info.interface().as_str(), info.interface_id()) == want
+                })
+                .map(|info| u32::from(info.handle()))
+        })
+    }
+}

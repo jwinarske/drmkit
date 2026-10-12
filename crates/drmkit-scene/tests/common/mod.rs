@@ -157,7 +157,19 @@ fn find_output(
 
 pub(crate) fn fixture(device: Device) -> Option<Fixture> {
     let resources = device.resource_handles().ok()?;
-    let output = find_output(&device, &resources, None, None)?;
+    // A monitor can drop hot-plug for a moment after the previous case turned
+    // its CRTC off -- the i.MX8M Plus's HDMI reads disconnected with no modes
+    // and is back within seconds -- and the case would skip as having no
+    // output. Look again for up to 3 s first (drm-cxx `2b414a6`).
+    let mut output = find_output(&device, &resources, None, None);
+    for _ in 0..30 {
+        if output.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        output = find_output(&device, &resources, None, None);
+    }
+    let output = output?;
     let crtc_id = u32::from(output.crtc);
 
     let registry = PlaneRegistry::probe(&device).ok()?;

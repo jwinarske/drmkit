@@ -132,6 +132,9 @@ struct Harness {
     crtc_index: u32,
     /// The one layer, for a case that needs to remove it.
     handle: drmkit_scene::LayerHandle,
+    /// Whether the CRTC was driving a mode when the harness was built. It
+    /// sets none itself, and a plane on a dark CRTC is refused.
+    crtc_lit: bool,
 }
 
 fn harness() -> Option<Harness> {
@@ -196,8 +199,19 @@ fn harness() -> Option<Harness> {
 
     let log = Rc::new(RefCell::new(SourceLog::default()));
     let mut scene = LayerScene::new(crtc_id);
+    // A plane on this CRTC has to be able to take it: on a lone full-screen
+    // primary (P-47), the whole mode.
+    // Asked of the probed registry: the one above calls every plane an
+    // overlay.
+    let probed = PlaneRegistry::probe(&device).ok()?;
+    let (layer_w, layer_h) = if common::primary_only(&probed, crtc_index) {
+        common::current_mode_size(&device, crtc_id).unwrap_or((64, 64))
+    } else {
+        (64, 64)
+    };
     let source =
-        drmkit_scene_sources::DumbBufferSource::create(&device, 64, 64, fourcc::XRGB8888).ok()?;
+        drmkit_scene_sources::DumbBufferSource::create(&device, layer_w, layer_h, fourcc::XRGB8888)
+            .ok()?;
     let handle = scene.add_layer(Box::new(RealSource {
         inner: source,
         log: Rc::clone(&log),
@@ -209,12 +223,13 @@ fn harness() -> Option<Harness> {
             dst_rect: Rect {
                 x: 0,
                 y: 0,
-                w: 64,
-                h: 64,
+                w: layer_w,
+                h: layer_h,
             },
             ..DisplayParams::default()
         });
 
+    let crtc_lit = common::current_mode_size(&device, crtc_id).is_some();
     Some(Harness {
         device,
         registry,
@@ -223,6 +238,7 @@ fn harness() -> Option<Harness> {
         log,
         crtc_index,
         handle,
+        crtc_lit,
     })
 }
 
@@ -532,6 +548,10 @@ fn test_commits_release_immediately_vkms() {
 fn removing_a_layer_defers_retiring_its_source_vkms() {
     let _guard = card_guard();
     let Some(mut h) = harness() else { return };
+    if !h.crtc_lit {
+        drmkit_testkit::skipped("the CRTC is dark, and this harness sets no mode to light it");
+        return;
+    }
 
     // One real commit, so there is a buffer in flight to defer against.
     let report = cycle(&mut h, KernelResult::Ok);

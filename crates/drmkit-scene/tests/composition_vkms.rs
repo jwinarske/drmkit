@@ -201,9 +201,14 @@ fn fixture_claiming_zpos(claim: bool) -> Option<Fixture> {
 
 /// Add `count` mappable layers, each a distinct colour block.
 fn fill(fx: &mut Fixture, count: usize) {
+    fill_sized(fx, count, 32, 32);
+}
+
+/// As [`fill`], with layers of `w` x `h`.
+fn fill_sized(fx: &mut Fixture, count: usize, w: u32, h: u32) {
     for i in 0..count {
         let source =
-            drmkit_scene_sources::DumbBufferSource::create(&fx.device, 32, 32, fourcc::ARGB8888)
+            drmkit_scene_sources::DumbBufferSource::create(&fx.device, w, h, fourcc::ARGB8888)
                 .expect("dumb source");
         let handle = fx
             .scene
@@ -212,12 +217,7 @@ fn fill(fx: &mut Fixture, count: usize) {
             .layer_mut(handle)
             .expect("layer")
             .set_display(DisplayParams {
-                dst_rect: Rect {
-                    x: 0,
-                    y: 0,
-                    w: 32,
-                    h: 32,
-                },
+                dst_rect: Rect { x: 0, y: 0, w, h },
                 zpos: Some(i as u64),
                 ..DisplayParams::default()
             });
@@ -257,7 +257,14 @@ fn a_scene_that_fits_composites_nothing_vkms() {
     // Exactly as many layers as there are planes: the search can place all of
     // them, so no reservation is taken and no canvas is armed.
     let planes = fx.planes;
-    fill(&mut fx, planes);
+    // On a lone full-screen primary (P-47) only a full-screen layer fits.
+    if common::primary_only(&fx.registry, fx.crtc_index) {
+        let (w, h) = common::current_mode_size(&fx.device, fx.scene.crtc_id())
+            .expect("the CRTC drives a mode");
+        fill_sized(&mut fx, planes, w, h);
+    } else {
+        fill(&mut fx, planes);
+    }
     let build = build(&mut fx);
     let report = build.report().clone();
     let planned = build.plan().len();
@@ -452,6 +459,13 @@ fn an_unmappable_source_is_not_rescued_vkms() {
 fn a_composed_frame_is_accepted_by_the_kernel_vkms() {
     let _guard = card_guard();
     let Some(mut fx) = fixture() else { return };
+    if common::skip_if_primary_only(
+        &fx.registry,
+        fx.crtc_index,
+        "a canvas smaller than the screen on a plane of its own",
+    ) {
+        return;
+    }
 
     let planes = fx.planes;
     fill(&mut fx, planes + 2);
@@ -921,6 +935,9 @@ fn the_first_commit_turns_off_foreign_planes_vkms() {
         drmkit_testkit::skipped("no connected output");
         return;
     };
+    if fx.skip_if_primary_only("a plane besides the one the console holds") {
+        return;
+    }
     let crtc_id = fx.scene.crtc_id();
     if lit_planes(&fx.device, crtc_id).is_empty() {
         drmkit_testkit::skipped("no plane lit on the CRTC before the scene (no fbdev console)");

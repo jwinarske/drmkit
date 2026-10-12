@@ -33,7 +33,7 @@ fn a_steady_frame_writes_only_its_fb_id_vkms() {
         drmkit_testkit::skipped("no connected output");
         return;
     };
-    if fx.add_layer(0, 0, LAYER_W, LAYER_H).is_none() {
+    if fx.add_placeable_layer().is_none() {
         drmkit_testkit::skipped("no dumb buffer for a layer");
         return;
     }
@@ -84,7 +84,7 @@ fn forcing_full_writes_puts_every_property_back_on_the_wire_vkms() {
         drmkit_testkit::skipped("no connected output");
         return;
     };
-    if fx.add_layer(0, 0, LAYER_W, LAYER_H).is_none() {
+    if fx.add_placeable_layer().is_none() {
         drmkit_testkit::skipped("no dumb buffer for a layer");
         return;
     }
@@ -137,6 +137,9 @@ fn a_layer_added_to_a_warm_scene_still_reaches_a_plane_vkms() {
         drmkit_testkit::skipped("no connected output");
         return;
     };
+    if fx.skip_if_primary_only("a second plane") {
+        return;
+    }
     if fx.add_layer(0, 0, LAYER_W, LAYER_H).is_none() {
         drmkit_testkit::skipped("no dumb buffer for a layer");
         return;
@@ -179,6 +182,9 @@ fn a_translated_layer_writes_its_rectangle_and_its_fb_vkms() {
         drmkit_testkit::skipped("no connected output");
         return;
     };
+    if fx.skip_if_primary_only("a layer moved within the screen") {
+        return;
+    }
     let Some(handle) = fx.add_layer(32, 32, LAYER_W, LAYER_H) else {
         drmkit_testkit::skipped("no dumb buffer for a layer");
         return;
@@ -214,6 +220,9 @@ fn moving_a_layer_defeats_the_fast_path_and_the_next_frame_recovers_it_vkms() {
         drmkit_testkit::skipped("no connected output");
         return;
     };
+    if fx.skip_if_primary_only("a layer moved within the screen") {
+        return;
+    }
     let Some(handle) = fx.add_layer(32, 32, LAYER_W, LAYER_H) else {
         drmkit_testkit::skipped("no dumb buffer for a layer");
         return;
@@ -349,7 +358,7 @@ fn the_first_frame_on_a_dark_crtc_places_its_layer_vkms() {
     fx.device
         .set_crtc(crtc, None, (0, 0), &[], None)
         .expect("switch the CRTC off");
-    if fx.add_layer(0, 0, LAYER_W, LAYER_H).is_none() {
+    if fx.add_placeable_layer().is_none() {
         drmkit_testkit::skipped("no dumb buffer for a layer");
         return;
     }

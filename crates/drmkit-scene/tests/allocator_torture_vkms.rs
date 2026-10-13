@@ -137,6 +137,9 @@ fn rig() -> Option<Rig> {
     let crtcs = resources.crtcs();
     let (crtc_id, crtc_index) = common::pick_crtc(&device, &resources);
 
+    // What each plane really takes: the formats are not what this list is
+    // built to change.
+    let probed = PlaneRegistry::probe(&device).ok();
     let mut capabilities = Vec::new();
     for handle in device.plane_handles().expect("planes") {
         let info = device.get_plane(handle).expect("plane info");
@@ -175,6 +178,7 @@ fn rig() -> Option<Rig> {
             possible_crtcs: mask,
             plane_type,
             formats: vec![fourcc::ARGB8888],
+            format_table: common::probed_format_table(probed.as_ref(), plane_id),
             supports_scaling: true,
             zpos_min,
             zpos_max,
@@ -182,7 +186,12 @@ fn rig() -> Option<Rig> {
         });
     }
     let registry = PlaneRegistry::from_capabilities(capabilities);
-    let planes = registry.force_disable_candidates(crtc_index).count();
+    // Planes a layer here can land on: not one that takes the format only
+    // compressed (P-48).
+    let planes = registry
+        .force_disable_candidates(crtc_index)
+        .filter(|plane| plane.scans_out_linear(fourcc::ARGB8888))
+        .count();
     assert!(planes > 0, "a CRTC with no usable plane cannot display");
     println!("note: {planes} candidate plane(s)");
 

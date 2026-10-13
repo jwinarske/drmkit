@@ -86,11 +86,12 @@ pub const CURSOR_FORMATS: [u32; 4] = [
 /// The format this plane would carry a cursor in, if it can carry one.
 ///
 /// [`CURSOR_FORMATS`] in order, so a plane that takes `ARGB8888` is drawn in
-/// what the shadow already holds and nothing is permuted.
+/// what the shadow already holds and nothing is permuted. Linear, since the
+/// cursor is a dumb buffer.
 fn usable(plane: &PlaneCapabilities) -> Option<u32> {
     CURSOR_FORMATS
         .into_iter()
-        .find(|fourcc| plane.supports_format(*fourcc))
+        .find(|fourcc| plane.scans_out_linear(*fourcc))
 }
 
 /// Pick a plane for the cursor on `crtc_index`.
@@ -142,7 +143,7 @@ pub fn select_plane(
         // does not wait for vblank, so a moving pointer does not contend with
         // the caller's flips (drm-cxx `0925491`). They hand the kernel an
         // ARGB8888 buffer, so only a plane that takes one.
-        if prefer_legacy && allow_legacy && plane.supports_format(drmkit_fmt::fourcc::ARGB8888) {
+        if prefer_legacy && allow_legacy && plane.scans_out_linear(drmkit_fmt::fourcc::ARGB8888) {
             return Ok(SelectedPlane {
                 legacy_plane_id: plane.id,
                 ..legacy()

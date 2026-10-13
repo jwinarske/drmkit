@@ -1160,7 +1160,7 @@ impl LayerScene {
         let hosts: Vec<u32> = self.canvas.as_ref().map_or_else(Vec::new, |canvas| {
             registry
                 .force_disable_candidates(crtc_index)
-                .filter(|plane| plane.supports_format(canvas.fourcc()))
+                .filter(|plane| plane.scans_out_linear(canvas.fourcc()))
                 .map(|plane| plane.id)
                 .collect()
         });
@@ -1446,7 +1446,7 @@ impl LayerScene {
                 .filter(|plane| {
                     self.canvas
                         .as_ref()
-                        .is_some_and(|canvas| plane.supports_format(canvas.fourcc()))
+                        .is_some_and(|canvas| plane.scans_out_linear(canvas.fourcc()))
                 })
                 .map(|plane| plane.id)
                 .collect();
@@ -2366,11 +2366,11 @@ fn revoke_refused_pin(
 ///
 /// Three ways a pin fails, and all three are the caller describing hardware
 /// that is not there: a plane on another CRTC, a plane that cannot scan the
-/// layer's format out, or a plane the scene has already reserved for something
-/// else. Committing an impossible pin would fail the `TEST_ONLY` and take the
-/// whole frame down -- every correctly placed layer with it -- so the check
-/// happens here, and a refused pin costs the caller determinism rather than a
-/// frame.
+/// layer's format out in its layout, or a plane the scene has already
+/// reserved for something else. Committing an impossible pin would fail the
+/// `TEST_ONLY` and take the whole frame down -- every correctly placed layer
+/// with it -- so the check happens here, and a refused pin costs the caller
+/// determinism rather than a frame.
 fn pin_is_honourable(
     layer: &PlaneLayer,
     plane_id: u32,
@@ -2391,7 +2391,7 @@ fn pin_is_honourable(
     layer
         .property(PropTag::PixelFormat)
         .and_then(|fourcc| u32::try_from(fourcc).ok())
-        .is_none_or(|fourcc| plane.supports_format(fourcc))
+        .is_none_or(|fourcc| plane.scans_out(fourcc, drmkit_fmt::Modifier(layer.modifier())))
 }
 
 /// Work out what this frame writes: which layer goes on which plane, with what

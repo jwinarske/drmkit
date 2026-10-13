@@ -546,6 +546,29 @@ fn supports_format_consults_the_bare_format_list() {
     assert!(!caps.supports_format(fourcc::ARGB8888));
 }
 
+/// The RK3566's Cluster windows: `ARGB8888` in the bare list, AFBC alone in
+/// `IN_FORMATS`. A linear buffer there is refused at check time (P-48).
+#[test]
+fn scans_out_reads_the_layout_from_in_formats() {
+    let afbc = Modifier(0x0800_0000_0000_0001);
+    let cluster = PlaneCapabilities {
+        format_table: FormatTable::from_pairs([(fourcc::ARGB8888, afbc)]),
+        ..plane(96, PlaneType::Overlay, 0b1, &[fourcc::ARGB8888])
+    };
+    assert!(
+        cluster.supports_format(fourcc::ARGB8888),
+        "the bare list says yes"
+    );
+    assert!(cluster.scans_out(fourcc::ARGB8888, afbc));
+    assert!(!cluster.scans_out_linear(fourcc::ARGB8888));
+    assert!(!cluster.scans_out(fourcc::ARGB8888, Modifier::INVALID));
+
+    // Without IN_FORMATS the bare list is all there is to go on.
+    let bare = plane(56, PlaneType::Primary, 0b1, &[fourcc::ARGB8888]);
+    assert!(bare.scans_out_linear(fourcc::ARGB8888));
+    assert!(!bare.scans_out_linear(fourcc::NV12));
+}
+
 // --- bipartite matcher -------------------------------------------------------
 
 /// Port of the `test_matching.cpp` shape: a small graph with a known answer.

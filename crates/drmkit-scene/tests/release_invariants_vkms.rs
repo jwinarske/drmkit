@@ -156,6 +156,9 @@ fn harness() -> Option<Harness> {
     // resolve it through `filter_crtcs` and set the bit for each allowed CRTC's
     // index -- which is what drmkit's own mask is indexed by.
     let all_crtcs = resources.crtcs();
+    // What each plane really takes, and what kind it is: the list below calls
+    // every plane an overlay, and is not built to change the formats.
+    let probed = PlaneRegistry::probe(&device).ok()?;
     let mut capabilities = Vec::new();
     for handle in device
         .plane_handles()
@@ -178,6 +181,7 @@ fn harness() -> Option<Harness> {
             possible_crtcs: mask,
             plane_type: drmkit_planes::PlaneType::Overlay,
             formats: vec![fourcc::XRGB8888],
+            format_table: common::probed_format_table(Some(&probed), plane_id),
             supports_scaling: true,
             ..drmkit_planes::PlaneCapabilities::default()
         });
@@ -200,10 +204,7 @@ fn harness() -> Option<Harness> {
     let log = Rc::new(RefCell::new(SourceLog::default()));
     let mut scene = LayerScene::new(crtc_id);
     // A plane on this CRTC has to be able to take it: on a lone full-screen
-    // primary (P-47), the whole mode.
-    // Asked of the probed registry: the one above calls every plane an
-    // overlay.
-    let probed = PlaneRegistry::probe(&device).ok()?;
+    // primary (P-47), the whole mode. Asked of the probed registry.
     let (layer_w, layer_h) = if common::primary_only(&probed, crtc_index) {
         common::current_mode_size(&device, crtc_id).unwrap_or((64, 64))
     } else {

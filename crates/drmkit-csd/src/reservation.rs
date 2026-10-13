@@ -102,7 +102,8 @@ impl OverlayReservation {
         let mut candidates: Vec<(u64, u32)> = registry
             .for_crtc(crtc_index)
             .filter(|plane| plane.plane_type == PlaneType::Overlay)
-            .filter(|plane| plane.supports_format(fourcc))
+            // Decorations are dumb buffers, so linear.
+            .filter(|plane| plane.scans_out_linear(fourcc))
             .filter(|plane| !self.all.contains(&plane.id))
             .filter_map(|plane| match plane.zpos_min {
                 // A plane that advertises no zpos cannot be shown to sit above

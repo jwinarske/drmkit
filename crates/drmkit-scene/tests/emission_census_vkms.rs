@@ -29,6 +29,7 @@ use drmkit_scene::DamageRect;
 use drmkit_scene::{
     AcquiredBuffer, CommitKind, DeviceCommitter, DisplayParams, KernelResult, LayerBufferSource,
     LayerScene, PlanePropertyMap, Rect, SourceError, SourceFormat, arm_acquire_fences, emit_frame,
+    emit_frame_damaged,
 };
 use drmkit_sync::SyncFence;
 
@@ -461,6 +462,11 @@ fn a_fenced_buffer_arms_its_plane_vkms() {
 }
 
 /// Run `frames` frames, returning the reports.
+///
+/// Each frame is emitted, damage included, before it is finalized: the
+/// emission counters -- `damaged_layers` among them -- are recorded by
+/// emission, so a run that skipped it would report no damage on every driver
+/// and pass the damage-less branch everywhere.
 fn run(
     fx: &mut Fixture,
     frames: usize,
@@ -469,7 +475,14 @@ fn run(
     (0..frames)
         .map(|i| {
             before_each(fx, i);
-            let build = build_one(fx);
+            let mut build = build_one(fx);
+            let mut request = AtomicRequest::with_capacity(64);
+            let (_, _blobs) =
+                emit_frame_damaged(&mut request, &fx.map, &mut build, None, Some(&fx.device))
+                    .expect("emit");
+            for entry in build.plan() {
+                fx.map.note_color_committed(entry.plane_id);
+            }
             fx.scene.finalize_frame(build, KernelResult::Ok)
         })
         .collect()

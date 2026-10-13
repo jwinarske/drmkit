@@ -286,6 +286,12 @@ static SAW_REJECTION: AtomicBool = AtomicBool::new(false);
 /// pointer outlive what it points at, or that lets a caller commit a request
 /// carrying a stale one.
 ///
+/// Whatever `build` returns is held until the commit has been issued, and
+/// dropped only then. That is where property blobs the request names belong
+/// -- `FB_DAMAGE_CLIPS` above all: the request carries only their ids, so a
+/// blob that dropped inside the closure would be destroyed before the ioctl,
+/// and the kernel refuses a commit naming a blob it no longer has.
+///
 /// Returns `None` when the commit succeeded but the kernel left the slot
 /// alone: a `TEST_ONLY` never produces a fence, and neither does a driver
 /// without `OUT_FENCE_PTR`.
@@ -293,20 +299,21 @@ static SAW_REJECTION: AtomicBool = AtomicBool::new(false);
 /// # Errors
 ///
 /// As [`AtomicRequest::commit`], plus whatever `build` returns.
-pub fn commit_with_out_fence<F>(
+pub fn commit_with_out_fence<F, K>(
     device: &Device,
     flags: AtomicCommitFlags,
     build: F,
 ) -> Result<Option<OwnedFd>>
 where
-    F: FnOnce(&mut AtomicRequest, u64) -> Result<()>,
+    F: FnOnce(&mut AtomicRequest, u64) -> Result<K>,
 {
     // -1 is the kernel's "nothing here" value, and stays that way if the
     // driver has no OUT_FENCE_PTR or the commit was a test.
     let mut slot: i32 = -1;
     let mut request = AtomicRequest::new();
-    build(&mut request, (&raw mut slot) as u64)?;
+    let kept = build(&mut request, (&raw mut slot) as u64)?;
     request.commit(device, flags)?;
+    drop(kept);
 
     if slot < 0 {
         return Ok(None);

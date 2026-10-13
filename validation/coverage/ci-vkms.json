@@ -59,6 +59,7 @@
   "a_cursor_plane_that_cannot_do_alpha_is_not_a_cursor_plane": "ran",
   "a_cursor_plane_wins": "ran",
   "a_curve_is_applied_to_every_channel_alike": "ran",
+  "a_damaged_frame_reaches_the_kernel_with_its_clips_vkms": "ran",
   "a_damaged_frame_stays_on_the_fast_path_vkms": "ran",
   "a_deadline_ring_advances_on_a_frame_with_no_fence_vkms": "ran",
   "a_declared_image_larger_than_the_file_is_refused_not_allocated": "ran",

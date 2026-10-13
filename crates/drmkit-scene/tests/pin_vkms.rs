@@ -30,7 +30,7 @@ fn a_pinned_layer_lands_on_its_own_plane_vkms() {
     // An overlay rather than the primary: pinning to the plane the allocator
     // would have chosen anyway proves nothing.
     let Some(target) = fx.an_overlay_plane() else {
-        drmkit_testkit::skipped("no non-primary plane on this CRTC to pin to");
+        drmkit_testkit::skipped("no overlay on this CRTC takes a linear XRGB8888 layer to pin to");
         return;
     };
     let Some(handle) = fx.add_layer(0, 0, LAYER_W, LAYER_H) else {

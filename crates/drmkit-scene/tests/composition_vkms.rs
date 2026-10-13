@@ -137,6 +137,9 @@ fn fixture_claiming_zpos(claim: bool) -> Option<Fixture> {
     let crtcs = resources.crtcs();
     let (crtc_id, crtc_index) = common::pick_crtc(&device, &resources);
 
+    // What each plane really takes, so the claims below steer the search and
+    // do not also misstate the formats.
+    let probed = PlaneRegistry::probe(&device).ok();
     let mut capabilities = Vec::new();
     for handle in device.plane_handles().expect("planes") {
         let info = device.get_plane(handle).expect("plane info");
@@ -163,6 +166,7 @@ fn fixture_claiming_zpos(claim: bool) -> Option<Fixture> {
             possible_crtcs: mask,
             plane_type,
             formats: vec![fourcc::ARGB8888],
+            format_table: common::probed_format_table(probed.as_ref(), plane_id),
             supports_scaling: true,
             zpos_min: claim.then_some(0),
             zpos_max: claim.then_some(15),
@@ -174,7 +178,13 @@ fn fixture_claiming_zpos(claim: bool) -> Option<Fixture> {
     // depending on kernel version and module parameters -- ten here, fewer in
     // the lane -- so every case below is written against this count rather
     // than a number that happened to be true on one machine.
-    let planes = registry.force_disable_candidates(crtc_index).count();
+    //
+    // Only planes a layer here can land on: not one that takes the format
+    // only compressed (P-48).
+    let planes = registry
+        .force_disable_candidates(crtc_index)
+        .filter(|plane| plane.scans_out_linear(fourcc::ARGB8888))
+        .count();
     assert!(
         planes > 0,
         "a CRTC with no usable plane cannot display anything"

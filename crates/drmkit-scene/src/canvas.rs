@@ -409,11 +409,17 @@ const CANVAS_FORMATS: [u32; 6] = [
 ///
 /// `None` means the plane advertises nothing the canvas can write, which is
 /// the honest answer: composition is not available there.
+///
+/// The canvas is a dumb buffer, so linear: a format counts only where the
+/// plane scans it out linear. The RK3566's Cluster windows list `ARGB8888` in
+/// their bare format list and offer it in `IN_FORMATS` only as AFBC; a canvas
+/// put there is refused at check time, and every frame that composites fails
+/// with it (P-48).
 #[must_use]
 pub fn canvas_format_for_plane(plane: &PlaneCapabilities) -> Option<u32> {
     CANVAS_FORMATS
         .into_iter()
-        .find(|fourcc| canvas_output_bpp(*fourcc) != 0 && plane.supports_format(*fourcc))
+        .find(|fourcc| canvas_output_bpp(*fourcc) != 0 && plane.scans_out_linear(*fourcc))
 }
 
 /// Convert one row of the `ARGB8888` shadow into `out_fourcc`.
@@ -1116,6 +1122,33 @@ mod stride_tests {
                 "{fourcc:#010x} cannot be written"
             );
         }
+    }
+
+    #[test]
+    fn a_plane_that_takes_the_format_only_compressed_hosts_none() {
+        // The RK3566's Cluster windows: ARGB8888 and the rest in the bare
+        // list, AFBC alone in IN_FORMATS. The canvas is linear, and the
+        // kernel refuses it there (P-48).
+        let afbc = drmkit_fmt::Modifier(0x0800_0000_0000_0001);
+        let formats = [fourcc::ARGB8888, fourcc::XRGB8888, fourcc::RGB565];
+        let plane = PlaneCapabilities {
+            format_table: drmkit_fmt::FormatTable::from_pairs(formats.map(|f| (f, afbc))),
+            ..plane_with(&formats)
+        };
+        assert_eq!(canvas_format_for_plane(&plane), None);
+    }
+
+    #[test]
+    fn a_format_offered_linear_wins_over_one_offered_compressed() {
+        let afbc = drmkit_fmt::Modifier(0x0800_0000_0000_0001);
+        let plane = PlaneCapabilities {
+            format_table: drmkit_fmt::FormatTable::from_pairs([
+                (fourcc::ARGB8888, afbc),
+                (fourcc::XRGB8888, drmkit_fmt::Modifier::LINEAR),
+            ]),
+            ..plane_with(&[fourcc::ARGB8888, fourcc::XRGB8888])
+        };
+        assert_eq!(canvas_format_for_plane(&plane), Some(fourcc::XRGB8888));
     }
 
     #[test]

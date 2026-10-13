@@ -220,12 +220,36 @@ pub struct PlaneCapabilities {
 impl PlaneCapabilities {
     /// Whether the bare `formats` list advertises a `FourCC`.
     ///
-    /// This is the pre-`IN_FORMATS` check and ignores modifiers entirely.
-    /// Eligibility for placement goes through
-    /// [`format_table`](Self::format_table) and `layer_fits_plane`.
+    /// This is the pre-`IN_FORMATS` check and ignores modifiers entirely, so
+    /// it does not say whether a given buffer will scan out: a plane can list
+    /// a format it takes only compressed. Ask [`scans_out`](Self::scans_out)
+    /// that.
     #[must_use]
     pub fn supports_format(&self, fourcc: u32) -> bool {
         self.formats.contains(&fourcc)
+    }
+
+    /// Whether the plane scans out `fourcc` in the `modifier` layout.
+    ///
+    /// By the plane's `IN_FORMATS` table, with `layer_fits_plane`'s
+    /// equivalences, or by the bare format list on a plane without one. The
+    /// RK3566's Cluster windows are why the list alone is not enough: they
+    /// list `ARGB8888` and take it only as AFBC, and refuse a linear buffer at
+    /// check time (P-48).
+    #[must_use]
+    pub fn scans_out(&self, fourcc: u32, modifier: Modifier) -> bool {
+        if self.format_table.is_empty() {
+            self.supports_format(fourcc)
+        } else {
+            drmkit_fmt::layer_fits_plane(&self.format_table, fourcc, modifier)
+        }
+    }
+
+    /// Whether the plane scans out a linear buffer of `fourcc`: what a dumb
+    /// buffer is.
+    #[must_use]
+    pub fn scans_out_linear(&self, fourcc: u32) -> bool {
+        self.scans_out(fourcc, Modifier::LINEAR)
     }
 
     /// Whether this plane can feed the CRTC at `crtc_index`.

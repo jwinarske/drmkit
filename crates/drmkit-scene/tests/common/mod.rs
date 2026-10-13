@@ -13,7 +13,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use drm::control::Device as ControlDevice;
 use drmkit_core::{AtomicCommitFlags, AtomicRequest, Device};
-use drmkit_fmt::fourcc;
+use drmkit_fmt::{FormatTable, fourcc};
 use drmkit_planes::PlaneRegistry;
 use drmkit_scene::{
     CommitKind, CommitReport, DeviceCommitter, DisplayParams, KernelResult, LayerHandle,
@@ -425,14 +425,19 @@ impl Fixture {
         self.add_layer(0, 0, w, h)
     }
 
-    /// A non-primary, non-cursor plane on this CRTC.
+    /// A non-primary, non-cursor plane on this CRTC that takes the rig's
+    /// linear XRGB8888.
     ///
     /// What a pin case needs: pinning to the plane the allocator would have
-    /// chosen anyway proves only that the allocator works.
+    /// chosen anyway proves only that the allocator works. And pinning to one
+    /// the layer cannot use proves only that the scene declines it (P-48).
     pub(crate) fn an_overlay_plane(&self) -> Option<u32> {
         self.registry
             .for_crtc(self.crtc_index)
-            .find(|plane| plane.plane_type == drmkit_planes::PlaneType::Overlay)
+            .find(|plane| {
+                plane.plane_type == drmkit_planes::PlaneType::Overlay
+                    && plane.scans_out_linear(fourcc::XRGB8888)
+            })
             .map(|plane| plane.id)
     }
 
@@ -615,6 +620,22 @@ pub(crate) fn primary_only(registry: &PlaneRegistry, crtc_index: u32) -> bool {
     !registry
         .for_crtc(crtc_index)
         .any(|plane| plane.plane_type == drmkit_planes::PlaneType::Overlay)
+}
+
+/// A plane's `IN_FORMATS` table, as [`PlaneRegistry::probe`] read it.
+///
+/// For the cases that build their own plane list to steer the allocator. A
+/// list saying every plane takes the case's one format is true on vkms and not
+/// on a plane that scans out only compressed layouts: the allocator, trusting
+/// it, puts a linear buffer on an RK3566 Cluster window and the kernel refuses
+/// the commit, so the case fails on the rig's claim rather than on anything
+/// the scene did (P-48). Empty, leaving the list's own `formats` to stand,
+/// when the probe failed or the plane has no `IN_FORMATS`.
+pub(crate) fn probed_format_table(probed: Option<&PlaneRegistry>, plane_id: u32) -> FormatTable {
+    probed
+        .and_then(|registry| registry.by_id(plane_id))
+        .map(|plane| plane.format_table.clone())
+        .unwrap_or_default()
 }
 
 /// The size of the mode the CRTC is driving now, for a harness that does not

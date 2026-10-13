@@ -162,6 +162,10 @@ struct Harness {
     /// Kept alive: the ring's imports reference these descriptors, and a
     /// second layer parks its own here too.
     fds: Vec<std::os::fd::OwnedFd>,
+    /// Each ring buffer's size: `WIDTH` x `HEIGHT`, or the whole mode where
+    /// only a primary can take a layer (P-47) -- a `panel-mipi-dbi` panel
+    /// will not even create a framebuffer smaller than its mode.
+    size: (u32, u32),
 }
 
 const WIDTH: u32 = 64;
@@ -198,6 +202,12 @@ fn harness(device: Device, on_release: Option<drmkit_scene_sources::OnRelease>) 
     let crtc_id = u32::from(crtc);
 
     let registry = PlaneRegistry::probe(&device).ok()?;
+    let (width, height) = if common::primary_only(&registry, crtc_index) {
+        let (w, h) = mode.size();
+        (u32::from(w), u32::from(h))
+    } else {
+        (WIDTH, HEIGHT)
+    };
     let mut map = PlanePropertyMap::new();
     for plane in registry.for_crtc(crtc_index) {
         map.learn_plane(&device, plane.id).ok()?;
@@ -206,7 +216,7 @@ fn harness(device: Device, on_release: Option<drmkit_scene_sources::OnRelease>) 
     let mut fds = Vec::new();
     let mut pitches = Vec::new();
     for _ in 0..SLOTS {
-        let (fd, pitch) = exported_buffer(&device, WIDTH, HEIGHT)?;
+        let (fd, pitch) = exported_buffer(&device, width, height)?;
         fds.push(fd);
         pitches.push(pitch);
     }
@@ -228,8 +238,8 @@ fn harness(device: Device, on_release: Option<drmkit_scene_sources::OnRelease>) 
         SourceFormat {
             fourcc: fourcc::XRGB8888,
             modifier: 0,
-            width: WIDTH,
-            height: HEIGHT,
+            width,
+            height,
         },
         &slots,
         None,
@@ -246,14 +256,14 @@ fn harness(device: Device, on_release: Option<drmkit_scene_sources::OnRelease>) 
         src_rect: Rect {
             x: 0,
             y: 0,
-            w: WIDTH,
-            h: HEIGHT,
+            w: width,
+            h: height,
         },
         dst_rect: Rect {
             x: 0,
             y: 0,
-            w: WIDTH,
-            h: HEIGHT,
+            w: width,
+            h: height,
         },
         ..DisplayParams::default()
     });
@@ -271,6 +281,7 @@ fn harness(device: Device, on_release: Option<drmkit_scene_sources::OnRelease>) 
         ring,
         needs_modeset: true,
         fds,
+        size: (width, height),
     })
 }
 
@@ -323,13 +334,15 @@ impl Harness {
         let outcome = drmkit_core::commit_with_out_fence(&self.device, flags, |request, slot| {
             // Two sequential `&mut build` borrows, which is why `emit_frame`
             // taking the build outright removed the clones this used to need.
-            let (_, _damage_blobs) =
+            let (_, damage_blobs) =
                 emit_frame_damaged(request, map, &mut build, modeset_ref, Some(device))?;
             arm_acquire_fences(&mut build, request, map, true)?;
             if let Some(property) = out_fence_property {
                 request.add_property(crtc_id, property, slot)?;
             }
-            Ok(())
+            // Returned, so they outlive the commit: dropped here, they would
+            // be destroyed before it and the kernel would refuse the request.
+            Ok(damage_blobs)
         });
 
         match outcome {
@@ -362,8 +375,9 @@ impl Harness {
     ) -> Option<(LayerHandle, Rc<RefCell<ExternalDmaBufRing>>)> {
         let mut fds = Vec::new();
         let mut pitches = Vec::new();
+        let (width, height) = self.size;
         for _ in 0..SLOTS {
-            let (fd, pitch) = exported_buffer(&self.device, WIDTH, HEIGHT)?;
+            let (fd, pitch) = exported_buffer(&self.device, width, height)?;
             fds.push(fd);
             pitches.push(pitch);
         }
@@ -385,8 +399,8 @@ impl Harness {
             SourceFormat {
                 fourcc: fourcc::XRGB8888,
                 modifier: 0,
-                width: WIDTH,
-                height: HEIGHT,
+                width,
+                height,
             },
             &slots,
             None,
@@ -401,14 +415,14 @@ impl Harness {
             src_rect: Rect {
                 x: 0,
                 y: 0,
-                w: WIDTH,
-                h: HEIGHT,
+                w: width,
+                h: height,
             },
             dst_rect: Rect {
                 x,
                 y,
-                w: WIDTH,
-                h: HEIGHT,
+                w: width,
+                h: height,
             },
             ..DisplayParams::default()
         });
@@ -597,6 +611,14 @@ fn an_idle_scene_has_nothing_worth_committing_vkms() {
     }
 
     // Moving the layer is a change even though the producer said nothing.
+    if common::skip_if_primary_only(
+        &h.registry,
+        h.crtc_index,
+        "a layer moved within the screen for its second half",
+    ) {
+        h.teardown();
+        return;
+    }
     h.scene
         .layer_mut(h.layer)
         .expect("layer")
@@ -648,6 +670,10 @@ fn two_layers_each_get_their_own_releases_and_one_can_be_removed_vkms() {
         drmkit_testkit::skipped("no connected output with an importable ring");
         return;
     };
+
+    if common::skip_if_primary_only(&h.registry, h.crtc_index, "a second plane") {
+        return;
+    }
 
     let second_releases = Arc::new(AtomicU32::new(0));
     let counter = Arc::clone(&second_releases);
@@ -775,6 +801,9 @@ fn two_layers_damage_their_own_regions_in_one_frame_vkms() {
         drmkit_testkit::skipped("no connected output with an importable ring");
         return;
     };
+    if common::skip_if_primary_only(&h.registry, h.crtc_index, "a second plane") {
+        return;
+    }
     let Some((_second_layer, second_ring)) = h.add_ring_layer(WIDTH.cast_signed(), 0, None) else {
         drmkit_testkit::skipped("no second importable ring");
         return;

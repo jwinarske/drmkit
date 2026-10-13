@@ -658,3 +658,148 @@ fn the_gbm_producer_honors_the_allowed_modifiers_vkms() {
         refused.map(|source| source.format().modifier)
     );
 }
+
+/// A damaged frame reaches the kernel with its clips, where the driver takes
+/// them.
+///
+/// `FB_DAMAGE_CLIPS` is a blob the request names by id, so it has to outlive
+/// the commit. The backend emits inside the closure `commit_with_out_fence`
+/// commits after, and a blob dropped at the end of that closure is destroyed
+/// before the ioctl: the kernel then refuses every damaged frame with `EINVAL`
+/// (P-49). vkms exposes the property on no plane, so there it pins only that
+/// nothing claims a clip; the refusal needs a driver that takes damage, first
+/// seen on a `panel-mipi-dbi` panel.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn a_damaged_frame_reaches_the_kernel_with_its_clips_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let takes_damage = drmkit_display::DriverProfile::probe(&device)
+        .map(|profile| profile.fb_damage_clips)
+        .unwrap_or(false);
+
+    let mut producer = Damaging {
+        inner: GbmScanoutProducer::new(&device),
+    };
+    let mut backend = match ScanoutBackend::create(&device, &mut producer, &backend_config()) {
+        Ok(backend) => backend,
+        Err(error) => {
+            drmkit_testkit::skipped(&format!("no scanout output here ({error})"));
+            return;
+        }
+    };
+
+    let mut damaged = 0;
+    for frame in 0..4 {
+        let report = backend
+            .present(&device, AtomicCommitFlags::empty(), None)
+            .unwrap_or_else(|error| panic!("damaged frame {frame}: {error}"));
+        damaged += report.damaged_layers;
+    }
+
+    if takes_damage {
+        assert!(
+            damaged > 0,
+            "this driver takes FB_DAMAGE_CLIPS, so the frames' damage must reach it"
+        );
+    } else {
+        assert_eq!(
+            damaged, 0,
+            "the driver takes no damage property, so nothing should claim a clip"
+        );
+    }
+}
+
+/// Wraps a producer's sources so every buffer reports a small dirty region.
+struct Damaging<'a> {
+    inner: GbmScanoutProducer<'a>,
+}
+
+impl drmkit_present::ScanoutProducer for Damaging<'_> {
+    fn exportable_modifiers(&mut self, fourcc: u32) -> Vec<u64> {
+        self.inner.exportable_modifiers(fourcc)
+    }
+
+    fn create_buffer(
+        &mut self,
+        width: u32,
+        height: u32,
+        fourcc: u32,
+        allowed: &[u64],
+    ) -> Result<Box<dyn LayerBufferSource>, drmkit_present::ProducerError> {
+        let inner = self.inner.create_buffer(width, height, fourcc, allowed)?;
+        Ok(Box::new(DamagingSource { inner }))
+    }
+}
+
+struct DamagingSource {
+    inner: Box<dyn LayerBufferSource>,
+}
+
+impl LayerBufferSource for DamagingSource {
+    fn acquire(&mut self) -> Result<AcquiredBuffer, SourceError> {
+        let mut acquired = self.inner.acquire()?;
+        acquired.damage = vec![drmkit_scene::DamageRect {
+            x: 8,
+            y: 8,
+            w: 16,
+            h: 16,
+        }];
+        Ok(acquired)
+    }
+
+    fn release(&mut self, acquired: AcquiredBuffer) {
+        self.inner.release(acquired);
+    }
+
+    fn release_with_fence(&mut self, acquired: AcquiredBuffer, fence: Option<SyncFence>) {
+        self.inner.release_with_fence(acquired, fence);
+    }
+
+    fn wants_release_fence(&self) -> bool {
+        self.inner.wants_release_fence()
+    }
+
+    fn has_fresh_content(&self) -> bool {
+        self.inner.has_fresh_content()
+    }
+
+    fn on_retired(&mut self) {
+        self.inner.on_retired();
+    }
+
+    fn binding_model(&self) -> BindingModel {
+        self.inner.binding_model()
+    }
+
+    fn format(&self) -> SourceFormat {
+        self.inner.format()
+    }
+
+    fn map(
+        &mut self,
+        access: drmkit_dumb::MapAccess,
+    ) -> Result<drmkit_dumb::Mapping<'_>, SourceError> {
+        self.inner.map(access)
+    }
+
+    fn export_dma_buf(&mut self) -> Result<DmaBufDesc<'_>, SourceError> {
+        self.inner.export_dma_buf()
+    }
+
+    fn bind_to_plane(&mut self, plane_id: u32) -> Result<(), SourceError> {
+        self.inner.bind_to_plane(plane_id)
+    }
+
+    fn unbind_from_plane(&mut self, plane_id: u32) {
+        self.inner.unbind_from_plane(plane_id);
+    }
+
+    fn on_session_paused(&mut self) {
+        self.inner.on_session_paused();
+    }
+
+    fn on_session_resumed(&mut self, device: &Device) -> Result<(), SourceError> {
+        self.inner.on_session_resumed(device)
+    }
+}

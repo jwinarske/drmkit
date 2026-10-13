@@ -9,7 +9,7 @@ use std::os::fd::OwnedFd;
 
 use drm::control::Device as ControlDevice;
 use drmkit_core::{
-    AtomicCommitFlags, AtomicRequest, Device, Mode, ObjectType, PropertyStore,
+    AtomicCommitFlags, AtomicRequest, Device, Mode, ObjectType, PropertyBlob, PropertyStore,
     commit_with_out_fence,
 };
 use drmkit_display::{DriverProfile, ScanoutTarget};
@@ -419,10 +419,13 @@ impl ScanoutBackend {
         // back afterwards, and `build` is borrowed mutably inside.
         let programmed: Vec<u32> = build.plan().iter().map(|entry| entry.plane_id).collect();
 
-        let emit = |request: &mut AtomicRequest, slot: u64| -> Result<(), drmkit_core::CoreError> {
-            // The blobs live to the end of this closure, which is where the
-            // commit happens -- the request holds only their ids.
-            let (_, _damage_blobs) = emit_frame_damaged(
+        let emit = |request: &mut AtomicRequest,
+                    slot: u64|
+         -> Result<Vec<PropertyBlob<'_>>, drmkit_core::CoreError> {
+            // The blobs are handed back for `commit_with_out_fence` to hold
+            // across the commit: the request holds only their ids, and the
+            // end of this closure comes before the ioctl, not after it.
+            let (_, damage_blobs) = emit_frame_damaged(
                 request,
                 &self.map,
                 &mut build,
@@ -436,7 +439,7 @@ impl ScanoutBackend {
             if let Some(property) = out_fence_property {
                 request.add_property(crtc_id, property, slot)?;
             }
-            Ok(())
+            Ok(damage_blobs)
         };
 
         let outcome = commit_with_out_fence(device, flags, emit);

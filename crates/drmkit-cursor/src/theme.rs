@@ -41,7 +41,9 @@ struct Record {
     inherits: Vec<String>,
 }
 
-/// What a resolve is keyed on. Both halves fully determine the outcome.
+/// What a resolve is keyed on. With an empty `preferred_theme` the outcome
+/// also depends on `$XCURSOR_THEME`, read by the first lookup and cached
+/// under the empty key.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct CacheKey {
     cursor_name: String,

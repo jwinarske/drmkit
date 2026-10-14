@@ -13,8 +13,8 @@ keywords = ["drm", "kms", "fourcc", "modifier", "afbc"]
 
 [features]
 default = ["std"]
-# Only gates `std::error::Error` impls and `Display` conveniences; the parser,
-# the tables, and every classifier are `no_std + alloc` regardless.
+# Gates nothing yet: reserved for `std`-only conveniences. The parser, the
+# tables, and every classifier are `no_std + alloc` regardless.
 std = []
 
 [dependencies]

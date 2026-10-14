@@ -110,7 +110,7 @@ pub const fn src_over(dst: u32, src: u32) -> u32 {
 /// PNG stores straight alpha, so this runs on the way out. Fully opaque and
 /// fully transparent are exact; everything between divides by the alpha it was
 /// multiplied by, rounding to nearest, and cannot recover precision that the
-/// premultiply threw away. A pixel at alpha 1 has three bits of colour left,
+/// premultiply threw away. A pixel at alpha 1 has one bit of colour left,
 /// and no amount of care here puts them back.
 ///
 /// Returns `[r, g, b, a]`, the order PNG wants.

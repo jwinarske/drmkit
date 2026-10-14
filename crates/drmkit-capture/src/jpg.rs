@@ -37,7 +37,7 @@ const QUALITY_RANGE: std::ops::RangeInclusive<u8> = 1..=100;
 /// The pixels are un-premultiplied first, exactly as the PNG path does.
 /// Encoding premultiplied colour without its alpha darkens every partly
 /// transparent pixel toward black — a translucent decoration would come out
-/// looking like a dark one, rather than like itself over white.
+/// looking like a dark one, rather than in its own colour at full opacity.
 ///
 /// # Errors
 ///
@@ -84,7 +84,8 @@ pub struct Nv12Frame<'a> {
     pub luma: &'a [u8],
     /// Bytes between luma rows.
     pub luma_stride: usize,
-    /// `height / 2` rows of interleaved Cb/Cr at `chroma_stride`.
+    /// `height.div_ceil(2)` rows of interleaved Cb/Cr, each at least
+    /// `width.div_ceil(2) * 2` bytes, at `chroma_stride`.
     pub chroma: &'a [u8],
     /// Bytes between chroma rows.
     pub chroma_stride: usize,
@@ -102,9 +103,9 @@ pub struct Nv12Frame<'a> {
 ///
 /// # Errors
 ///
-/// [`CaptureError::EmptyImage`] for zero dimensions or planes too short for
-/// the dimensions given, and [`CaptureError::Io`] if the file cannot be
-/// written.
+/// [`CaptureError::EmptyImage`] for zero dimensions, strides narrower than a
+/// row, or planes too short for the dimensions given, and [`CaptureError::Io`]
+/// if the file cannot be written.
 pub fn write_jpg_nv12(
     frame: &Nv12Frame<'_>,
     path: impl AsRef<Path>,

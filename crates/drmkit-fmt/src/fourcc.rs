@@ -3,9 +3,10 @@
 
 //! DRM `FourCC` pixel-format codes and their bit depths.
 //!
-//! Port of the `format_bpp` half of `src/core/format.hpp` / `format.cpp`. The
-//! constants mirror `drm_fourcc.h`; they are spelled out here rather than bound
-//! from the header so the crate stays `no_std` and needs no build script.
+//! Port of `format_name` and `format_bpp` from `src/core/format.hpp` /
+//! `format.cpp`. The constants mirror `drm_fourcc.h`; they are spelled out
+//! here rather than bound from the header so the crate stays `no_std` and
+//! needs no build script.
 
 /// Build a `FourCC` code from four ASCII bytes, matching the `fourcc_code`
 /// macro in `drm_fourcc.h`.
@@ -334,8 +335,9 @@ pub const fn format_name(format: u32) -> &'static str {
 /// Planar and semi-planar layouts (the `NV*` family, `P010`/`P012`/`P016`,
 /// `YUV*`/`YVU*`) report `0`: per-plane depth differs between the luma and
 /// chroma planes. Callers needing total frame bytes go through
-/// [`crate::scanout_cost_bytes`], which expands those cases by chroma
-/// subsampling. A caller that reads `0` as "free" has misread the contract.
+/// [`crate::scanout_cost_bytes`], which expands the common ones by chroma
+/// subsampling and charges the rest a conservative 32bpp. A caller that reads
+/// `0` as "free" has misread the contract.
 ///
 /// The packed 8-bit YUV formats are single-plane with an exact depth, so they
 /// do get one: 16 for the 4:2:2 `YUYV`/`YVYU`/`UYVY`/`VYUY`, 32 for `AYUV`.

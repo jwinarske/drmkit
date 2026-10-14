@@ -28,8 +28,8 @@ pub enum PlanePath {
     AtomicCursor,
     /// An overlay plane, driven atomically.
     ///
-    /// For hardware with no cursor plane, or whose cursor plane cannot take
-    /// `ARGB8888`. Costs an overlay the compositor might have wanted.
+    /// For hardware with no cursor plane, or whose cursor plane can take none
+    /// of [`CURSOR_FORMATS`]. Costs an overlay the compositor might have wanted.
     AtomicOverlay,
     /// `drmModeSetCursor`, the legacy path.
     ///
@@ -74,10 +74,9 @@ pub struct SelectedPlane {
 /// legacy path requires; the rest are taken only when a plane offers nothing
 /// better.
 ///
-/// This list is why the port lights a cursor plane on hardware the reference
-/// falls back from. `plane_supports_argb8888` there tests one `FourCC` for
-/// equality, so Tegra's cursor plane -- `RGBA8888` only -- is rejected and an
-/// overlay is spent on a cursor the dedicated hardware could have carried.
+/// The same list, in the same order, as the reference's `k_cursor_formats`:
+/// Tegra's cursor plane, `RGBA8888` only, carries a cursor rather than an
+/// overlay being spent on one.
 pub const CURSOR_FORMATS: [u32; 4] = [
     drmkit_fmt::fourcc::ARGB8888,
     drmkit_fmt::fourcc::RGBA8888,
@@ -116,7 +115,8 @@ fn usable(plane: &PlaneCapabilities) -> Option<u32> {
 /// - [`CursorError::NoPlane`] when nothing on this CRTC can carry a cursor and
 ///   `allow_legacy` is false.
 /// - [`CursorError::PlaneUnusable`] when `forced` names a plane that does not
-///   exist, cannot feed this CRTC, or cannot take `ARGB8888`.
+///   exist, cannot feed this CRTC, or can take none of [`CURSOR_FORMATS`]
+///   linearly.
 pub fn select_plane(
     registry: &PlaneRegistry,
     crtc_index: u32,

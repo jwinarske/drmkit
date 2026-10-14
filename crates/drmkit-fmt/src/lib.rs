@@ -32,8 +32,9 @@
 //!   `drmkit-core`'s property layer, which hands the bytes to
 //!   [`FormatTable::from_blob`]. The C++ had already split the parser out for
 //!   testability; this makes the split structural.
-//! - `ScanoutBuffer` — GBM allocation and `AddFB2WithModifiers`, which land in
-//!   `drmkit-gbm` (phase 4).
+//! - `ScanoutBuffer` — not ported as one type: GBM allocation is
+//!   `drmkit-gbm`'s `GbmBuffer`, and the framebuffer modifier rule is
+//!   `drmkit-core`'s `framebuffer_modifier`.
 //!
 //! # Example
 //!

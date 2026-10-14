@@ -3,12 +3,12 @@
 
 //! Bridge from the drmkit sink into [`tracing`].
 //!
-//! Enabled by the `tracing` feature. This is the mechanism behind plan §4.8:
-//! the C++ side's per-category environment switches (`DRM_ALLOC_DEBUG`,
-//! `DRM_EXT_DMABUF_DEBUG`) — thresholds that are deliberately *not* vetoed by
-//! the global level — map onto `tracing`'s per-target directives natively.
-//! `RUST_LOG=drmkit_planes::alloc=trace` is the drmkit spelling of
-//! `DRM_ALLOC_DEBUG=1`.
+//! Enabled by the `tracing` feature. Everything arrives under the single
+//! `drmkit` target, so `RUST_LOG=drmkit=debug` admits it. The per-category
+//! environment switches (`DRM_ALLOC_DEBUG`, `DRM_EXT_DMABUF_DEBUG`) -- the
+//! C++ side's thresholds, deliberately *not* vetoed by the global level --
+//! still gate their channels: `tracing` filters what they emit, but does not
+//! replace them.
 
 use crate::{LogLevel, set_log_level, set_log_sink};
 

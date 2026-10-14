@@ -4,7 +4,7 @@
 //! Putting a cursor on a plane and keeping it there.
 //!
 //! This is where the pieces meet: [`select_plane`] picks the plane,
-//! [`probe_size`] settles the buffer size, [`compose`] draws a frame into the
+//! [`probe_size`] settles the buffer size, [`compose`](crate::compose) draws a frame into the
 //! buffer that is not on screen, [`PingPong`] says which that is, and [`stage`]
 //! writes the result onto the plane.
 //!
@@ -122,10 +122,12 @@ impl<'a> Renderer<'a> {
     ///
     /// - [`CursorError::NoPlane`] or [`CursorError::PlaneUnusable`] from
     ///   [`select_plane`].
-    /// - [`CursorError::Unsupported`] if the only option is the legacy path,
-    ///   which is not implemented here yet.
+    /// - [`CursorError::Unsupported`] on the legacy path, if `config.rotation`
+    ///   is not [`Rotation::None`] or the CRTC refuses a cursor -- no cursor
+    ///   hardware, so composite one instead.
     /// - [`CursorError::Io`] if a buffer cannot be allocated or the plane's
-    ///   properties cannot be read.
+    ///   properties cannot be read, or, on the legacy path, if the caller is
+    ///   not DRM master.
     pub fn create(
         device: &'a Device,
         registry: &PlaneRegistry,
@@ -393,7 +395,8 @@ impl<'a> Renderer<'a> {
     /// # Errors
     ///
     /// [`CursorError::MissingProperty`] if the plane lacks a required
-    /// property.
+    /// property -- always, on [`PlanePath::Legacy`],
+    /// which has no plane to stage: use [`Renderer::commit`] there.
     pub fn stage_into(&self, request: &mut AtomicRequest) -> Result<usize, CursorError> {
         let buffer = &self.buffers[self.which.commit_target()];
         let fb_id = if self.visible {
@@ -599,7 +602,7 @@ fn cursor_cap(device: &Device) -> Option<u32> {
 /// channels in a different order, so each is a permutation of that word rather
 /// than a conversion: no precision is lost and no channel is invented.
 ///
-/// A format not in [`CURSOR_FORMATS`] cannot be selected, so the fallthrough
+/// A format not in [`CURSOR_FORMATS`](crate::CURSOR_FORMATS) cannot be selected, so the fallthrough
 /// is unreachable by construction; it returns the pixel unchanged rather than
 /// panicking, because a wrongly ordered cursor is a visible bug and a dead
 /// process is a black screen.

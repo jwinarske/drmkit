@@ -35,9 +35,10 @@ pub mod vendor {
     pub const AMLOGIC: u8 = 0x0a;
     /// `StarFive` / `VeriSilicon` DC8200.
     ///
-    /// Out-of-tree (`starfive-tech/linux`): mainline `drm_fourcc.h` stops its
-    /// vendor list at [`AMLOGIC`]. Carried because the `VisionFive` 2 is a
-    /// first-class HIL target.
+    /// Out-of-tree (`starfive-tech/linux`), and it collides with mainline:
+    /// `drm_fourcc.h` now assigns `0x0b` to `DRM_FORMAT_MOD_VENDOR_MTK`, so a
+    /// `MediaTek` modifier classifies and describes as VS. Carried, as upstream
+    /// carries it, because the `VisionFive` 2 is a first-class HIL target.
     pub const VS: u8 = 0x0b;
 }
 
@@ -51,11 +52,12 @@ pub const fn mod_code(vendor: u8, body: u64) -> u64 {
 /// Legacy `DRM_FORMAT_MOD_ARM_16X16_BLOCK_U_INTERLEAVED`.
 ///
 /// Type field [`arm_type::MISC`] with body 1, i.e. `0x0810_0000_0000_0001`.
-/// Worth naming explicitly: `fourcc_mod_code(ARM, 1)` — which the C++ carries
-/// as an `#ifndef` fallback for headers predating the type-field encoding —
-/// is **not** this value. It is `DRM_FORMAT_MOD_ARM_AFBC(BLOCK_SIZE_16x16)`,
-/// so a build picking up that fallback would classify 16x16 AFBC as tiling and
-/// silently under-count its bandwidth saving.
+/// Worth naming explicitly: `fourcc_mod_code(ARM, 1)` — which the C++ used as
+/// its `#ifndef` fallback for headers predating the type-field encoding, until
+/// drm-cxx `2eba043` — is **not** this value. It is
+/// `DRM_FORMAT_MOD_ARM_AFBC(BLOCK_SIZE_16x16)`, so a build picking up that
+/// fallback would classify 16x16 AFBC as tiling and silently under-count its
+/// bandwidth saving.
 pub const ARM_16X16_BLOCK_U_INTERLEAVED: Modifier =
     Modifier(mod_code(vendor::ARM, (arm_type::MISC << 52) | 1));
 
@@ -347,7 +349,7 @@ pub const fn rotation_compatible(m: Modifier, r: Rotation) -> bool {
 }
 
 impl fmt::Display for Modifier {
-    /// Renders the human-readable description from [`crate::describe`].
+    /// Renders the human-readable description from [`crate::describe()`].
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&crate::describe(*self))
     }

@@ -199,8 +199,10 @@ fn box_downscale(frame: &Frame, rotation: Rotation, rotated: (u32, u32), target:
 ///
 /// # Panics
 ///
-/// If `dst` is too small for `dst_h` rows of `stride_px`, which is a caller
-/// error rather than anything a cursor file can cause.
+/// If `dst` is too small for `dst_h` rows of `stride_px`, if `stride_px` is
+/// less than `dst_w`, or if `frame` is inconsistent -- fewer pixels than
+/// `width * height`, or a zero dimension. These are caller errors; a loaded
+/// [`Cursor`](crate::Cursor) cannot cause them.
 pub fn compose(
     frame: &Frame,
     rotation: Rotation,

@@ -80,7 +80,8 @@ pub enum CursorError {
     #[error("not a usable cursor image")]
     InvalidImage,
 
-    /// The file could not be read.
+    /// A file read or an ioctl failed: the cursor file, a buffer allocation, a
+    /// property read, or a commit. Carries the underlying error's text.
     #[error("io: {0}")]
     Io(String),
 
@@ -88,10 +89,11 @@ pub enum CursorError {
     #[error("no plane on this CRTC can carry a cursor")]
     NoPlane,
 
-    /// The only available path is one this does not implement yet.
+    /// The only available path cannot carry this cursor.
     ///
     /// Today that means legacy `drmModeSetCursor`, on a controller with no
-    /// plane that can carry a cursor. A caller told this can composite a
+    /// cursor hardware at all, or with a rotation the legacy call cannot
+    /// express. A caller told this can composite a
     /// cursor instead, which beats a renderer that fails on its first show.
     #[error("no supported cursor path is available")]
     Unsupported,
@@ -102,8 +104,8 @@ pub enum CursorError {
     #[error("the plane lacks a required property")]
     MissingProperty,
 
-    /// A caller-named plane does not exist, cannot feed this CRTC, or cannot
-    /// take `ARGB8888`.
+    /// A caller-named plane does not exist, cannot feed this CRTC, or can take
+    /// none of [`CURSOR_FORMATS`].
     ///
     /// Distinct from [`CursorError::NoPlane`]: the caller overrode the policy
     /// and the override does not work. Falling back silently would leave them

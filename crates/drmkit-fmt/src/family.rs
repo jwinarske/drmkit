@@ -18,8 +18,9 @@
 //!
 //! Generalizing the *mechanism* must not widen the *behavior*. Today exactly
 //! one family declares a non-exact match — Broadcom SAND — and it matches the
-//! upstream predicate byte for byte. Arm AFBC is modeled here for description
-//! and classification, but its block-size and flag variants match **exactly**,
+//! upstream predicate byte for byte. Arm AFBC has no family: it is decoded only
+//! for description and classification, and its block-size and flag variants
+//! match **exactly**,
 //! because upstream requires exact matches for them and loosening that would
 //! let a plane accept a layout the display engine cannot fetch.
 //!
@@ -109,7 +110,8 @@ pub const fn sand128_col_height(height: u64) -> Modifier {
     ))
 }
 
-/// The column height baked into a SAND modifier, or `None` if it is not SAND.
+/// The column height baked into a `SAND64`, `SAND128` or `SAND256` modifier,
+/// or `None` for anything else, `SAND32` included.
 #[must_use]
 pub const fn sand_col_height(m: Modifier) -> Option<u64> {
     match m.family() {

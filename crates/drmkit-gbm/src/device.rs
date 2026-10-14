@@ -18,7 +18,7 @@ pub(crate) const SCANOUT_RENDERING: u32 = (1 << 0) | (1 << 2);
 /// buffers and surfaces outlive the [`GbmDevice`] that made them. Not every
 /// libgbm keeps a descriptor of its own -- the SA8155P's frees through this
 /// one -- so every buffer and surface holds a share of this, and the device
-/// and the number stay open until the last of them is gone.
+/// and the descriptor stay open until the last of them is gone.
 pub(crate) struct DeviceInner {
     pub(crate) gbm: &'static Gbm,
     pub(crate) ptr: DevicePtr,

@@ -5,29 +5,29 @@
 //!
 //! Port of `src/time/clock.{hpp,cpp}` from drm-cxx @ `dc2915b`.
 //!
-//! Subsystems that animate, pace, or schedule take a [`&dyn Clock`](Clock) so
-//! callers can:
+//! A [`Clock`] lets a caller:
 //!
 //! - sync animation with an external presentation clock — a compositor that
 //!   already tracks vblank/present timestamps hands the same time point to
 //!   drmkit and to its own renderers;
-//! - freeze or step time in tests without sleeping (see [`ManualClock`]);
-//! - consolidate on a single clock as other timing-aware subsystems
-//!   (page-flip pacing, input debouncing, animation cycles) land.
+//! - freeze or step time in tests without sleeping (see [`ManualClock`]).
 //!
-//! Callers who do not care get [`default_clock`] and never construct a clock.
+//! In this tree, page-flip dispatch samples [`default_clock`] for its timeout
+//! budget, and the cursor renderer takes elapsed time from its caller rather
+//! than a clock. Callers who do not care get [`default_clock`] and never
+//! construct a clock.
 //!
 //! # Why a raw nanosecond count and not `std::time::Instant`
 //!
 //! [`Timestamp`] is a bare `CLOCK_MONOTONIC` nanosecond count, not an
 //! `Instant`. `Instant` is opaque: it cannot be constructed from a value, so
-//! it can express neither of the first two bullets above. The kernel hands
+//! it can express neither of the bullets above. The kernel hands
 //! back page-flip and vblank timestamps as `CLOCK_MONOTONIC` — the whole point
 //! of the abstraction is that a compositor can pass one of *those* straight in.
 //!
 //! This is a deliberate deviation from the C++, which lifts
 //! `std::chrono::steady_clock`'s `time_since_epoch()` onto its own tag.
-//! `steady_clock` is `CLOCK_MONOTONIC` on glibc in practice, so the values
+//! `steady_clock` is `CLOCK_MONOTONIC` on libstdc++ and libc++ in practice, so the values
 //! agree; naming `CLOCK_MONOTONIC` outright makes the contract explicit rather
 //! than incidental.
 

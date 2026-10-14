@@ -826,6 +826,72 @@ fn the_canvas_plane_turns_off_when_composition_stops_vkms() {
     fx.teardown();
 }
 
+/// A canvas negotiated for the primary carries a composited layer to the
+/// screen in a format that plane scans out.
+///
+/// The single-plane fallback (`enable_composition_on`): on a controller with
+/// one plane and no `ARGB8888` -- a `panel-mipi-dbi` panel offers `RG16` and
+/// `XR24` -- an `ARGB8888` canvas cannot even be framed, and every layer that
+/// overflows the plane would be dropped. The canvas blends in `ARGB8888` and
+/// converts once at flush, so what has to hold is that the kernel takes the
+/// result on the primary and that the color survives the conversion. On vkms
+/// the negotiation lands on `ARGB8888` and the case pins the same path.
+#[test]
+#[ignore = "needs a DRM device"]
+fn a_canvas_in_its_planes_format_reaches_the_screen_vkms() {
+    // Red in every format the canvas writes: 565 keeps the top five bits.
+    const RED: u32 = 0x00F8_0000;
+
+    let _guard = card_guard();
+    let Some(device) = common::open_card() else {
+        return;
+    };
+    let Some(mut fx) = common::fixture(device) else {
+        drmkit_testkit::skipped("no connected output");
+        return;
+    };
+    let Some((primary, canvas_format, negotiated)) = fx.enable_composition_on_primary() else {
+        drmkit_testkit::skipped("the primary scans out nothing the canvas can write");
+        fx.teardown();
+        return;
+    };
+    let (w, h) = fx.mode_size();
+    let Some(layer) = fx.add_layer(0, 0, w, h) else {
+        drmkit_testkit::skipped("no layer buffer this device will frame");
+        fx.teardown();
+        return;
+    };
+    fx.paint(layer, RED).expect("paint");
+    fx.scene
+        .layer_mut(layer)
+        .expect("the layer")
+        .set_force_composited(true);
+
+    let report = fx.commit().expect("the composited frame");
+    assert_eq!(report.layers_composited, 1, "{report:?}");
+    assert!(report.accounting_balances(), "{report:?}");
+    assert_eq!(
+        canvas_format, negotiated,
+        "the canvas must be in the format negotiated for the primary"
+    );
+    assert!(
+        fx.plane_framebuffer(primary).is_some_and(|fb| fb != 0),
+        "with one layer, composited, the canvas is all there is to scan out"
+    );
+
+    let Some(shown) = fx.pixel_at(w / 2, h / 2) else {
+        drmkit_testkit::skipped("the CRTC cannot be read back");
+        fx.teardown();
+        return;
+    };
+    assert_eq!(
+        shown, RED,
+        "the composited layer's color must survive the canvas's conversion \
+         to {canvas_format:#010x}"
+    );
+    fx.teardown();
+}
+
 /// Removing layers until the rest fit the planes takes the composited ones off
 /// the canvas.
 ///

@@ -368,15 +368,16 @@ mod edid {
 
     /// A display that advertises no HDR reports none.
     ///
-    /// **A deliberate divergence from drm-cxx as it stands.** It populates both
-    /// optionals whenever the C accessor returns non-null, and
-    /// libdisplay-info returns a zeroed struct rather than null when there is
-    /// nothing to report — so upstream's `hdr` is `Some` for every display
-    /// ever. Its own test asserts the opposite, and never ran to find out.
+    /// Until `1b435c3` drm-cxx populated both optionals whenever the C
+    /// accessor returned non-null, and libdisplay-info returns a zeroed struct
+    /// rather than null when there is nothing to report — so upstream's `hdr`
+    /// was `Some` for every display ever. Its own test asserted the opposite,
+    /// and never ran to find out (drm-cxx#241). Upstream now gates both on
+    /// what the display advertises, as the port did, and the EDID oracle's
+    /// recorded answer for this blob says so.
     ///
     /// This blob is pre-CTA EDID 1.3 with no extension block, so there is no
-    /// HDR metadata in it to report. Tracked as drm-cxx#241; the port follows
-    /// whichever way that goes.
+    /// HDR metadata in it to report.
     #[test]
     fn a_display_advertising_no_hdr_reports_none() {
         let info = parse_edid(&DELL).expect("parse");

@@ -189,8 +189,8 @@ pub fn parse_edid(blob: &[u8]) -> Result<ConnectorInfo, EdidError> {
     let raw_hdr = info.hdr_static_metadata();
     // `traditional_sdr` is deliberately absent from this test.
     // libdisplay-info sets it for any base EDID, so a gate that counted it
-    // would be `Some` for every display ever made — the same defect as
-    // upstream's, arrived at differently. This is *HDR* static metadata:
+    // would be `Some` for every display ever made — the defect upstream had
+    // until `1b435c3`, arrived at differently. This is *HDR* static metadata:
     // traditional SDR gamma alone means the display said nothing about HDR.
     let advertises_hdr = raw_hdr.type1 || raw_hdr.traditional_hdr || raw_hdr.pq || raw_hdr.hlg;
     let hdr = advertises_hdr.then_some(HdrStaticMetadata {

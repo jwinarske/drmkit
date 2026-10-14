@@ -192,7 +192,16 @@ impl FrameLifecycle {
                 // nothing new about the cache.
                 let invalidate = report.fb_delta_fast_path;
                 if invalidate {
-                    self.warned_fast_path_reject = true;
+                    // Once per scene, as upstream does: a rejection that keeps
+                    // coming back means a property was misclassified as
+                    // content, and saying so every frame would bury it.
+                    if !self.warned_fast_path_reject {
+                        self.warned_fast_path_reject = true;
+                        drmkit_log::log_warn!(
+                            "scene: FB-only fast-path commit rejected by kernel; \
+                             invalidating cached allocation and re-testing next frame"
+                        );
+                    }
                     // The frame is dropped, not corrupted: the cache is
                     // dropped, the next frame re-searches, and the report no
                     // longer claims a fast path that did not hold.
@@ -208,8 +217,8 @@ impl FrameLifecycle {
         }
     }
 
-    /// Whether the fast-path rejection has been warned about already, so the
-    /// caller logs once rather than every frame.
+    /// Whether a fast-path rejection has been warned about yet. Set by
+    /// [`finalize`](Self::finalize), which logs the first one and no other.
     #[must_use]
     pub const fn has_warned_fast_path_reject(&self) -> bool {
         self.warned_fast_path_reject

@@ -20,7 +20,7 @@ sources are not.
 See the [crate documentation](https://docs.rs/drmkit) for which member crate
 does what, or <https://github.com/jwinarske/drmkit> for the porting plan.
 
-Upstream baseline: `jwinarske/drm-cxx` @ `4a0b64a` (v2.0.1+6).
+Upstream baseline: `jwinarske/drm-cxx` @ `2b260d0` (v5.0.0).
 
 ## License
 

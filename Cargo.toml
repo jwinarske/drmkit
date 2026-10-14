@@ -1,6 +1,6 @@
 # drmkit — Rust port of drm-cxx (behavioral-parity port; see plan.md).
 #
-# Baseline: jwinarske/drm-cxx @ 4a0b64a (v2.0.1+6, PR #238).
+# Baseline: jwinarske/drm-cxx @ 2b260d0 (v5.0.0, PR #362).
 # The crate map in plan.md §5 lists every crate and what it ports.
 
 [workspace]

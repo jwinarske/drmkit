@@ -8,8 +8,8 @@ composition, and scanout.
 [![vkms](https://github.com/jwinarske/drmkit/actions/workflows/vkms.yml/badge.svg)](https://github.com/jwinarske/drmkit/actions/workflows/vkms.yml)
 
 > **Status: phases 0–4 met, phase 5 (the v0.1.0-minimal ship gate) under way.**
-> Twenty-two crates; 919 unit and integration tests plus 27 doctests on the
-> host, 180 more that need a card, and the host suite again under qemu on the
+> Twenty-two crates; 1,037 unit and integration tests plus 27 doctests on the
+> host, 219 more that need a card, and the host suite again under qemu on the
 > aarch64 and riscv64 cross lanes. All six [`INVARIANTS.md`](INVARIANTS.md) contracts are
 > pinned against a real device. A scene can build a frame, allocate planes,
 > commit it, composite what it cannot place, and hand buffers back on the right
@@ -17,16 +17,16 @@ composition, and scanout.
 > tested.
 >
 > The present spine, cross-output orchestration, GBM surface sources and
-> client-side decorations have since landed. Of the 107 test files upstream has
-> at v4.1.0, 71 are ported and 14 partial. Of the 19 pending, 4 arrived upstream
-> after the `4a0b64a` baseline and wait on porting its allocator and canvas
-> changes. The other 15 do **not** wait on unwritten crates — each waits on
-> hardware or a library this tree does not have: a working GPU render node, the
-> `vgem`, `vivid` or `vicodec` modules, or NVIDIA silicon for EGL streams.
+> client-side decorations have since landed. The port matches drm-cxx v5.0.0
+> (`2b260d0`): of the 108 test files upstream has there, 75 are ported, 14
+> partial and 3 not applicable. Each of the 16 pending waits on hardware or a
+> library this tree does not have: a working GPU render node, the `vgem`,
+> `vivid` or `vicodec` modules, NVIDIA silicon for EGL streams, or the GL,
+> Vulkan, V4L2 and `GStreamer` producers that sit on top of them.
 > [`TEST_PARITY.md`](TEST_PARITY.md) records
 > which, per file, and [`docs/parity-findings.md`](docs/parity-findings.md)
-> records the three findings still open: two wait on hardware (P-30, P-33),
-> and P-42 is partly by design.
+> records the three findings still open: two wait on hardware (P-30, P-14),
+> and P-42 is by design.
 > See [`plan.md`](plan.md) for the full porting plan.
 >
 > It has run on more than vkms. amdgpu and vc4 (Raspberry Pi 5) by hand, a
@@ -160,7 +160,7 @@ that sat open for want of hardware (P-6, on two Allwinner boards) and found a
 live defect on hardware nobody here owns (P-23, Tegra's cursor plane). See
 [`docs/validation.md`](docs/validation.md).
 
-**Upstream baseline:** `jwinarske/drm-cxx` @ `4a0b64a` (v2.0.1+6, PR #238).
+**Upstream baseline:** `jwinarske/drm-cxx` @ `2b260d0` (v5.0.0, PR #362).
 
 ## What this is
 

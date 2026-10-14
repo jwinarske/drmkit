@@ -8,6 +8,7 @@
 
 use std::sync::Mutex;
 
+use drm::Device as _;
 use drm::control::Device as _;
 use drmkit_core::{Device, ObjectType, PropertyStore};
 use drmkit_planes::{PlaneRegistry, PlaneType};
@@ -275,4 +276,45 @@ fn rotation_entry_count(device: &Device, plane_id: u32) -> u32 {
     drm_ffi::mode::get_property(device.as_fd(), id, Some(&mut values), Some(&mut enums))
         .expect("get_property");
     u32::try_from(enums.len()).expect("a property has few entries")
+}
+
+/// Cursor planes carry the device's cursor size caps, and no other plane
+/// does.
+///
+/// Parity port of `tests/integration/test_plane_registry_vkms.cpp`
+/// (`CursorPlanesCarryDeviceCursorCaps`, drm-cxx `50ae097`). Until then the
+/// probe left both at zero on every plane, so the allocator's guard against a
+/// layer larger than the cursor cap never fired on a real device.
+#[test]
+#[ignore = "needs a DRM device"]
+fn cursor_planes_carry_the_devices_cursor_caps() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+
+    let cap = |cap| {
+        device
+            .get_driver_capability(cap)
+            .ok()
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(0)
+    };
+    let caps = (
+        cap(drm::DriverCapability::CursorWidth),
+        cap(drm::DriverCapability::CursorHeight),
+    );
+
+    let registry = PlaneRegistry::probe(&device).expect("probe");
+    let mut cursors = 0;
+    for plane in registry.all() {
+        let carried = (plane.cursor_max_w, plane.cursor_max_h);
+        if plane.plane_type == PlaneType::Cursor {
+            cursors += 1;
+            assert_eq!(carried, caps, "cursor plane {}", plane.id);
+        } else {
+            assert_eq!(carried, (0, 0), "plane {} is not a cursor", plane.id);
+        }
+    }
+    if cursors == 0 {
+        drmkit_testkit::skipped("no cursor plane on this device (vkms: enable_cursor=1)");
+    }
 }

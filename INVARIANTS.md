@@ -11,7 +11,7 @@ a latent runtime hazard into a compile error, that is noted — but the timing
 contracts still need their vkms pins, because ownership cannot express "two
 commits deep".
 
-**Upstream baseline:** `jwinarske/drm-cxx` @ `4a0b64a` (v2.0.1+6, PR #238).
+**Upstream baseline:** `jwinarske/drm-cxx` @ `2b260d0` (v5.0.0, PR #362).
 
 The per-crate `Port of ... @ dc2915b` notes are provenance, not this: they
 record the revision each crate was ported from, which does not change when the

@@ -131,6 +131,10 @@ const AMD_DCC_SHIFT: u64 = 13;
 /// The default is [`Modifier::LINEAR`], matching the C++ `Modifier` whose
 /// member initializer is `DRM_FORMAT_MOD_LINEAR`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct Modifier(pub u64);
 
 impl Default for Modifier {
@@ -205,6 +209,10 @@ impl From<Modifier> for u64 {
 /// class would silently inherit some other class's bonus. Adding a variant
 /// should break those consumers so each decides what the new class is worth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[allow(
+    clippy::exhaustive_enums,
+    reason = "drmkit-planes scores it with an exhaustive match, so a new class fails to compile until it is scored"
+)]
 pub enum BandwidthClass {
     /// Raw bytes, poor DRAM locality.
     Linear,
@@ -287,6 +295,10 @@ pub const fn classify(m: Modifier) -> BandwidthClass {
 /// Display-plane rotation. 90/270 transpose the scanout fetch order; 0/180 do
 /// not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[allow(
+    clippy::exhaustive_enums,
+    reason = "a closed set: there is no further variant to add"
+)]
 pub enum Rotation {
     /// No rotation.
     #[default]

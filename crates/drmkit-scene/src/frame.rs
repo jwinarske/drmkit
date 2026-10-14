@@ -20,6 +20,7 @@ use crate::report::CommitReport;
 
 /// What the kernel said about a commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum KernelResult {
     /// Applied. For a real commit this means a flip is on its way.
     Ok,
@@ -35,6 +36,7 @@ pub enum KernelResult {
 
 /// What one commit was.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CommitKind {
     /// A real commit. May arm a page-flip event.
     Real {
@@ -47,6 +49,7 @@ pub enum CommitKind {
 
 /// What the scene must do after a commit.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct FrameOutcome {
     /// Buffers to hand back to their sources, and why.
     pub released: Released,
@@ -246,6 +249,7 @@ impl FrameLifecycle {
 /// to contribute is **skipped**, counted, and retried next frame — it is not a
 /// failure, and it must not abort the commit.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct AcquireTally {
     /// Layers that produced a buffer.
     pub acquired: usize,

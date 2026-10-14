@@ -10,6 +10,7 @@ use crate::modifier::Modifier;
 /// The cached outcome of probing a `(crtc, plane, fourcc, modifier)` tuple with
 /// an atomic `TEST_ONLY` commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum Verdict {
     /// Never probed.
     #[default]

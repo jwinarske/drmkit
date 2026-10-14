@@ -19,6 +19,10 @@ use drmkit_sync::SyncFence;
 /// `fd` is caller-owned — the source duplicates it, so the caller may close
 /// theirs the moment the constructor returns.
 #[derive(Debug, Clone, Copy)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct ExternalPlane<'a> {
     /// The DMA-BUF descriptor.
     pub fd: BorrowedFd<'a>,

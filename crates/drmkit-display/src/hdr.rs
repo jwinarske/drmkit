@@ -41,6 +41,7 @@ const STATIC_METADATA_TYPE1: u8 = 0;
 /// kernel-internal, so the mapping is restated here to keep it stable for
 /// userspace; [`TransferFunction::as_u8`] is the only place it is applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum TransferFunction {
     /// BT.1886 / sRGB.
     #[default]
@@ -81,6 +82,10 @@ impl TransferFunction {
 /// cannot reach these levels tone-maps; that is the sink's business, and
 /// misreporting here to flatter it produces worse results, not better.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct HdrSourceMetadata {
     /// Transfer function the content is encoded with.
     pub eotf: TransferFunction,

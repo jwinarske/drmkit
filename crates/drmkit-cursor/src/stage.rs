@@ -49,6 +49,10 @@ pub fn hardware_rotation(requested: Rotation, supported_mask: u64) -> u64 {
 /// Distinct from [`crate::sprite::Placement`], which says where the sprite
 /// landed inside the buffer. This says where the buffer lands on the screen.
 #[derive(Debug, Clone, Copy)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct PlaneState {
     /// The plane being written.
     pub plane_id: u32,

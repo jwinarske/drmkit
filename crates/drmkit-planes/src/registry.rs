@@ -7,6 +7,7 @@ use drmkit_fmt::{BandwidthClass, FormatTable, Modifier, classify};
 
 /// The kernel's plane type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[non_exhaustive]
 pub enum PlaneType {
     /// The CRTC's primary plane.
     Primary,
@@ -20,6 +21,10 @@ pub enum PlaneType {
 /// Plane `COLOR_ENCODING`: the YCbCr-to-RGB matrix applied when scanning out a
 /// YUV format. Ignored by the kernel for RGB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[allow(
+    clippy::exhaustive_enums,
+    reason = "drmkit-scene resolves it with an exhaustive match, so a new encoding fails to compile until it is mapped"
+)]
 pub enum ColorEncoding {
     /// BT.601.
     Bt601,
@@ -35,6 +40,10 @@ pub enum ColorEncoding {
 /// Most camera and broadcast YCbCr is limited-range; PC-generated YCbCr is
 /// sometimes full.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[allow(
+    clippy::exhaustive_enums,
+    reason = "a closed set: there is no further variant to add"
+)]
 pub enum ColorRange {
     /// Limited range.
     Limited,
@@ -48,6 +57,10 @@ pub enum ColorRange {
 /// so a caller must look up by name and cache the integer — which is what this
 /// holds. `None` means the plane does not advertise that value at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct BlendModeValues {
     /// `"Pre-multiplied"`. Prefer this: it matches the canvas's premultiplied
     /// output convention.
@@ -60,6 +73,10 @@ pub struct BlendModeValues {
 
 /// Driver-assigned enum integers for `COLOR_ENCODING`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct ColorEncodingValues {
     /// BT.601, if advertised.
     pub bt601: Option<u64>,
@@ -71,6 +88,10 @@ pub struct ColorEncodingValues {
 
 /// Driver-assigned enum integers for `COLOR_RANGE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct ColorRangeValues {
     /// Limited range, if advertised.
     pub limited: Option<u64>,
@@ -86,6 +107,10 @@ pub struct ColorRangeValues {
 /// CRTC. Hardware without them (RDNA2, vkms, older i915) leaves them false and
 /// the scene falls back to the CRTC pipeline or to pre-composition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct ColorPipeline {
     /// `PLANE_DEGAMMA_LUT` is present.
     pub has_degamma_lut: bool,
@@ -111,6 +136,10 @@ pub struct ColorPipeline {
     reason = "one flag per kernel property; see the type documentation"
 )]
 #[derive(Debug, Clone, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct PlaneCapabilities {
     /// The plane's KMS object id.
     pub id: u32,

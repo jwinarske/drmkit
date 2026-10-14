@@ -12,6 +12,10 @@
 /// applied. [`Keyboard::process_key`](crate::Keyboard::process_key) fills in
 /// [`sym`](Self::sym) and [`utf8`](Self::utf8); until it has, both are empty.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct KeyEvent {
     /// libinput's timestamp, in milliseconds.
     pub time_ms: u32,
@@ -33,6 +37,10 @@ pub struct KeyEvent {
 
 /// A pointer moving.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct PointerMotion {
     /// libinput's timestamp, in milliseconds.
     pub time_ms: u32,
@@ -53,6 +61,10 @@ pub struct PointerMotion {
 
 /// A pointer button going down or coming up.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct PointerButton {
     /// libinput's timestamp, in milliseconds.
     pub time_ms: u32,
@@ -69,6 +81,7 @@ pub struct PointerButton {
 /// kinetic scrolling, and its end is a real event -- the finger lifting --
 /// rather than the absence of one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ScrollSource {
     /// A mouse wheel, in discrete clicks.
     Wheel,
@@ -80,6 +93,10 @@ pub enum ScrollSource {
 
 /// A scroll.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct PointerAxis {
     /// libinput's timestamp, in milliseconds.
     pub time_ms: u32,
@@ -97,6 +114,10 @@ pub struct PointerAxis {
 /// gives its guest -- which is how a lot of this gets run before it reaches
 /// hardware.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct PointerAbsolute {
     /// libinput's timestamp, in milliseconds.
     pub time_ms: u32,
@@ -114,6 +135,7 @@ pub struct PointerAbsolute {
 
 /// Anything a pointer does.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum PointerEvent {
     /// The pointer moved.
     Motion(PointerMotion),
@@ -127,6 +149,7 @@ pub enum PointerEvent {
 
 /// What a touch point is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TouchPhase {
     /// A finger landed.
     Down,
@@ -142,6 +165,10 @@ pub enum TouchPhase {
 
 /// A touch point.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct TouchEvent {
     /// libinput's timestamp, in milliseconds.
     pub time_ms: u32,
@@ -159,6 +186,7 @@ pub struct TouchEvent {
 
 /// Which physical switch changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Switch {
     /// The lid.
     Lid,
@@ -168,6 +196,10 @@ pub enum Switch {
 
 /// A switch changing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct SwitchEvent {
     /// libinput's timestamp, in milliseconds.
     pub time_ms: u32,
@@ -179,6 +211,7 @@ pub struct SwitchEvent {
 
 /// Anything an input device produces.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum InputEvent {
     /// A key.
     Key(KeyEvent),

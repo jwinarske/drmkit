@@ -114,6 +114,17 @@ missing_errors_doc = "warn"
 missing_panics_doc = "warn"
 # Parity ports read closer to the C++ when the module path stays explicit.
 module_name_repetitions = "allow"
+# Every public struct with public fields, and every public enum, says
+# whether a later release may add to it. What the library hands out --
+# reports, capabilities, events, results -- is `#[non_exhaustive]`, so adding
+# a field or variant is not a breaking change. The rest carries an `allow`
+# with its reason: a value defined by its fields (a rectangle, a colour), a
+# config built with `..Default::default()`, an input callers must build with
+# no default to fill a new field from, a closed set, or an enum whose
+# exhaustive match elsewhere in the tree is the point. Leaving it undecided
+# fails clippy.
+exhaustive_structs = "warn"
+exhaustive_enums = "warn"
 
 [profile.release]
 debug = 1          # HIL + perf lanes need symbols; T6 thresholds are measured here

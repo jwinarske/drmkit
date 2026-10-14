@@ -24,6 +24,10 @@ const HALF_16_16: u64 = 1 << 15;
 /// Reflections are not here. No driver has asked for them, and a flag nobody
 /// sets is a branch nobody tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_enums,
+    reason = "a closed set: there is no further variant to add"
+)]
 pub enum Rotation {
     /// Upright.
     #[default]
@@ -70,6 +74,7 @@ impl Rotation {
 
 /// Where the sprite ended up in the buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Placement {
     /// Size of the sprite as written, after rotation and any shrink.
     pub width: u32,

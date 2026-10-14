@@ -136,6 +136,10 @@ impl BroadcastRgb {
 
 /// The `max bpc` range, and where it currently sits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct MaxBpc {
     /// The lowest the driver will negotiate. Usually 6 or 8.
     pub min: u64,
@@ -304,6 +308,7 @@ impl ConnectorCapabilities {
 
 /// What one CRTC's colour pipeline can be asked to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct CrtcCapabilities {
     /// The CRTC this describes.
     pub crtc_id: u32,

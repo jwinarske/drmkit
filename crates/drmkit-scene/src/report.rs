@@ -9,6 +9,7 @@ use drmkit_planes::LayerId;
 
 /// How a layer reached scanout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[non_exhaustive]
 pub enum Placement {
     /// On its own hardware plane.
     AssignedToPlane,
@@ -26,6 +27,7 @@ pub enum Placement {
 /// filled in describes a layer that did not reach the screen, which is a
 /// smaller claim than naming a plane it does not have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LayerPlacement {
     /// Which layer.
     pub layer: LayerId,

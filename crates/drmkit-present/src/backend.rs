@@ -25,6 +25,7 @@ use crate::{FrameAction, FrameEconomy, PresentError, ScanoutProducer, negotiate}
 
 /// When to ask for variable refresh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum VrrPolicy {
     /// Never arm `VRR_ENABLED`.
     #[default]
@@ -37,6 +38,7 @@ pub enum VrrPolicy {
 
 /// What to leave on screen when the backend goes away.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum RestorePolicy {
     /// Leave the last committed frame up.
     #[default]
@@ -51,6 +53,10 @@ pub enum RestorePolicy {
 
 /// How to build a scanout backend.
 #[derive(Debug, Clone, Copy)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct Config {
     /// The `FourCC` to allocate and scan out.
     pub fourcc: u32,

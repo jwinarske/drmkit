@@ -7,6 +7,7 @@ use crate::Color;
 
 /// The title bar's geometry and type.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TitleBar {
     /// Height in pixels.
     pub height: i32,
@@ -18,6 +19,10 @@ pub struct TitleBar {
 
 /// Every colour a decoration uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct Colors {
     /// Top of the panel gradient.
     pub panel_top: Color,
@@ -38,6 +43,10 @@ pub struct Colors {
 
 /// One button's two states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct Button {
     /// At rest.
     pub fill: Color,
@@ -47,6 +56,10 @@ pub struct Button {
 
 /// The three window buttons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct Buttons {
     /// Close.
     pub close: Button,
@@ -58,6 +71,10 @@ pub struct Buttons {
 
 /// A complete decoration theme.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct Theme {
     /// What to call it.
     pub name: String,

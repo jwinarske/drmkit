@@ -5,6 +5,7 @@
 
 /// One decoration's footprint on the canvas, as of some frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct DamageSlot {
     /// Whether anything is drawn here at all.
     pub armed: bool,
@@ -26,6 +27,10 @@ pub struct DamageSlot {
 
 /// A rectangle of the canvas that has to be repainted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct DamageRect {
     /// Left edge.
     pub x: i32,

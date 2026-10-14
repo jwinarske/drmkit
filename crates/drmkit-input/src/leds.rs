@@ -10,6 +10,7 @@
 /// read [`Keyboard::leds`](crate::Keyboard::leds) after a key, and when it
 /// differs from last time push it to [`Seat::set_leds`](crate::Seat::set_leds).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Leds {
     /// Caps Lock.
     pub caps_lock: bool,

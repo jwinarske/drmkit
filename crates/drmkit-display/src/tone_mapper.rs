@@ -42,6 +42,7 @@ const INPUT_FRAC_DIV: f64 = 64.0;
 
 /// The curve applied in linear light when compressing HDR into SDR.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum ToneMapCurve {
     /// Clamp at 1.0.
     ///
@@ -58,6 +59,10 @@ pub enum ToneMapCurve {
 
 /// Which transform a mapper performs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_enums,
+    reason = "a closed set: there is no further variant to add"
+)]
 pub enum Direction {
     /// SDR up into an HDR composition.
     Bt709ToBt2020Pq,

@@ -29,6 +29,10 @@ use crate::error::{CoreError, Result};
 /// differ consumes, so the seam has a consumer in the minimal cut rather than
 /// lying dormant until the streams tier lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct PropertyWrite {
     /// The DRM object being programmed.
     pub object_id: u32,

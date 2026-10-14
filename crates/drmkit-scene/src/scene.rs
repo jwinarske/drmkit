@@ -272,6 +272,7 @@ enum Slot {
 
 /// What a [`rebind`](LayerScene::rebind) found that will not fit.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RebindReport {
     /// Layers the new output cannot display as they stand.
     pub incompatibilities: Vec<LayerIncompatibility>,
@@ -287,6 +288,7 @@ impl RebindReport {
 
 /// One layer the new output cannot display as it stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LayerIncompatibility {
     /// Which layer. Still valid: a rebind does not invalidate handles.
     pub handle: LayerHandle,
@@ -309,6 +311,7 @@ pub enum IncompatibilityReason {
 
 /// One plane's share of a built frame.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PlanePlan {
     /// The plane this layer landed on.
     pub plane_id: u32,
@@ -573,6 +576,7 @@ pub struct LayerScene {
 /// would turn them off: the baseline that recorded them describes the old
 /// output, and goes with it.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PendingDetach {
     /// The CRTC the scene left.
     pub crtc_id: u32,

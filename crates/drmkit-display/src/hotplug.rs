@@ -14,6 +14,7 @@ use drmkit_core::{CoreError, Result};
 
 /// One connector changing.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct HotplugEvent {
     /// The card the kernel named, usually `/dev/dri/cardN`.
     ///
@@ -39,6 +40,7 @@ pub struct HotplugEvent {
 /// often has no udevd at all, and a monitor waiting for one to republish
 /// waits forever, so the display that was plugged in is never noticed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum Source {
     /// What udevd republishes. The right answer where udevd runs.
     #[default]

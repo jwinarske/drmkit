@@ -75,6 +75,10 @@ pub fn write_jpg(image: &Image, path: impl AsRef<Path>, quality: u8) -> Result<(
 /// whatever the hardware wanted, and copying it tight first would be a second
 /// pass over every byte for nothing.
 #[derive(Debug, Clone, Copy)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct Nv12Frame<'a> {
     /// `height` rows of `luma_stride`.
     pub luma: &'a [u8],

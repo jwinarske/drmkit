@@ -43,6 +43,10 @@ use drmkit_sync::SyncFence;
 
 /// How to create the surface.
 #[derive(Debug, Clone, Copy)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct SurfaceConfig {
     /// Width in pixels. Non-zero.
     pub width: u32,

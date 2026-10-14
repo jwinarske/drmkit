@@ -10,6 +10,10 @@
 
 /// A CIE 1931 chromaticity coordinate.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct Chromaticity {
     /// x coordinate.
     pub x: f32,
@@ -19,6 +23,10 @@ pub struct Chromaticity {
 
 /// The display's colour primaries and white point.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct ColorimetryInfo {
     /// Red primary.
     pub red: Chromaticity,

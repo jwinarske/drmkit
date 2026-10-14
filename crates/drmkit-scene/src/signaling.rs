@@ -21,6 +21,7 @@ use crate::display::DisplayParams;
 /// scene picks the connector enum that best matches the widest-gamut layer at
 /// commit time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[non_exhaustive]
 pub enum ColorPrimaries {
     /// BT.709 / sRGB. The SDR default.
     #[default]
@@ -100,6 +101,7 @@ impl ColorPrimaries {
 
 /// What the scene wants declared on the connector for one frame.
 #[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
 pub struct OutputSignalling {
     /// The `Colorspace` to write, or `None` to leave the property alone.
     ///

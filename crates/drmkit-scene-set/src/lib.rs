@@ -33,6 +33,10 @@ mod tests;
 
 /// Where one mirrored layer lands on one scene.
 #[derive(Debug, Clone, Copy)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct Target {
     /// Which scene in the set, by index.
     pub scene_index: usize,
@@ -46,6 +50,10 @@ pub struct Target {
 }
 
 /// One layer across one or more scenes.
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct LayerSpec {
     /// The content. Shared across every target — that is what makes it a
     /// mirror rather than two layers that happen to look alike.

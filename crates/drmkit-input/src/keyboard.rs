@@ -28,6 +28,10 @@ const KEY_SCROLL_LOCK: u32 = 70;
 /// An empty field means "whatever the system defaults to", which is what
 /// xkb does with a null one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct KeymapNames {
     /// The rules file that maps the rest onto keymap components.
     pub rules: String,
@@ -48,6 +52,7 @@ pub struct KeymapNames {
 /// `struct_excessive_bools` lint is not about.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Modifiers {
     /// Shift.
     pub shift: bool,

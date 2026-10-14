@@ -32,6 +32,7 @@ const BUFFER: usize = 1024;
 
 /// How much libinput should say before this is called at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum LogPriority {
     /// Everything, including per-event detail.
     Debug,

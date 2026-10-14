@@ -17,6 +17,10 @@ const MAX_BURST: u64 = 8;
 
 /// When a held key starts repeating, and how fast.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct RepeatConfig {
     /// How long a key must be held before the first repeat.
     pub delay: Duration,
@@ -36,6 +40,7 @@ impl Default for RepeatConfig {
 
 /// What the timer should do about a key event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Timer {
     /// Start the delay, then repeat at the interval.
     Arm,

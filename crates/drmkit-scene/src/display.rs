@@ -25,6 +25,10 @@ pub use drmkit_planes::{ColorEncoding, ColorRange, Rect};
 /// rectangle, for one, is in 1/256ths of a pixel, and rounding it moves the
 /// image by up to half a pixel and changes its scale. 1.0 is `0x10000`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct FixedRect {
     /// Left edge.
     pub x: u32,
@@ -38,6 +42,10 @@ pub struct FixedRect {
 
 /// How a layer should be displayed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct DisplayParams {
     /// Region of the **buffer** to show.
     ///
@@ -118,6 +126,10 @@ impl DisplayParams {
 /// How a plane converts a layer's YCbCr to RGB: its `COLOR_ENCODING` and
 /// `COLOR_RANGE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct Ycbcr {
     /// The matrix.
     pub encoding: ColorEncoding,

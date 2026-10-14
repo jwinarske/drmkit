@@ -18,6 +18,7 @@ use crate::alias;
 
 /// Where a cursor name resolved to.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ThemeResolution {
     /// The theme the cursor was actually found in, which may not be the one
     /// asked for -- the `Inherits=` chain or the fallback may have supplied it.

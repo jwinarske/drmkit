@@ -11,6 +11,7 @@
 /// make the nonsensical combination unrepresentable, and leave the caller one
 /// thing to match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FrameAction {
     /// Nothing changed. Issue no commit: no page flip, no scanout reprogram.
     Skip,

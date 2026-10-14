@@ -20,6 +20,7 @@ use crate::CursorError;
 
 /// How the cursor reaches the screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PlanePath {
     /// A dedicated cursor plane, driven atomically.
     ///
@@ -39,6 +40,7 @@ pub enum PlanePath {
 
 /// The plane a cursor will use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SelectedPlane {
     /// The plane's KMS id, or `0` on the legacy path, which addresses the CRTC
     /// rather than a plane.

@@ -37,10 +37,18 @@ use crate::scoring::{
 /// nothing to invalidate and no window in which forgetting to do so corrupts a
 /// commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct LayerId(pub u64);
 
 /// One layer offered to the allocator.
 #[derive(Debug, Clone, Copy)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct LayerRef<'a> {
     /// Stable identity across frames.
     pub id: LayerId,
@@ -60,6 +68,10 @@ pub struct LayerRef<'a> {
 /// silently inherit the wrong handling. Adding a variant should break every
 /// caller so each one chooses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_enums,
+    reason = "every caller handles each failure; a new one has to break them so each chooses"
+)]
 pub enum TestFailure {
     /// The kernel rejected the configuration. The ordinary case: try a smaller
     /// assignment.
@@ -137,6 +149,10 @@ pub trait TestCommitter {
 /// A committer that accepts everything. For tests that care about which
 /// assignment the search *proposes* rather than how it narrows one down.
 #[derive(Debug, Default, Clone, Copy)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct AlwaysAccept {
     /// How many test commits were requested.
     pub calls: usize,
@@ -319,6 +335,7 @@ pub struct Diagnostics {
 
 /// The result of one allocation pass.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct Allocation {
     /// Which layer goes on which plane.
     pub assignment: PlaneAssignment,

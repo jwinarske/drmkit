@@ -35,6 +35,7 @@ pub enum ObjectType {
 
 /// One cached property.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PropertyInfo {
     /// The property id, for use in an atomic request.
     pub id: u32,

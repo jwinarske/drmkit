@@ -93,6 +93,7 @@ pub use tracing_sink::install_tracing_sink;
 /// [`LogLevel::Silent`] admits nothing and [`LogLevel::Debug`] admits all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum LogLevel {
     /// Emit nothing.
     Silent = 0,

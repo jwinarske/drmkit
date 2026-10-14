@@ -27,6 +27,10 @@ use crate::modifier::Modifier;
 
 /// A `(fourcc, modifier)` pair a plane accepts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct FormatMod {
     /// The `FourCC` pixel format.
     pub fourcc: u32,

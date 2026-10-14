@@ -14,6 +14,7 @@
 
 /// Which way a decoration reaches the screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Tier {
     /// One overlay plane per decoration.
     Plane,
@@ -53,6 +54,10 @@ pub const fn choose_presenter_tier(
 
 /// One property write an `apply` produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct PropertyWrite {
     /// The object to write on.
     pub object_id: u32,
@@ -64,6 +69,10 @@ pub struct PropertyWrite {
 
 /// A decoration surface and where it goes.
 #[derive(Debug, Clone, Copy, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct SurfaceRef {
     /// The framebuffer to scan out, or zero for nothing.
     pub fb_id: u32,

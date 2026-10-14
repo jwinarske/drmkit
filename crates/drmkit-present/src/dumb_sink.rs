@@ -103,6 +103,10 @@ impl LayerBufferSource for SharedRing {
 
 /// How a sink is configured.
 #[derive(Debug, Clone, Copy)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct Config {
     /// The format to scan out, or `None` to negotiate one the plane takes.
     pub format: Option<u32>,

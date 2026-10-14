@@ -22,6 +22,7 @@ use drm::control::Mode;
 /// in standby it can wake the panel. The cached answer costs nothing and is
 /// what the kernel last saw.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum Probe {
     /// Ask the display. What a listing wants, and what a hotplug wants: the
     /// cache is exactly what has just gone stale.
@@ -34,6 +35,7 @@ pub enum Probe {
 
 /// One connector and the modes it advertises.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct ConnectorModes {
     /// The connector's object id.
     pub connector_id: u32,

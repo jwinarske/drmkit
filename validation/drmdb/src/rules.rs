@@ -371,6 +371,7 @@ fn cursor_paths(devices: &[Device]) -> Survey {
                         drmkit_cursor::PlanePath::AtomicCursor => "a dedicated cursor plane",
                         drmkit_cursor::PlanePath::AtomicOverlay => "an overlay, atomically",
                         drmkit_cursor::PlanePath::Legacy => "drmModeSetCursor, the legacy path",
+                        _ => "a path this survey does not know yet",
                     },
                     Err(_) => "nothing can carry a cursor",
                 };

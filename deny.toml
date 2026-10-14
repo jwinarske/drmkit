@@ -39,6 +39,13 @@ allow = ["IJG"]
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Two dev-dependencies are path-only on purpose: the testkit, which is never
+# published, and drmkit-scene's on drmkit-scene-sources, which would otherwise
+# be a cycle at publish time. Cargo drops both from the published manifests.
+# This lets path dependencies through for unpublished crates and for
+# dev-dependencies of published ones; a versionless *normal* dependency of a
+# published crate is still refused.
+allow-wildcard-paths = true
 # Nothing in the tree may pull a second DRM binding: drmkit-core wraps the
 # Smithay `drm` crate and never re-binds (DR-2).
 deny = []

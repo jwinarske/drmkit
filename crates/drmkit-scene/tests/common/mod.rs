@@ -468,6 +468,11 @@ impl Fixture {
             .map(|plane| plane.id)
     }
 
+    /// The planes this CRTC can use, as probed.
+    pub(crate) fn planes(&self) -> impl Iterator<Item = &drmkit_planes::PlaneCapabilities> {
+        self.registry.for_crtc(self.crtc_index)
+    }
+
     /// What the kernel currently has on a plane's `FB_ID`.
     ///
     /// Read back from the device rather than from the report: the report says

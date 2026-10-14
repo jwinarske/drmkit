@@ -405,6 +405,8 @@
   "a_written_png_decodes_back_to_what_went_in": "ran",
   "a_written_png_starts_with_the_png_signature": "ran",
   "a_wrong_crtc_is_incompatible": "ran",
+  "a_yuv_layer_on_a_plane_without_colorimetry_still_commits_vkms": "every plane on this CRTC that takes NV12 has COLOR_ENCODING or COLOR_RANGE (10 planes: 9 take NV12, 10 have COLOR_ENCODING, 10 have COLOR_RANGE)",
+  "a_yuv_layers_encoding_and_range_are_what_the_plane_holds_vkms": "ran",
   "a_zero_capacity_cache_uses_the_default": "ran",
   "a_zero_destination_size_means_the_framebuffer_size": "ran",
   "a_zero_dimension_is_refused": "ran",

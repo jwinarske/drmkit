@@ -30,7 +30,7 @@ drmkit-display = { workspace = true, optional = true }
 drmkit-dumb = { workspace = true, optional = true }
 drmkit-fmt = { workspace = true, optional = true }
 drmkit-gbm = { workspace = true, optional = true }
-drmkit-input = { version = "0.1.0", path = "../drmkit-input", optional = true, default-features = false }
+drmkit-input = { version = "0.1.1", path = "../drmkit-input", optional = true, default-features = false }
 drmkit-log = { workspace = true, optional = true }
 drmkit-modeset = { workspace = true, optional = true }
 drmkit-planes = { workspace = true, optional = true }
@@ -39,7 +39,7 @@ drmkit-scene = { workspace = true, optional = true }
 drmkit-scene-gbm = { workspace = true, optional = true }
 drmkit-scene-set = { workspace = true, optional = true }
 drmkit-scene-sources = { workspace = true, optional = true }
-drmkit-session = { version = "0.1.0", path = "../drmkit-session", optional = true, default-features = false }
+drmkit-session = { version = "0.1.1", path = "../drmkit-session", optional = true, default-features = false }
 drmkit-sync = { workspace = true, optional = true }
 drmkit-time = { workspace = true, optional = true }
 

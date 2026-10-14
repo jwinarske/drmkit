@@ -97,6 +97,10 @@ pub fn bt1886_oetf(linear: f64) -> f64 {
 /// One LUT entry, as the kernel reads it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(C)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct ColorLut {
     /// Red output for this input step.
     pub red: u16,
@@ -113,6 +117,10 @@ pub struct ColorLut {
 /// Row-major, each entry S31.32 sign-magnitude -- see [`encode_s31_32`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct ColorCtm {
     /// The nine coefficients, row-major.
     pub matrix: [u64; 9],

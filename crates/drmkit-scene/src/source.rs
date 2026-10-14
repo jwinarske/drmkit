@@ -33,6 +33,7 @@ use drmkit_sync::SyncFence;
 
 /// How the scene and a source divide responsibility for `FB_ID`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[non_exhaustive]
 pub enum BindingModel {
     /// The scene writes `FB_ID` into the atomic commit.
     ///
@@ -55,6 +56,10 @@ pub enum BindingModel {
 /// Width and height are the buffer's own dimensions, not the on-screen
 /// rectangle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct SourceFormat {
     /// DRM `FourCC`.
     pub fourcc: u32,
@@ -69,6 +74,10 @@ pub struct SourceFormat {
 /// A region of a buffer that changed since the slot was last scanned out, in
 /// buffer pixels with a top-left origin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct DamageRect {
     /// Left edge.
     pub x: i32,
@@ -112,6 +121,10 @@ pub struct DamageRect {
 /// assert_eq!(moved.fb_id, 1);
 /// ```
 #[derive(Debug, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct AcquiredBuffer {
     /// The DRM framebuffer the scene will write to the plane's `FB_ID`.
     ///
@@ -194,6 +207,10 @@ pub enum SourceError {
 /// valid only until the matching release. The consumer must not close them — an
 /// image import references them internally, so no duplication is needed.
 #[derive(Debug, Clone)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct DmaBufDesc<'a> {
     /// One descriptor per plane. A single-descriptor multi-plane format such as
     /// `NV12` repeats the same descriptor with distinct offsets.

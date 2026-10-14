@@ -17,6 +17,7 @@ use crate::curves::{
 
 /// Which stage a call was about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Stage {
     /// `DEGAMMA_LUT`: encoded to linear.
     Degamma,

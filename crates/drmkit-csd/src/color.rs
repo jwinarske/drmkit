@@ -5,6 +5,10 @@
 
 /// An 8-bit-per-channel colour with alpha.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct Color {
     /// Red.
     pub r: u8,

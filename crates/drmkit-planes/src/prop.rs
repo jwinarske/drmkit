@@ -16,6 +16,7 @@
 /// the compiler names every place that needs updating.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum PropTag {
     /// `FB_ID` — the framebuffer to scan out.
     FbId,
@@ -64,6 +65,7 @@ pub enum PropTag {
 /// C++ warns about — a property silently treated as content — cannot reach a
 /// running system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum PropClass {
     /// Changes every frame and does not affect plane compatibility.
     ///

@@ -323,6 +323,7 @@ pub fn emit_layer(
 /// the floor a minimal frame is measured against rather than part of what the
 /// diff decided.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LayerWrites {
     /// Properties written for this layer.
     pub properties: usize,
@@ -938,6 +939,7 @@ fn emit_color_props(
 
 /// What to do with a layer's acquire fence, given what its plane can take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FenceAction {
     /// Hand the descriptor to KMS as `IN_FENCE_FD`.
     Arm {

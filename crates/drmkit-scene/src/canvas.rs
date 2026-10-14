@@ -40,6 +40,10 @@ use drmkit_planes::PlaneCapabilities;
 
 /// A rectangle in whole pixels, half-open in extent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct CompositeRect {
     /// Left edge. May be negative; the region is clipped.
     pub x: i32,
@@ -53,6 +57,10 @@ pub struct CompositeRect {
 
 /// A source surface to blend from.
 #[derive(Debug, Clone, Copy)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct CompositeSrc<'a> {
     /// The pixels, tightly packed rows of `src_stride_bytes`.
     pub pixels: &'a [u8],

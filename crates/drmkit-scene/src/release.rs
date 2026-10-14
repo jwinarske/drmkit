@@ -13,6 +13,7 @@ use crate::source::AcquiredBuffer;
 
 /// One buffer held on behalf of a layer.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Acquisition {
     /// Which layer acquired it.
     pub layer: LayerId,
@@ -39,6 +40,7 @@ impl Acquisition {
 
 /// Why a set of buffers is being handed back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ReleaseReason {
     /// They stopped being scanned out: a later commit's flip completed.
     ///
@@ -57,6 +59,7 @@ pub enum ReleaseReason {
 
 /// The buffers to hand back, and why.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Released {
     /// The buffers, oldest first.
     pub acquisitions: Vec<Acquisition>,

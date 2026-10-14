@@ -14,6 +14,10 @@ use crate::{DamageRect, intersect_rect};
 
 /// One decoration to blend in.
 #[derive(Debug, Clone, Copy)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct BlitItem<'a> {
     /// Its pixels.
     pub pixels: &'a [u8],
@@ -79,6 +83,10 @@ pub const fn fb_fourcc_for(
 
 /// The framebuffer being composited into.
 #[derive(Debug)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct FbTarget<'a> {
     /// The mapping.
     pub pixels: &'a mut [u8],

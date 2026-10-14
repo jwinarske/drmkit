@@ -63,6 +63,7 @@ pub fn stacking_consistent(
 
 /// One armed plane in a frame's stack.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct StackEntry<'a> {
     /// The plane.
     pub plane: &'a PlaneCapabilities,

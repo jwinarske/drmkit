@@ -5,6 +5,7 @@
 
 /// How to split a frame across the outputs it touches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum NarrowPolicy {
     /// Never split: one atomic commit for every engaged scene.
     ///
@@ -36,6 +37,7 @@ pub enum NarrowPolicy {
 
 /// What one slot in the set looks like this frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct SlotState {
     /// Whether this slot holds no scene.
     ///

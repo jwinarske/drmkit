@@ -15,6 +15,10 @@ use drmkit_dumb::{Buffer, Config, MapAccess, Mapping};
 
 /// How big a decoration surface is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct SurfaceConfig {
     /// Width in pixels. Non-zero.
     pub width: u32,

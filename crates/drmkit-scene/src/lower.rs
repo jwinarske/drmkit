@@ -10,6 +10,10 @@ use crate::source::{BindingModel, SourceFormat};
 
 /// Everything `lower_layer` needs about a layer, without borrowing the scene.
 #[derive(Debug, Clone, Copy)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct LoweringInput {
     /// How to display the buffer.
     pub display: DisplayParams,

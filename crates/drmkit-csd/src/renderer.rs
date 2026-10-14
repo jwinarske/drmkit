@@ -27,6 +27,10 @@ use crate::{
 
 /// Where a decoration is being drawn.
 #[derive(Debug)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct Canvas<'a> {
     /// `ARGB8888` pixels.
     pub pixels: &'a mut [u8],
@@ -68,6 +72,10 @@ pub enum DrawError {
 
 /// How to build a renderer.
 #[derive(Debug, Clone, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct RendererConfig {
     /// A font to load for the title.
     ///

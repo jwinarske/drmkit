@@ -11,10 +11,15 @@ use crate::SessionError;
 
 /// A seat's handle for one open device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct DeviceId(pub i32);
 
 /// A device this session is holding.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TakenDevice {
     /// Where it was opened from. Kept because a resume reopens by path.
     pub path: PathBuf,
@@ -79,6 +84,7 @@ pub trait Backend {
 
 /// What a seat says, before the session has made sense of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RawEvent {
     /// The session has become active.
     Enable,
@@ -88,6 +94,7 @@ pub enum RawEvent {
 
 /// What a caller needs to act on.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SessionEvent {
     /// Stop touching every device now.
     ///

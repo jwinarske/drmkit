@@ -38,6 +38,7 @@ pub const MAX_DAMAGE: usize = 16;
 
 /// What the commit thread should do this vblank.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Present {
     /// Nothing to present; the adapter returns `WouldBlock`.
     None,
@@ -49,6 +50,7 @@ pub enum Present {
 
 /// The commit thread's decision.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Acquired {
     /// What to do.
     pub kind: Present,

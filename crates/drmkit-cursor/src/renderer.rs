@@ -30,6 +30,10 @@ use crate::stage::{PlaneState, stage};
 
 /// How to set a renderer up.
 #[derive(Debug, Clone, Copy)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct RendererConfig {
     /// The CRTC the cursor belongs to, and its index in the resource list.
     ///

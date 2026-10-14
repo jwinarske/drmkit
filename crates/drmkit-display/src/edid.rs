@@ -34,6 +34,7 @@ pub use crate::color::{Chromaticity, ColorimetryInfo};
     clippy::struct_excessive_bools,
     reason = "the shape is CTA-861's, not a design choice"
 )]
+#[non_exhaustive]
 pub struct HdrStaticMetadata {
     /// Peak luminance the display wants content mastered to, in nits.
     pub desired_content_max_luminance: f32,
@@ -59,6 +60,7 @@ pub struct HdrStaticMetadata {
     clippy::struct_excessive_bools,
     reason = "one field per encoding in the CTA colorimetry data block"
 )]
+#[non_exhaustive]
 pub struct SupportedColorimetry {
     /// BT.2020 constant-luminance `YCbCr`.
     pub bt2020_cycc: bool,
@@ -79,6 +81,10 @@ pub struct SupportedColorimetry {
 /// are equal. Absent when the EDID carries no range descriptor, which is not
 /// the same as a panel with no range -- it is a panel that did not say.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct VrefreshRange {
     /// Lowest refresh in Hz.
     pub min_hz: i32,
@@ -99,6 +105,7 @@ impl VrefreshRange {
 
 /// What a connector's attached display reports.
 #[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
 pub struct ConnectorInfo {
     /// Make and model joined, for display to a person.
     pub name: String,

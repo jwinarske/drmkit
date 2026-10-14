@@ -78,6 +78,10 @@ impl Drop for Mmap {
 
 /// How a dumb buffer should be allocated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct Config {
     /// Width in pixels.
     pub width: u32,

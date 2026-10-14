@@ -96,6 +96,10 @@ pub const WARM_STABILITY_BONUS: i32 = 100;
 
 /// Everything `score_pair` needs that is not the plane or the layer.
 #[derive(Debug, Clone, Copy, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct ScoreContext {
     /// Whether the layer held this plane last frame.
     pub held_last_frame: bool,

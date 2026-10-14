@@ -5,6 +5,7 @@
 
 /// Which window button the pointer is over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum HoverButton {
     /// None of them.
     #[default]
@@ -71,6 +72,10 @@ pub const PROGRESS_UNSET: f32 = -1.0;
 
 /// A decorated window, as the renderer sees it.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct WindowState {
     /// The title text.
     pub title: String,

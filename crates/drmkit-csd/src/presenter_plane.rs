@@ -12,6 +12,7 @@ use crate::{PropertyWrite, SurfaceRef};
 /// id means the plane does not expose that property, which is why the
 /// optional ones are checked rather than assumed.
 #[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct PlaneSlot {
     /// The plane.
     pub plane_id: u32,

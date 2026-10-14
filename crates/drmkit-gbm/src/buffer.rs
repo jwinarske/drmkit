@@ -14,6 +14,10 @@ use crate::{GbmDevice, GbmError};
 /// GBM needs this up front: a driver may have to move or detile a buffer to
 /// make it CPU-readable, and it can skip that when the caller only writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_enums,
+    reason = "a closed set: there is no further variant to add"
+)]
 pub enum MapAccess {
     /// Read the existing pixels.
     Read,

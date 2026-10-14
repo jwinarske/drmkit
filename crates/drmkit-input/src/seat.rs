@@ -26,6 +26,10 @@ use crate::libinput_log::{self, LogPriority};
 
 /// What to open.
 #[derive(Debug, Clone)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers with `..Default::default()`, which a new field does not break"
+)]
 pub struct SeatOptions {
     /// The seat's udev name. `seat0` unless the machine has more than one.
     ///

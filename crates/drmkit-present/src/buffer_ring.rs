@@ -14,6 +14,10 @@ use std::collections::VecDeque;
 /// unscaled and at the origin. Sharing the type would invite passing one where
 /// the other is meant, which is a bug no compiler would catch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct Rect {
     /// Left edge.
     pub x: i32,
@@ -32,6 +36,10 @@ pub struct Rect {
 /// reading the region without checking the flag under-paints. Here the region
 /// only exists when it is the answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_enums,
+    reason = "every producer handles each kind; a new one has to break them so none repaints the wrong region"
+)]
 pub enum Repaint {
     /// Repaint the whole buffer: the slot has never been presented, or its
     /// damage history has scrolled away, or the union grew past the cap.
@@ -45,6 +53,7 @@ pub enum Repaint {
 
 /// A slot handed to the producer for the next frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Lease {
     /// Index into the producer's own buffer array.
     pub slot: usize,

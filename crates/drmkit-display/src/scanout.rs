@@ -107,6 +107,7 @@ pub fn rank_pick(candidates: &[Interface], ranks: &[Interface]) -> Option<usize>
 /// encoder `possible_crtcs` and plane masks are expressed in. Mixing them up
 /// gives an allocator that offers planes to the wrong CRTC.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CrtcChoice {
     /// The CRTC's object id.
     pub id: u32,
@@ -116,6 +117,7 @@ pub struct CrtcChoice {
 
 /// Somewhere to scan out.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ScanoutTarget {
     /// The connector with a display on it.
     pub connector_id: u32,

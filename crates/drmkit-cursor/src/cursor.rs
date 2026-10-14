@@ -22,6 +22,10 @@ const DEFAULT_SIZE: u32 = 64;
 
 /// One frame of a cursor.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct Frame {
     /// Premultiplied `0xAARRGGBB`, row-major, `width * height` of them.
     pub pixels: Vec<u32>,

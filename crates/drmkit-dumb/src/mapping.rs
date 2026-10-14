@@ -13,6 +13,10 @@
 /// a read-only mapping needs no flush back on unmap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(u8)]
+#[allow(
+    clippy::exhaustive_enums,
+    reason = "a closed set: there is no further variant to add"
+)]
 pub enum MapAccess {
     /// Read only.
     Read = 0,

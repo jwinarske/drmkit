@@ -22,6 +22,7 @@ const BUTTON_RIGHT_PAD: i32 = 10;
 /// **decoration**, not of the window — the shadow is drawn outside the panel,
 /// so the panel starts inset by the shadow's extent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct DecorationGeometry {
     /// Panel left edge.
     pub panel_x: i32,

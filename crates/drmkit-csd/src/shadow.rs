@@ -15,6 +15,7 @@ use crate::{Color, Theme};
 
 /// How much shadow a window casts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum Elevation {
     /// Unfocused: softer and weaker, so the focused window reads as nearer.
     #[default]
@@ -25,6 +26,7 @@ pub enum Elevation {
 
 /// What identifies one cached shadow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct ShadowKey {
     /// Patch width in pixels.
     pub width: u32,
@@ -95,6 +97,10 @@ pub fn theme_id(theme: &Theme) -> u64 {
 
 /// Where a shadow is being blitted to.
 #[derive(Debug)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
 pub struct ShadowDest<'a> {
     /// The destination pixels, `ARGB8888`.
     pub pixels: &'a mut [u8],

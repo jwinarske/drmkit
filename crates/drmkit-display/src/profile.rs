@@ -24,6 +24,7 @@ use drmkit_core::Device;
 /// it guessed the panel would self-refresh, and guessed wrong, freezes the
 /// display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum PanelSelfRefresh {
     /// No connected connector, or the set could not be read.
     #[default]
@@ -36,6 +37,7 @@ pub enum PanelSelfRefresh {
 
 /// What `DRM_CAP_PRIME`'s bitmask says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct PrimeCaps {
     /// The device can import a dma-buf.
     pub can_import: bool,
@@ -84,6 +86,7 @@ pub const fn connector_type_self_refreshes(connector_type: u32) -> bool {
     clippy::struct_excessive_bools,
     reason = "the shape is the kernel's capability list, not a design choice"
 )]
+#[non_exhaustive]
 pub struct DriverProfile {
     /// The driver's name. Informational — see the module docs.
     pub name: String,

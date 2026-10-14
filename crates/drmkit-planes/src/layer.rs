@@ -10,6 +10,7 @@ use crate::prop::{NUM_PROPS, PropClass, PropTag};
 
 /// What a layer is showing, for placement priority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[non_exhaustive]
 pub enum ContentType {
     /// Unclassified.
     #[default]
@@ -24,6 +25,10 @@ pub enum ContentType {
 
 /// An axis-aligned rectangle in CRTC pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "a value defined by its fields; there is nothing to add to it"
+)]
 pub struct Rect {
     /// Left edge.
     pub x: i32,

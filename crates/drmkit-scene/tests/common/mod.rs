@@ -194,6 +194,10 @@ pub(crate) fn fixture(device: Device) -> Option<Fixture> {
 
 impl Fixture {
     /// Add a dumb-backed layer at `(x, y)`.
+    ///
+    /// `None` when the device will not frame a `w` x `h` buffer, which is
+    /// rarely the allocation: a `panel-mipi-dbi` panel creates no framebuffer
+    /// but its mode's, so it refuses the rig's 64x64 layers outright.
     pub(crate) fn add_layer(&mut self, x: i32, y: i32, w: u32, h: u32) -> Option<LayerHandle> {
         let source =
             drmkit_scene_sources::DumbBufferSource::create(&self.device, w, h, fourcc::XRGB8888)

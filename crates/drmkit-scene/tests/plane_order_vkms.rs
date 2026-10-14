@@ -69,7 +69,7 @@ fn the_canvas_stacks_where_its_layers_asked_vkms() {
     };
     let count = u32::try_from(fx.eligible_planes() + 4).expect("few planes");
     let Some(_handles) = stack(&mut fx, count) else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
 
@@ -111,7 +111,7 @@ fn check_composited_stack(low: impl Fn(u32, u32) -> bool, only_low: bool) {
     }
     let count = u32::try_from(planes + 4).expect("few planes");
     let Some(handles) = stack(&mut fx, count) else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
     for (index, handle) in (0..count).zip(&handles) {
@@ -213,7 +213,7 @@ fn a_restack_reaches_the_screen_vkms() {
         return;
     }
     let Some(handles) = stack(&mut fx, 3) else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
     fx.commit().expect("the first frame");

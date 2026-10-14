@@ -35,7 +35,7 @@ fn a_no_op_rebind_keeps_the_layers_and_re_emits_everything_vkms() {
         return;
     };
     let Some(handle) = fx.add_placeable_layer() else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
 
@@ -105,7 +105,7 @@ fn an_identity_tag_round_trips_and_survives_a_rebind_vkms() {
         fx.add_layer(0, 0, LAYER_W, LAYER_H),
         fx.add_layer(0, 0, LAYER_W, LAYER_H),
     ) else {
-        drmkit_testkit::skipped("no dumb buffers for two layers");
+        drmkit_testkit::skipped("no buffers for two layers this device will frame");
         return;
     };
 
@@ -160,12 +160,12 @@ fn a_layer_outside_the_new_mode_is_reported_not_dropped_vkms() {
     let (width, height) = fx.mode_size();
 
     let Some(on_screen) = fx.add_layer(0, 0, LAYER_W, LAYER_H) else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
     // Positioned past the right edge of the mode it is about to be rebound to.
     let Some(off_screen) = fx.add_layer(width.cast_signed(), 0, LAYER_W, LAYER_H) else {
-        drmkit_testkit::skipped("no dumb buffer for a second layer");
+        drmkit_testkit::skipped("no second layer buffer this device will frame");
         return;
     };
 
@@ -223,7 +223,7 @@ fn a_rebind_to_another_crtc_hands_a_shared_plane_over_vkms() {
         return;
     };
     let Some(handle) = fx.add_layer(0, 0, LAYER_W, LAYER_H) else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
     fx.scene
@@ -338,7 +338,7 @@ fn a_rebind_to_another_crtc_releases_the_old_planes_vkms() {
     let (w, h) = (aw.min(bw), ah.min(bh));
     for (size, zpos) in [((w, h), 3), ((LAYER_W, LAYER_H), 4)] {
         let Some(handle) = fx.add_layer(0, 0, size.0, size.1) else {
-            drmkit_testkit::skipped("no dumb buffer for a layer");
+            drmkit_testkit::skipped("no layer buffer this device will frame");
             fx.teardown();
             return;
         };

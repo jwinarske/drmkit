@@ -211,3 +211,77 @@ pub mod connector {
         })
     }
 }
+
+/// Sizing a buffer the device will frame.
+pub mod framebuffer {
+    use std::ops::{Bound, RangeBounds};
+
+    use drm::control::Device as _;
+    use drmkit_core::Device;
+
+    /// `width` x `height`, each pulled into the range the device creates
+    /// framebuffers in.
+    ///
+    /// The range is the driver's `mode_config` minimum and maximum, which most
+    /// drivers set wide enough that a case's 64x64 buffer is never near it. A
+    /// `panel-mipi-dbi` panel sets both to its one mode, so it creates no
+    /// framebuffer that is not exactly 240x240, and a case asking for less
+    /// fails on the size it picked rather than on anything it tests. The size
+    /// asked for comes back where the device takes it, and where the device
+    /// cannot be asked (no resources) it comes back unchanged.
+    #[must_use]
+    pub fn size(device: &Device, width: u32, height: u32) -> (u32, u32) {
+        let Ok(resources) = device.resource_handles() else {
+            return (width, height);
+        };
+        (
+            within(&resources.supported_fb_width(), width),
+            within(&resources.supported_fb_height(), height),
+        )
+    }
+
+    fn within(range: &impl RangeBounds<u32>, value: u32) -> u32 {
+        let low = match range.start_bound() {
+            Bound::Included(low) => *low,
+            Bound::Excluded(low) => low.saturating_add(1),
+            Bound::Unbounded => 0,
+        };
+        let high = match range.end_bound() {
+            Bound::Included(high) => *high,
+            Bound::Excluded(high) => high.saturating_sub(1),
+            Bound::Unbounded => u32::MAX,
+        };
+        // A driver reporting no maximum (0) is not saying nothing fits.
+        if high < low {
+            return value.max(low);
+        }
+        value.clamp(low, high)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::within;
+
+        #[test]
+        fn a_size_inside_the_range_is_kept() {
+            assert_eq!(within(&(16..=4096), 64), 64);
+        }
+
+        #[test]
+        fn a_size_below_a_fixed_panel_grows_to_it() {
+            assert_eq!(within(&(240..=240), 64), 240);
+        }
+
+        #[test]
+        fn a_size_above_the_maximum_shrinks_to_it() {
+            assert_eq!(within(&(0..=2048), 4096), 2048);
+        }
+
+        #[test]
+        fn a_driver_with_no_maximum_does_not_shrink_anything() {
+            // What the kernel reports as `max_width` 0: an empty range.
+            let (min, max) = (16, 0);
+            assert_eq!(within(&(min..=max), 64), 64);
+        }
+    }
+}

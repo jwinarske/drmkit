@@ -34,7 +34,7 @@ fn a_pinned_layer_lands_on_its_own_plane_vkms() {
         return;
     };
     let Some(handle) = fx.add_layer(0, 0, LAYER_W, LAYER_H) else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
     fx.scene
@@ -103,7 +103,7 @@ fn an_impossible_pin_falls_back_and_is_counted_vkms() {
         return;
     };
     let Some(handle) = fx.add_placeable_layer() else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
 

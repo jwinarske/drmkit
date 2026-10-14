@@ -21,6 +21,7 @@ use std::sync::Mutex;
 
 use drmkit_core::Device;
 use drmkit_fmt::fourcc;
+use drmkit_planes::PlaneRegistry;
 use drmkit_scene::{CompositeCanvas, CompositeRect, CompositeSrc};
 
 /// DRM master is per open file description, so card-dependent cases serialize.
@@ -52,6 +53,31 @@ fn open_card_or_skip() -> Option<Device> {
     }
 }
 
+/// A canvas this device will frame, and its size.
+///
+/// 64x32 where the device allows it. The size is pulled into the device's
+/// framebuffer range, and the format is `ARGB8888` unless no plane takes it,
+/// then `XRGB8888`: a `panel-mipi-dbi` panel creates framebuffers only at its
+/// mode's 240x240 and only in the `RG16` and `XR24` its plane offers, and the
+/// kernel refuses any other with `EINVAL` before the canvas holds a thing.
+/// Both are 32 bits a pixel, so what these cases read back is the same.
+fn canvas(device: &Device) -> (CompositeCanvas, u32, u32) {
+    let (w, h) = drmkit_testkit::framebuffer::size(device, 64, 32);
+    let takes_argb = PlaneRegistry::probe(device).map_or(true, |registry| {
+        registry
+            .all()
+            .iter()
+            .any(|plane| plane.scans_out_linear(fourcc::ARGB8888))
+    });
+    let format = if takes_argb {
+        fourcc::ARGB8888
+    } else {
+        fourcc::XRGB8888
+    };
+    let canvas = CompositeCanvas::create_in(device, w, h, format).expect("allocate the canvas");
+    (canvas, w, h)
+}
+
 fn solid(w: u32, h: u32, value: u32) -> Vec<u8> {
     value.to_ne_bytes().repeat((w * h) as usize)
 }
@@ -79,7 +105,7 @@ fn a_canvas_allocates_two_framebuffers_vkms() {
     let Some(device) = open_card_or_skip() else {
         return;
     };
-    let mut canvas = CompositeCanvas::create(&device, 64, 32).expect("allocate the canvas");
+    let (mut canvas, _, _) = canvas(&device);
 
     assert!(canvas.armable(), "a fresh canvas must be armable");
     let first = canvas.fb_id().expect("front buffer has a framebuffer");
@@ -114,17 +140,17 @@ fn painting_lands_in_the_armed_buffer_vkms() {
     let Some(device) = open_card_or_skip() else {
         return;
     };
-    let mut canvas = CompositeCanvas::create(&device, 64, 32).expect("allocate the canvas");
+    let (mut canvas, w, h) = canvas(&device);
 
     canvas.begin_frame();
     canvas.clear();
-    let pixels = solid(64, 32, 0xFFAB_CDEF);
-    canvas.blend(&source(&pixels, 64, 32), rect(64, 32), rect(64, 32));
+    let pixels = solid(w, h, 0xFFAB_CDEF);
+    canvas.blend(&source(&pixels, w, h), rect(w, h), rect(w, h));
     canvas.flush();
 
     let armed = canvas.fb_id().expect("framebuffer");
     let painted = canvas.back_pixel(0, 0);
-    let far_corner = canvas.back_pixel(63, 31);
+    let far_corner = canvas.back_pixel(w - 1, h - 1);
 
     assert_eq!(painted, 0xFFAB_CDEF, "framebuffer {armed} was not painted");
     assert_eq!(
@@ -146,7 +172,7 @@ fn a_forgotten_canvas_is_not_armable_vkms() {
     let Some(device) = open_card_or_skip() else {
         return;
     };
-    let mut canvas = CompositeCanvas::create(&device, 64, 32).expect("allocate the canvas");
+    let (mut canvas, _, _) = canvas(&device);
     assert!(canvas.armable());
 
     canvas.forget();

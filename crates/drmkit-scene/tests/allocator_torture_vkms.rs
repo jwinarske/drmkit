@@ -192,7 +192,17 @@ fn rig() -> Option<Rig> {
         .force_disable_candidates(crtc_index)
         .filter(|plane| plane.scans_out_linear(fourcc::ARGB8888))
         .count();
-    assert!(planes > 0, "a CRTC with no usable plane cannot display");
+    if planes == 0 {
+        // Not a broken probe: a device that frames no `ARGB8888` at all. A
+        // `panel-mipi-dbi` panel offers `RG16` and `XR24` and creates no
+        // framebuffer below its mode, so it refuses every layer this rig
+        // makes before the allocator sees one. On vkms this cannot happen,
+        // and the lane's coverage gate would report it if it did.
+        drmkit_testkit::skipped(
+            "no plane on this CRTC scans ARGB8888 out linear; the rig's layers are ARGB8888",
+        );
+        return None;
+    }
     println!("note: {planes} candidate plane(s)");
 
     let mut map = PlanePropertyMap::new();

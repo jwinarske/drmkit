@@ -28,7 +28,7 @@ fn a_sub_pixel_crop_reaches_the_kernel_unrounded_vkms() {
     let (w, h) = fx.mode_size();
     // One column wider than the crop, so the half-pixel offset stays inside.
     let Some(handle) = fx.add_layer(0, 0, w + 1, h) else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
     fx.scene

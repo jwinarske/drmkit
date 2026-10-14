@@ -360,13 +360,17 @@ fn a_saved_crtc_is_put_back_on_teardown_vkms() {
     let _ = device.set_crtc(crtc, None, (0, 0), &[], None);
 }
 
+/// What a source saw as it dropped: the CRTC's vblank sequence, `None` where
+/// the CRTC has no counter, and whether the flip event was queued by then.
+type Teardown = (Option<u64>, bool);
+
 /// Wraps a producer's sources so each records the CRTC's vblank sequence at
 /// the moment it is dropped -- which is when its buffer and framebuffer go.
 struct SeqOnDrop<'a> {
     inner: GbmScanoutProducer<'a>,
     fd: std::os::fd::RawFd,
     crtc_id: Rc<Cell<u32>>,
-    seqs: Rc<RefCell<Vec<(u64, bool)>>>,
+    seqs: Rc<RefCell<Vec<Teardown>>>,
 }
 
 impl drmkit_present::ScanoutProducer for SeqOnDrop<'_> {
@@ -395,7 +399,7 @@ struct SeqSource {
     inner: Box<dyn LayerBufferSource>,
     fd: std::os::fd::RawFd,
     crtc_id: Rc<Cell<u32>>,
-    seqs: Rc<RefCell<Vec<(u64, bool)>>>,
+    seqs: Rc<RefCell<Vec<Teardown>>>,
 }
 
 impl Drop for SeqSource {
@@ -407,10 +411,11 @@ impl Drop for SeqSource {
         //
         // SAFETY: the test's device outlives the backend, and so this source.
         let fd = unsafe { std::os::fd::BorrowedFd::borrow_raw(self.fd) };
-        if let Ok(seq) = drmkit_core::crtc_sequence(&fd, self.crtc_id.get()) {
-            let queued = drmkit_core::event_pending(&fd);
-            self.seqs.borrow_mut().push((seq, queued));
-        }
+        // `None` where the CRTC has no vblank counter (a `panel-mipi-dbi`
+        // panel): the queued event is then the only witness.
+        let seq = drmkit_core::crtc_sequence(&fd, self.crtc_id.get()).ok();
+        let queued = drmkit_core::event_pending(&fd);
+        self.seqs.borrow_mut().push((seq, queued));
     }
 }
 
@@ -548,7 +553,9 @@ fn drop_with_a_flip_armed(flags: AtomicCommitFlags) {
         .present(&device, AtomicCommitFlags::empty(), None)
         .expect("modeset frame");
     backend.present(&device, flags, None).expect("armed frame");
-    let armed = drmkit_core::crtc_sequence(&device, crtc_id.get()).expect("read the sequence");
+    // Unreadable on a CRTC with no vblank counter, where only the queued
+    // event can say the flip landed.
+    let armed = drmkit_core::crtc_sequence(&device, crtc_id.get()).ok();
     seqs.borrow_mut().clear();
 
     let started = Instant::now();
@@ -558,9 +565,10 @@ fn drop_with_a_flip_armed(flags: AtomicCommitFlags) {
     let seqs = seqs.borrow();
     assert!(!seqs.is_empty(), "teardown should drop the layer's source");
     for (seq, queued) in seqs.iter() {
+        let passed = armed.zip(*seq).is_some_and(|(armed, seq)| seq > armed);
         assert!(
-            *seq > armed || *queued,
-            "a buffer was torn down before the flip landed ({seq} <= {armed}, no event queued)"
+            passed || *queued,
+            "a buffer was torn down before the flip landed ({seq:?} vs {armed:?}, no event queued)"
         );
     }
     // Before its 100 ms bound, not at it: on a driver that lands the flip
@@ -638,10 +646,13 @@ fn the_gbm_producer_honors_the_allowed_modifiers_vkms() {
     let Some(device) = open_card() else { return };
     let mut producer = GbmScanoutProducer::new(&device);
     let xrgb = drmkit_fmt::fourcc::XRGB8888;
+    // The producer registers a framebuffer for each buffer, so ask for one
+    // the device frames: a `panel-mipi-dbi` panel takes only its mode's size.
+    let (w, h) = drmkit_testkit::framebuffer::size(&device, 64, 64);
 
     for allowed in [&[][..], &[LINEAR], &[X_TILED, LINEAR]] {
         let source = producer
-            .create_buffer(64, 64, xrgb, allowed)
+            .create_buffer(w, h, xrgb, allowed)
             .unwrap_or_else(|error| panic!("{allowed:?}: {error}"));
         // INVALID is a driver without the modifier entry point reporting no
         // explicit layout for the buffer it fell back to (CI's Mesa does).
@@ -651,7 +662,7 @@ fn the_gbm_producer_honors_the_allowed_modifiers_vkms() {
             "{allowed:?} allocated {modifier:#x}"
         );
     }
-    let refused = producer.create_buffer(64, 64, xrgb, &[X_TILED]);
+    let refused = producer.create_buffer(w, h, xrgb, &[X_TILED]);
     assert!(
         matches!(refused, Err(drmkit_present::ProducerError::Unsupported)),
         "a set the producer can make nothing in must be refused: {:?}",

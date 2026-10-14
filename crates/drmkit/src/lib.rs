@@ -39,7 +39,7 @@
 //!
 //! Phases 0–4 of the porting plan are met. Of phase 5, the `v0.1.0-minimal`
 //! ship gate, what remains is the smoke run on RK3588 and `VisionFive` 2
-//! boards; 0.1.0 is released ahead of it. A scene can bring up a display,
+//! boards; the 0.1 releases ship ahead of it. A scene can bring up a display,
 //! allocate planes for a layer stack, commit a frame, composite what it
 //! cannot place, and release buffers on the right vblank; EDID, colour
 //! management, cursor and capture are in. So are the present spine,

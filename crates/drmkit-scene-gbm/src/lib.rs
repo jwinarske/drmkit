@@ -115,7 +115,7 @@ pub enum SurfaceError {
 
 /// A GBM swap chain the scene can scan out of.
 pub struct GbmSurfaceSource {
-    surface: gbm::Surface<()>,
+    surface: drmkit_gbm::GbmSurface,
     format: SourceFormat,
     config: SurfaceConfig,
     /// Framebuffers registered for the surface's buffers, keyed by GEM handle.
@@ -127,10 +127,9 @@ pub struct GbmSurfaceSource {
     framebuffers: HashMap<u32, framebuffer::Handle>,
     /// Buffers currently locked, keyed by the token handed to the scene.
     ///
-    /// Holding the `BufferObject` is what keeps the buffer locked: the Rust
-    /// binding releases it back to the surface on drop, so `release` is the
-    /// act of dropping the entry.
-    locked: HashMap<u64, gbm::BufferObject<()>>,
+    /// Holding the buffer is what keeps it locked: it goes back to the
+    /// surface on drop, so `release` is the act of dropping the entry.
+    locked: HashMap<u64, drmkit_gbm::GbmBuffer>,
     next_token: u64,
     /// The producer's render-done fence, if it set one.
     pending_fence: Option<SyncFence>,
@@ -182,7 +181,7 @@ impl GbmSurfaceSource {
         // Refused here rather than by GBM: `gbm_surface_create` reports an
         // unknown format the same way it reports a driver refusal, and a
         // caller can do something about only one of them.
-        if gbm::Format::try_from(config.fourcc).is_err() {
+        if drm::buffer::DrmFourcc::try_from(config.fourcc).is_err() {
             return Err(SurfaceError::UnsupportedFormat {
                 fourcc: config.fourcc,
             });
@@ -217,7 +216,7 @@ impl GbmSurfaceSource {
     fn make_surface(
         gbm: &drmkit_gbm::GbmDevice,
         config: &SurfaceConfig,
-    ) -> Result<gbm::Surface<()>, SurfaceError> {
+    ) -> Result<drmkit_gbm::GbmSurface, SurfaceError> {
         let modifiers: Vec<u64> = config.modifier.into_iter().collect();
         gbm.create_surface(config.width, config.height, config.fourcc, &modifiers)
             .map_err(|error| SurfaceError::Create(error.to_string()))
@@ -229,7 +228,7 @@ impl GbmSurfaceSource {
     /// destroys it, and a producer outliving the source would be rendering
     /// into freed memory.
     #[must_use]
-    pub const fn native_surface(&self) -> &gbm::Surface<()> {
+    pub const fn native_surface(&self) -> &drmkit_gbm::GbmSurface {
         &self.surface
     }
 
@@ -272,12 +271,9 @@ impl GbmSurfaceSource {
     fn framebuffer_for(
         &mut self,
         device: &RawDevice<'_>,
-        buffer: &gbm::BufferObject<()>,
+        buffer: &drmkit_gbm::GbmBuffer,
     ) -> Result<framebuffer::Handle, SurfaceError> {
-        // SAFETY: `gbm_bo_handle` is a union of equivalent integer widths and
-        // the u32 arm is the one every DRM GEM handle uses; the C API has no
-        // other way to read it.
-        let handle = unsafe { buffer.handle().u32_ };
+        let handle = buffer.handle();
         if let Some(existing) = self.framebuffers.get(&handle) {
             return Ok(*existing);
         }
@@ -287,7 +283,7 @@ impl GbmSurfaceSource {
                 fourcc: self.format.fourcc,
             }
         })?;
-        let modifier: u64 = buffer.modifier().into();
+        let modifier = buffer.modifier();
         // The same rule every import follows; see
         // `drmkit_core::framebuffer_modifier`.
         let declared = drmkit_core::framebuffer_modifier(device, modifier);
@@ -402,8 +398,7 @@ impl LayerBufferSource for GbmSurfaceSource {
 
         // SAFETY: the contract is the producer's, and is documented above. The
         // surface is live and this source is the only thing that locks it.
-        let buffer =
-            unsafe { self.surface.lock_front_buffer() }.map_err(|_| SourceError::WouldBlock)?;
+        let buffer = unsafe { self.surface.lock_front_buffer() }.ok_or(SourceError::WouldBlock)?;
 
         // SAFETY: the descriptor belongs to the device this source was built
         // against, which outlives it; the borrow lasts only for the ioctl.
@@ -416,7 +411,7 @@ impl LayerBufferSource for GbmSurfaceSource {
         // The layout is whatever the driver chose, which is only knowable once
         // a buffer exists. A caller that negotiated one still has to read this
         // back: the constrained entry point falls back where it is missing.
-        self.format.modifier = buffer.modifier().into();
+        self.format.modifier = buffer.modifier();
 
         let token = self.next_token;
         self.next_token = self.next_token.wrapping_add(1).max(1);
@@ -436,7 +431,7 @@ impl LayerBufferSource for GbmSurfaceSource {
 
     /// Give the buffer back to the surface.
     ///
-    /// Dropping the `BufferObject` is the release: the binding calls
+    /// Dropping the buffer is the release: it calls
     /// `gbm_surface_release_buffer` for us. A token with no entry is ignored —
     /// the scene releases on teardown too, and a double release must not
     /// hand the same buffer back twice.

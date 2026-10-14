@@ -25,8 +25,8 @@ thiserror = { workspace = true }
 
 [features]
 default = []
-# A scanout source backed by a GBM allocation. Optional because it pulls in
-# libgbm, which a CPU-only consumer has no reason to link.
+# A scanout source backed by a GBM allocation. Optional because it opens
+# libgbm at run time, which a CPU-only consumer has no reason to need.
 gbm = ["dep:drmkit-gbm"]
 
 [dev-dependencies]

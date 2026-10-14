@@ -157,9 +157,10 @@ pub struct AcquiredBuffer {
     ///
     /// **Empty means full-frame** — the scene emits no `FB_DAMAGE_CLIPS` and
     /// assumes everything changed, which is correct but not power-optimal. A
-    /// non-empty list names the changed regions; the scene clamps the count and
-    /// falls back to full-frame above its bound, and omits the blob entirely on
-    /// planes or drivers without the property.
+    /// non-empty list names the changed regions; the scene falls back to
+    /// full-frame above 16 rectangles, clips each to the buffer and drops any
+    /// left empty, and omits the blob entirely on planes or drivers without the
+    /// property.
     pub damage: Vec<DamageRect>,
 }
 

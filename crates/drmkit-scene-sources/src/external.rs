@@ -73,6 +73,12 @@ pub(crate) struct ImportedFramebuffer {
     offsets: Vec<u32>,
     pitches: Vec<u32>,
     fb: Option<framebuffer::Handle>,
+    /// The GEM handles the import made, closed after the framebuffer.
+    ///
+    /// Each holds a reference to its dma-buf, so one left open pins the
+    /// buffer until the device descriptor closes, however long after the
+    /// producer freed it.
+    handles: Vec<drm::buffer::Handle>,
     /// The descriptor the framebuffer was registered on, for teardown.
     device_fd: std::os::fd::RawFd,
 }
@@ -106,25 +112,45 @@ impl ImportedFramebuffer {
         self.fb.map(Into::into)
     }
 
-    /// Abandon the framebuffer without issuing an ioctl.
+    /// Abandon the framebuffer and its GEM handles without issuing an ioctl.
     ///
-    /// For a revoked descriptor, which cannot service the teardown. Leaves
-    /// `fb_id` reporting `None`, so nothing commits an id the kernel has
-    /// forgotten.
+    /// For a revoked descriptor, which cannot service the teardown and took
+    /// both with it. Leaves `fb_id` reporting `None`, so nothing commits an id
+    /// the kernel has forgotten.
     pub(crate) fn forget(&mut self) {
         self.fb = None;
+        self.handles.clear();
     }
 }
 
 impl Drop for ImportedFramebuffer {
     fn drop(&mut self) {
+        if self.fb.is_none() && self.handles.is_empty() {
+            return;
+        }
+        // SAFETY: `device_fd` is the descriptor this framebuffer was
+        // registered on, borrowed only for these ioctls.
+        let borrowed = unsafe { BorrowedFd::borrow_raw(self.device_fd) };
+        let device = RawDevice { fd: borrowed };
+        // The framebuffer first, then the handles, as the reference's
+        // `teardown_slot` does.
         if let Some(fb) = self.fb.take() {
-            // SAFETY: `device_fd` is the descriptor this framebuffer was
-            // registered on, borrowed only for this ioctl.
-            let borrowed = unsafe { BorrowedFd::borrow_raw(self.device_fd) };
-            let device = RawDevice { fd: borrowed };
             let _ = device.destroy_framebuffer(fb);
         }
+        close_handles(&device, &mut self.handles);
+    }
+}
+
+/// Close each distinct GEM handle in `handles`, leaving it empty.
+///
+/// Planes that share a dma-buf import to the same handle, and the kernel
+/// takes a handle back once: closing it per plane, as the reference does, only
+/// adds refused ioctls.
+fn close_handles(device: &impl drm::control::Device, handles: &mut Vec<drm::buffer::Handle>) {
+    handles.sort_unstable_by_key(|handle| u32::from(*handle));
+    handles.dedup();
+    for handle in handles.drain(..) {
+        let _ = device.close_buffer(handle);
     }
 }
 
@@ -234,12 +260,19 @@ impl ExternalDmaBufSource {
         let mut handles = [None; MAX_PLANES];
         let mut offsets = [0u32; MAX_PLANES];
         let mut pitches = [0u32; MAX_PLANES];
+        // Every handle imported so far, closed again if anything after it
+        // fails: the reference unwinds a failed import the same way.
+        let mut imported = Vec::with_capacity(planes.len());
         for (index, (plane, fd)) in planes.iter().zip(duped.iter()).enumerate() {
-            handles[index] = Some(
-                device
-                    .prime_fd_to_buffer(fd.as_fd())
-                    .map_err(|e| ExternalError::Io(errno_of(&e)))?,
-            );
+            let handle = match device.prime_fd_to_buffer(fd.as_fd()) {
+                Ok(handle) => handle,
+                Err(e) => {
+                    close_handles(device, &mut imported);
+                    return Err(ExternalError::Io(errno_of(&e)));
+                }
+            };
+            imported.push(handle);
+            handles[index] = Some(handle);
             offsets[index] = plane.offset;
             pitches[index] = plane.pitch;
         }
@@ -262,9 +295,13 @@ impl ExternalDmaBufSource {
             FbCmd2Flags::empty()
         };
 
-        let fb = device
-            .add_planar_framebuffer(&layout, flags)
-            .map_err(|e| ExternalError::Io(errno_of(&e)))?;
+        let fb = match device.add_planar_framebuffer(&layout, flags) {
+            Ok(fb) => fb,
+            Err(e) => {
+                close_handles(device, &mut imported);
+                return Err(ExternalError::Io(errno_of(&e)));
+            }
+        };
 
         Ok(Self {
             imported: ImportedFramebuffer {
@@ -272,6 +309,7 @@ impl ExternalDmaBufSource {
                 offsets: offsets[..planes.len()].to_vec(),
                 pitches: pitches[..planes.len()].to_vec(),
                 fb: Some(fb),
+                handles: imported,
                 device_fd: device.raw_fd(),
             },
             format,
@@ -316,6 +354,7 @@ impl ExternalDmaBufSource {
                 offsets: Vec::new(),
                 pitches: Vec::new(),
                 fb: None,
+                handles: Vec::new(),
                 device_fd: -1,
             },
         )

@@ -49,6 +49,10 @@ minor version may break the API and a patch version does not.
 - `drmkit-capture`: the warning for a capture with nothing readable gives
   the enumerated and unbound plane counts, as the reference's does, so a
   missing client cap can be told from a blank CRTC (P-61).
+- `drmkit-scene-sources`: a dma-buf import closes its GEM handles when it
+  goes, and when it fails, as the reference does. They were never closed,
+  so every buffer a producer had handed over stayed pinned until the device
+  was closed (P-62).
 
 ## [0.1.1] - 2026-10-14
 

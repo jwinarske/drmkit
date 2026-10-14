@@ -2046,3 +2046,64 @@ fn the_bottom_slot_layer_is_the_unique_lowest_above_the_pin() {
     assert_eq!(bottom_slot_layer(&[Some(3), None], 2), None);
     assert_eq!(bottom_slot_layer(&[], 2), None);
 }
+
+// --- colorimetry fallback ----------------------------------------------------
+
+mod ycbcr_fallback {
+    use crate::commit::{encoding_value, range_value};
+    use drmkit_planes::{ColorEncoding, ColorEncodingValues, ColorRange, ColorRangeValues};
+
+    /// The values a plane listing all three encodings would hand back. The
+    /// integers are deliberately not 0, 1, 2: a resolver that returned the
+    /// enum's position rather than the driver's value would pass otherwise.
+    const ALL: ColorEncodingValues = ColorEncodingValues {
+        bt601: Some(10),
+        bt709: Some(11),
+        bt2020: Some(12),
+    };
+
+    #[test]
+    fn an_encoding_the_plane_lists_is_written_as_asked() {
+        assert_eq!(encoding_value(&ALL, ColorEncoding::Bt601), Some(10));
+        assert_eq!(encoding_value(&ALL, ColorEncoding::Bt709), Some(11));
+        assert_eq!(encoding_value(&ALL, ColorEncoding::Bt2020), Some(12));
+    }
+
+    /// Older drivers list no BT.2020. Upstream falls back to BT.709, then
+    /// BT.601, rather than write nothing and leave the previous client's.
+    #[test]
+    fn a_missing_encoding_falls_back_to_bt709_then_bt601() {
+        let no_2020 = ColorEncodingValues {
+            bt2020: None,
+            ..ALL
+        };
+        assert_eq!(encoding_value(&no_2020, ColorEncoding::Bt2020), Some(11));
+        let only_601 = ColorEncodingValues {
+            bt601: Some(10),
+            ..ColorEncodingValues::default()
+        };
+        assert_eq!(encoding_value(&only_601, ColorEncoding::Bt709), Some(10));
+        assert_eq!(
+            encoding_value(&ColorEncodingValues::default(), ColorEncoding::Bt709),
+            None,
+            "a plane listing nothing known gets nothing written"
+        );
+    }
+
+    #[test]
+    fn a_missing_range_falls_back_to_limited_then_full() {
+        let both = ColorRangeValues {
+            limited: Some(20),
+            full: Some(21),
+        };
+        assert_eq!(range_value(&both, ColorRange::Full), Some(21));
+        assert_eq!(range_value(&both, ColorRange::Limited), Some(20));
+        let only_limited = ColorRangeValues { full: None, ..both };
+        assert_eq!(range_value(&only_limited, ColorRange::Full), Some(20));
+        let only_full = ColorRangeValues {
+            limited: None,
+            ..both
+        };
+        assert_eq!(range_value(&only_full, ColorRange::Limited), Some(21));
+    }
+}

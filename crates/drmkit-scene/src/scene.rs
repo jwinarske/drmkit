@@ -334,6 +334,12 @@ pub struct PlanePlan {
     /// [`stacked_zpos`](drmkit_planes::stacked_zpos)). `None` where the plane
     /// is not ranked, and the layer's own value goes out.
     pub zpos: Option<u64>,
+    /// The `COLOR_ENCODING` and `COLOR_RANGE` the layer asks of its plane.
+    ///
+    /// `None` for the composition canvas, which is no one layer's and is
+    /// RGB, where the kernel applies neither: its plane is left with what it
+    /// has, as upstream leaves it.
+    pub color: Option<crate::Ycbcr>,
 }
 
 /// One pass over the sources: what they gave, and what it cost.
@@ -365,6 +371,11 @@ pub struct FrameBuild {
     report: CommitReport,
     kind: CommitKind,
     finalized: bool,
+    /// Whether this frame was built not knowing what the kernel holds: the
+    /// first frame, or the first after a resume or a rebind. Another client
+    /// may have changed the planes' sticky properties since they were last
+    /// written, so they are restated rather than diffed.
+    restate_sticky: bool,
 }
 
 impl FrameBuild {
@@ -405,6 +416,19 @@ impl FrameBuild {
     #[must_use]
     pub fn plan(&self) -> &[PlanePlan] {
         &self.plan
+    }
+
+    /// Whether emission restates every plane's sticky properties --
+    /// `COLOR_ENCODING` and `COLOR_RANGE` -- rather than only the ones that
+    /// changed since the kernel last took them.
+    ///
+    /// True until the scene knows what the kernel holds: on the first frame,
+    /// and the first after [`resume`](crate::LayerScene::resume) or
+    /// [`rebind`](crate::LayerScene::rebind), when whoever held the planes
+    /// meanwhile may have left them on their own settings.
+    #[must_use]
+    pub const fn restates_sticky(&self) -> bool {
+        self.restate_sticky
     }
 
     /// Record what the fence arming pass did, for the commit report.
@@ -956,6 +980,7 @@ impl LayerScene {
             &pinned,
         );
         self.disable_foreign(&mut disables, &plan, registry, crtc_index, committer);
+        self.request_colors(&mut plan);
         // A scene with no layers keeps its planes, and the last frame stays
         // up: an active CRTC's only primary cannot be disabled on some
         // controllers (i.MX LCDIF), so turning it off would get the commit
@@ -982,6 +1007,7 @@ impl LayerScene {
                 // one source's damage to report, so it repaints whole.
                 damage: Vec::new(),
                 zpos: None,
+                color: None,
             });
             disables.into_iter().filter(|id| *id != plane_id).collect()
         } else {
@@ -997,7 +1023,21 @@ impl LayerScene {
             report,
             kind,
             finalized: false,
+            restate_sticky: self.planes_unknown,
         })
+    }
+
+    /// Give each layer's plan entry the YCbCr interpretation the layer asks
+    /// for. Called before the canvas joins the plan: it is no layer's, and
+    /// asks for nothing.
+    fn request_colors(&self, plan: &mut [PlanePlan]) {
+        for entry in plan {
+            entry.color = self
+                .handles()
+                .find(|handle| handle.layer_id() == entry.layer_id)
+                .and_then(|handle| self.layer(handle))
+                .map(|layer| layer.display().ycbcr());
+        }
     }
 
     /// Turn off the planes another client left lit, while the scene does not
@@ -2433,6 +2473,7 @@ fn build_plan(
                     baseline: allocator.committed_baseline(plane_id, *id).copied(),
                     damage: damage.get(id).cloned().unwrap_or_default(),
                     zpos: None,
+                    color: None,
                 })
         })
         .collect();

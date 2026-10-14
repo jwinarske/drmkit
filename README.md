@@ -8,12 +8,15 @@ composition, and scanout.
 [![vkms](https://github.com/jwinarske/drmkit/actions/workflows/vkms.yml/badge.svg)](https://github.com/jwinarske/drmkit/actions/workflows/vkms.yml)
 
 > **Status: phases 0–4 met, phase 5 (the v0.1.0-minimal ship gate) under way.**
-> 0.1.0 is released ahead of that gate's last item, the smoke run on RK3588
-> and VisionFive 2 boards; [`CHANGELOG.md`](CHANGELOG.md) says what is in it.
-> Twenty-two crates; 1,037 unit and integration tests plus 27 doctests on the
-> host, 219 more that need a card, and the host suite again under qemu on the
-> aarch64 and riscv64 cross lanes. All six [`INVARIANTS.md`](INVARIANTS.md) contracts are
-> pinned against a real device. A scene can build a frame, allocate planes,
+> The 0.1 releases ship ahead of that gate's last item, the smoke run on RK3588
+> and VisionFive 2 boards: 0.1.1 is current, on
+> [crates.io](https://crates.io/crates/drmkit) and
+> [docs.rs](https://docs.rs/drmkit), and [`CHANGELOG.md`](CHANGELOG.md) says
+> what is in each. Twenty-one published crates and a test kit; 1,037 unit and
+> integration tests plus 29 doctests on the host, 221 more that need a card,
+> and the host suite again under qemu on the aarch64 and riscv64 cross lanes.
+> All six [`INVARIANTS.md`](INVARIANTS.md) contracts are pinned against a real
+> device. A scene can build a frame, allocate planes,
 > commit it, composite what it cannot place, and hand buffers back on the right
 > vblank; EDID, colour management, the cursor and capture paths are in and
 > tested.
@@ -32,7 +35,8 @@ composition, and scanout.
 > See [`plan.md`](plan.md) for the full porting plan.
 >
 > It has run on more than vkms. amdgpu and vc4 (Raspberry Pi 5) by hand, a
-> rockchip VOP2 for the case that needed it, and — for the assumptions no lab
+> rockchip VOP2 for the case that needed it, the SA8155P's display controller
+> for the scene and GBM suites, and — for the assumptions no lab
 > can settle — the [drmdb](https://drmdb.emersion.fr) corpus of ~1,200 real
 > devices across 50 drivers, replayed through this tree's own capability logic.
 > Several findings here came from hardware nobody owns.
@@ -144,7 +148,7 @@ that measurement did not support. See [`docs/parity-findings.md`](docs/parity-fi
 **Upstream first.** drm-cxx is the origin of authority: anything this port
 surfaces is [filed there](docs/upstream-findings.md) rather than fixed only
 here, and the default for a bug is to reproduce the C++ behaviour so the two
-agree byte for byte. Twenty-six issues filed so far, plus two against
+agree byte for byte. Thirty-four issues filed so far, plus three against
 third-party libraries.
 
 **Three drivers, then fifty.** Every device test runs on vkms in CI and is

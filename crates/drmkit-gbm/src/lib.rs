@@ -38,6 +38,7 @@ mod tests;
 
 pub use buffer::{GbmBuffer, MapAccess};
 pub use device::GbmDevice;
+pub use ffi::HIDE_ENV;
 pub use surface::GbmSurface;
 
 /// What went wrong allocating or exporting.

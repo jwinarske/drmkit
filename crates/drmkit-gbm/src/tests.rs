@@ -391,3 +391,42 @@ fn every_honored_layout_comes_back_as_asked() {
         );
     }
 }
+
+/// The entry points `DRMKIT_GBM_HIDE_SYMBOLS` names are the ones missing.
+///
+/// What makes a run with it set a run against an older libgbm, and not the
+/// newest one with an ignored variable: on vkms and every Mesa board the v2
+/// entry points exist, so a hide list that did nothing would leave each older
+/// path untested while the lane reported it covered. Every hideable name is
+/// also checked to be one the loader knows, so a misspelling in the lane's
+/// list fails here rather than hiding nothing.
+#[test]
+fn the_hidden_entry_points_are_the_missing_ones() {
+    let Ok(gbm) = crate::ffi::gbm() else {
+        println!("note: skipped -- no libgbm to open");
+        return;
+    };
+    for name in crate::ffi::OPTIONAL {
+        assert!(
+            gbm.has(name).is_some(),
+            "{name} is hideable but the loader does not report it"
+        );
+    }
+    let hidden = std::env::var(crate::HIDE_ENV).unwrap_or_default();
+    for name in hidden
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        assert!(
+            crate::ffi::OPTIONAL.contains(&name),
+            "{name} is not an entry point that can be hidden"
+        );
+        assert_eq!(gbm.has(name), Some(false), "{name} was asked hidden");
+    }
+    let shape: Vec<_> = crate::ffi::OPTIONAL
+        .iter()
+        .map(|name| format!("{name}={}", gbm.has(name) == Some(true)))
+        .collect();
+    println!("note: libgbm as seen: {}", shape.join(" "));
+}

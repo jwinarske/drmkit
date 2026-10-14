@@ -13,10 +13,79 @@ readme = "README.md"
 categories = ["graphics", "os::linux-apis", "hardware-support"]
 keywords = ["drm", "kms", "display", "graphics", "embedded"]
 
-# Umbrella re-export crate. Intentionally dependency-free for now: the member
-# crates are unpublished, and a path-only dependency cannot be published.
-# Each becomes an optional, feature-gated dependency as it lands.
+# Each member crate is an optional dependency behind a feature of its own
+# name, so `drmkit` builds only what a consumer asks for. The defaults are the
+# path from a card to a committed scene, and none of them links a system
+# library. Where a member does -- libdisplay-info, udev, libinput,
+# xkbcommon, libseat -- it is taken here without its default features and the
+# library is a feature of this crate's own, so asking for `input` or `session`
+# does not quietly demand a library the build machine may not have. Those two
+# are spelled out: an inherited dependency cannot turn its defaults off.
 [dependencies]
+drmkit-capture = { workspace = true, optional = true }
+drmkit-core = { workspace = true, optional = true }
+drmkit-csd = { workspace = true, optional = true }
+drmkit-cursor = { workspace = true, optional = true }
+drmkit-display = { workspace = true, optional = true }
+drmkit-dumb = { workspace = true, optional = true }
+drmkit-fmt = { workspace = true, optional = true }
+drmkit-gbm = { workspace = true, optional = true }
+drmkit-input = { version = "0.1.0", path = "../drmkit-input", optional = true, default-features = false }
+drmkit-log = { workspace = true, optional = true }
+drmkit-modeset = { workspace = true, optional = true }
+drmkit-planes = { workspace = true, optional = true }
+drmkit-present = { workspace = true, optional = true }
+drmkit-scene = { workspace = true, optional = true }
+drmkit-scene-gbm = { workspace = true, optional = true }
+drmkit-scene-set = { workspace = true, optional = true }
+drmkit-scene-sources = { workspace = true, optional = true }
+drmkit-session = { version = "0.1.0", path = "../drmkit-session", optional = true, default-features = false }
+drmkit-sync = { workspace = true, optional = true }
+drmkit-time = { workspace = true, optional = true }
+
+[features]
+default = ["core", "modeset", "dumb", "fmt", "planes", "scene"]
+
+# One per member crate, re-exported as the module of the same name.
+capture = ["dep:drmkit-capture"]
+core = ["dep:drmkit-core"]
+csd = ["dep:drmkit-csd"]
+cursor = ["dep:drmkit-cursor"]
+display = ["dep:drmkit-display"]
+dumb = ["dep:drmkit-dumb"]
+fmt = ["dep:drmkit-fmt"]
+gbm = ["dep:drmkit-gbm"]
+input = ["dep:drmkit-input"]
+log = ["dep:drmkit-log"]
+modeset = ["dep:drmkit-modeset"]
+planes = ["dep:drmkit-planes"]
+present = ["dep:drmkit-present"]
+scene = ["dep:drmkit-scene"]
+scene-gbm = ["dep:drmkit-scene-gbm"]
+scene-set = ["dep:drmkit-scene-set"]
+scene-sources = ["dep:drmkit-scene-sources"]
+session = ["dep:drmkit-session"]
+sync = ["dep:drmkit-sync"]
+time = ["dep:drmkit-time"]
+
+# Every member crate, without the system libraries below.
+full = [
+    "capture", "core", "csd", "cursor", "display", "dumb", "fmt", "gbm",
+    "input", "log", "modeset", "planes", "present", "scene", "scene-gbm",
+    "scene-set", "scene-sources", "session", "sync", "time",
+]
+
+# The parts of member crates that link a system library.
+edid = ["display", "drmkit-display/edid"]          # libdisplay-info
+hotplug = ["display", "drmkit-display/hotplug"]    # libudev
+libinput = ["input", "drmkit-input/libinput"]      # libinput, libudev
+xkb = ["input", "drmkit-input/xkb"]                # xkbcommon
+libseat = ["session", "drmkit-session/libseat", "drmkit-session/libseat-log"]
 
 [lints]
 workspace = true
+
+# Everything docs.rs can build. libseat is left out: the docs build has no
+# libseat, and drmkit-session's own page documents the seat.
+[package.metadata.docs.rs]
+features = ["full", "edid", "hotplug", "libinput", "xkb"]

@@ -7,26 +7,51 @@
 //! drmkit is a behavioral-parity Rust port of
 //! [drm-cxx](https://github.com/jwinarske/drm-cxx).
 //!
+//! # Using it
+//!
+//! Every member crate is a module here, behind a feature of the same name:
+//! `drmkit::scene` is `drmkit-scene`, `drmkit::core` is `drmkit-core`. The
+//! default features are the path from a card to a committed scene —
+//! `core`, `modeset`, `dumb`, `fmt`, `planes` and `scene` — and `full` adds
+//! every other crate.
+//!
+//! ```toml
+//! [dependencies]
+//! drmkit = { version = "0.1", features = ["cursor", "capture"] }
+//! ```
+//!
+//! None of those links a system library. The parts that do are features of
+//! their own, so a build machine is never asked for one nobody wanted:
+//!
+//! | Feature | Turns on | Links |
+//! |---|---|---|
+//! | `edid` | EDID parsing in `display` | libdisplay-info |
+//! | `hotplug` | the hotplug watch in `display` | libudev |
+//! | `libinput` | input devices in `input` | libinput, libudev |
+//! | `xkb` | keymaps and key resolution in `input` | xkbcommon |
+//! | `libseat` | the seat backend in `session` | libseat |
+//!
+//! A member crate's other features — JPEG in `drmkit-capture`, the `tracing`
+//! sink in `drmkit-log`, the device half of `drmkit-present` — are turned on
+//! by naming that crate alongside this one; Cargo unifies the two.
+//!
 //! # Status
 //!
-//! **This crate is still a placeholder: it re-exports nothing.** The library
-//! is real and the member crates below are usable, but taking `drmkit` gets
-//! you a version constant and nothing else. Depend on the member crates you
-//! need directly until this becomes their feature-gated re-export surface.
-//!
-//! Phases 0–4 of the porting plan are met and phase 5, the `v0.1.0-minimal`
-//! ship gate, is under way — what it still wants is the HIL smoke on real
-//! boards. A scene can bring up a display, allocate planes for a layer stack,
-//! commit a frame, composite what it cannot place, and release buffers on the
-//! right vblank; EDID, colour management, cursor and capture are in. So are
-//! the present spine, cross-output orchestration, and client-side
+//! Phases 0–4 of the porting plan are met. Of phase 5, the `v0.1.0-minimal`
+//! ship gate, what remains is the smoke run on RK3588 and `VisionFive` 2
+//! boards; 0.1.0 is released ahead of it. A scene can bring up a display,
+//! allocate planes for a layer stack, commit a frame, composite what it
+//! cannot place, and release buffers on the right vblank; EDID, colour
+//! management, cursor and capture are in. So are the present spine,
+//! cross-output orchestration, GBM surface sources and client-side
 //! decorations.
 //!
 //! Not yet here: the GL compositor, EGL streams, V4L2 and `GStreamer` sources.
-//! Of the 97 upstream test files, 67 are ported and 13 partial; the 15 still
-//! pending each wait on hardware or a library this tree does not have — a
-//! GPU render node, the `vgem`, `vivid` or `vicodec` modules, or NVIDIA
-//! silicon. `TEST_PARITY.md` records which, per file.
+//! Of the 108 test files drm-cxx v5.0.0 has, 75 are ported, 14 partial and 3
+//! not applicable; the 16 still pending each wait on hardware or a library
+//! this tree does not have — a GPU render node, the `vgem`, `vivid` or
+//! `vicodec` modules, or NVIDIA silicon. `TEST_PARITY.md` records which, per
+//! file.
 //!
 //! # The crates
 //!
@@ -68,10 +93,37 @@
 //! Follow <https://github.com/jwinarske/drmkit> for the porting plan, the
 //! per-phase scope, and what each divergence from the reference turned out to
 //! be.
-//!
-// The crate exports nothing yet by design; the lint would otherwise fire on an
-// empty root.
-#![allow(clippy::empty_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
+macro_rules! member {
+    ($feature:literal, $krate:ident as $name:ident) => {
+        #[cfg(feature = $feature)]
+        #[cfg_attr(docsrs, doc(cfg(feature = $feature)))]
+        #[doc(inline)]
+        pub use $krate as $name;
+    };
+}
+
+member!("capture", drmkit_capture as capture);
+member!("core", drmkit_core as core);
+member!("csd", drmkit_csd as csd);
+member!("cursor", drmkit_cursor as cursor);
+member!("display", drmkit_display as display);
+member!("dumb", drmkit_dumb as dumb);
+member!("fmt", drmkit_fmt as fmt);
+member!("gbm", drmkit_gbm as gbm);
+member!("input", drmkit_input as input);
+member!("log", drmkit_log as log);
+member!("modeset", drmkit_modeset as modeset);
+member!("planes", drmkit_planes as planes);
+member!("present", drmkit_present as present);
+member!("scene", drmkit_scene as scene);
+member!("scene-gbm", drmkit_scene_gbm as scene_gbm);
+member!("scene-set", drmkit_scene_set as scene_set);
+member!("scene-sources", drmkit_scene_sources as scene_sources);
+member!("session", drmkit_session as session);
+member!("sync", drmkit_sync as sync);
+member!("time", drmkit_time as time);
 
 /// The upstream drm-cxx revision this port targets.
 ///

@@ -25,7 +25,12 @@ thiserror = { workspace = true, features = ["std"] }
 libseat = { workspace = true, optional = true }
 
 [features]
-default = ["libseat"]
+default = ["libseat", "libseat-log"]
+libseat = ["dep:libseat"]
+# Route libseat's own diagnostics into the `log` crate: the binding's
+# `custom_logger`, which builds a C shim against libseat's headers. A feature
+# of its own so the docs build, which has no libseat, can leave it out.
+libseat-log = ["libseat", "libseat/custom_logger"]
 
 # The seat probe needs a seat binding to probe with.
 [[example]]
@@ -34,3 +39,9 @@ required-features = ["libseat"]
 
 [lints]
 workspace = true
+
+# docs.rs has no libseat. The binding's `docs_rs` feature skips both the
+# library probe and the logger shim, which is enough to document the seat.
+[package.metadata.docs.rs]
+no-default-features = true
+features = ["libseat/docs_rs"]

@@ -33,6 +33,7 @@ struct FakeSeat {
     deliver: Vec<RawEvent>,
     /// Refuse the next open, to test a resume that cannot complete.
     fail_next_open: bool,
+    fail_close: bool,
 }
 
 impl FakeSeat {
@@ -75,6 +76,9 @@ impl Backend for FakeSeat {
 
     fn close_device(&mut self, id: DeviceId) -> Result<(), SessionError> {
         self.calls.push(Call::Close(id));
+        if self.fail_close {
+            return Err(SessionError::Seat("close refused".to_owned()));
+        }
         Ok(())
     }
 
@@ -284,16 +288,70 @@ fn a_resume_without_a_pause_changes_nothing() {
 #[test]
 fn a_resume_that_cannot_reopen_reports_it() {
     // The display is not coming back on its own, and a caller that never
-    // learns is a caller that sits there.
+    // learns is a caller that sits there. Reported for that device, as the
+    // reference's `resume_failed_cb` does (drm-cxx#246), not as a failed
+    // dispatch.
     let mut session = with_card();
     session.backend_mut().fail_next_open = true;
     session.backend_mut().queue(RawEvent::Disable);
     session.backend_mut().queue(RawEvent::Enable);
 
-    let result = session.dispatch(0);
-    assert!(matches!(result, Err(SessionError::Seat(_))), "{result:?}");
-    // The pause still reached the caller: they must stop either way.
+    session
+        .dispatch(0)
+        .expect("one lost device is not a failed dispatch");
     assert_eq!(session.next_event(), Some(SessionEvent::Paused));
+    assert!(matches!(
+        session.next_event(),
+        Some(SessionEvent::DeviceLost { path, .. }) if path == Path::new("/dev/dri/card0")
+    ));
+    assert_eq!(
+        session.next_event(),
+        Some(SessionEvent::Resumed { devices: vec![] })
+    );
+    assert!(session.devices().is_empty(), "the lost device is not held");
+}
+
+/// One device that will not reopen costs that device, not the others: the
+/// reference goes on to the rest, so every output but the lost one comes
+/// back after the switch.
+#[test]
+fn a_device_that_cannot_reopen_does_not_cost_the_others() {
+    let mut session = with_card();
+    session.take_device("/dev/dri/card1").expect("take");
+    // card0 reopens first, so this fails card0 and leaves card1 to come back.
+    session.backend_mut().fail_next_open = true;
+    session.backend_mut().queue(RawEvent::Disable);
+    session.backend_mut().queue(RawEvent::Enable);
+    session.dispatch(0).expect("dispatch");
+
+    assert_eq!(session.next_event(), Some(SessionEvent::Paused));
+    assert!(matches!(
+        session.next_event(),
+        Some(SessionEvent::DeviceLost { path, .. }) if path == Path::new("/dev/dri/card0")
+    ));
+    let Some(SessionEvent::Resumed { devices }) = session.next_event() else {
+        panic!("the rest resume");
+    };
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0].path, Path::new("/dev/dri/card1"));
+    assert_eq!(session.devices(), devices.as_slice());
+}
+
+/// A seat that refuses to close a device is not a reason to give up on
+/// reopening it; the reference ignores the close's result.
+#[test]
+fn a_refused_close_does_not_stop_the_reopen() {
+    let mut session = with_card();
+    session.backend_mut().fail_close = true;
+    session.backend_mut().queue(RawEvent::Disable);
+    session.backend_mut().queue(RawEvent::Enable);
+    session.dispatch(0).expect("dispatch");
+
+    assert_eq!(session.next_event(), Some(SessionEvent::Paused));
+    let Some(SessionEvent::Resumed { devices }) = session.next_event() else {
+        panic!("resumed");
+    };
+    assert_eq!(devices.len(), 1);
 }
 
 #[test]

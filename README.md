@@ -8,6 +8,8 @@ composition, and scanout.
 [![vkms](https://github.com/jwinarske/drmkit/actions/workflows/vkms.yml/badge.svg)](https://github.com/jwinarske/drmkit/actions/workflows/vkms.yml)
 
 > **Status: phases 0–4 met, phase 5 (the v0.1.0-minimal ship gate) under way.**
+> 0.1.0 is released ahead of that gate's last item, the smoke run on RK3588
+> and VisionFive 2 boards; [`CHANGELOG.md`](CHANGELOG.md) says what is in it.
 > Twenty-two crates; 1,037 unit and integration tests plus 27 doctests on the
 > host, 219 more that need a card, and the host suite again under qemu on the
 > aarch64 and riscv64 cross lanes. All six [`INVARIANTS.md`](INVARIANTS.md) contracts are

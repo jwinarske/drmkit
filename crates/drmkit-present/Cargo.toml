@@ -11,6 +11,8 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
@@ -72,3 +74,7 @@ required-features = ["device"]
 [[test]]
 name = "backend_device"
 required-features = ["gbm"]
+
+# Document every feature: none of them needs a library docs.rs lacks.
+[package.metadata.docs.rs]
+all-features = true

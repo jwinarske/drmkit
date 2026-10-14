@@ -49,3 +49,7 @@ drmkit-fmt = { workspace = true }
 
 [lints]
 workspace = true
+
+# Document every feature: none of them needs a library docs.rs lacks.
+[package.metadata.docs.rs]
+all-features = true

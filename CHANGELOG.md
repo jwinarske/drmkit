@@ -28,6 +28,9 @@ minor version may break the API and a patch version does not.
   node whose resource list cannot be read probes to defaults rather than
   failing. `ScanoutTarget` discovery no longer fails when a driver refuses
   universal planes (P-55).
+- `drmkit-planes`: `Allocation::composited` reports transient-composited
+  layers, which were neither placed nor reported, and no longer reports an
+  unplaced composition layer, as the reference marks them (P-56).
 
 ## [0.1.1] - 2026-10-14
 

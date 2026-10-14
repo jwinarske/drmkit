@@ -97,7 +97,6 @@ pub struct Layer {
     cached_hash: Cell<Option<u64>>,
     force_composited: bool,
     transient_composited: bool,
-    needs_composition: bool,
     dirty: bool,
     composition_output: bool,
     externally_bound: bool,
@@ -124,7 +123,6 @@ impl Layer {
             cached_hash: Cell::new(None),
             force_composited: false,
             transient_composited: false,
-            needs_composition: false,
             dirty: true,
             composition_output: false,
             externally_bound: false,
@@ -284,6 +282,8 @@ impl Layer {
     /// scene-level constraints — an EGL Streams `Exclusive` mixing mode forcing
     /// FB-backed layers through composition when a stream layer shares the
     /// CRTC — coexist with a caller's own choice without conflating the two.
+    /// Nothing in this tree's scene sets it yet: the streams tier it exists for
+    /// is not ported.
     pub fn set_transient_composited(&mut self, composited: bool) -> &mut Self {
         self.transient_composited = composited;
         self
@@ -295,20 +295,15 @@ impl Layer {
         self.transient_composited
     }
 
-    /// Whether this layer must go through composition for any reason.
+    /// Whether the caller or the scene has sent this layer to composition.
+    ///
+    /// Upstream's allocator also sets this on every layer it could not place.
+    /// Here the allocator holds layers by shared reference and reports that
+    /// verdict in [`Allocation::composited`](crate::Allocation::composited)
+    /// instead, which covers these layers too.
     #[must_use]
     pub const fn needs_composition(&self) -> bool {
-        self.needs_composition || self.force_composited || self.transient_composited
-    }
-
-    #[expect(
-        dead_code,
-        reason = "set by the allocator, which lands in the next commit of this \
-                  phase; expect rather than allow so the attribute has to be \
-                  removed once it is"
-    )]
-    pub(crate) const fn set_needs_composition(&mut self, needs: bool) {
-        self.needs_composition = needs;
+        self.force_composited || self.transient_composited
     }
 
     /// Mark this layer as the output of the composition pass itself.
@@ -360,13 +355,16 @@ impl Layer {
         self
     }
 
-    /// The plane this layer was placed on.
+    /// The plane a pinned layer holds, as the scene recorded it.
+    ///
+    /// Upstream's allocator records its placements here too; this one reports
+    /// them in [`Allocation::assignment`](crate::Allocation::assignment).
     #[must_use]
     pub const fn assigned_plane(&self) -> Option<u32> {
         self.assigned_plane
     }
 
-    /// Record the plane this layer was placed on.
+    /// Record the plane a pinned layer holds.
     pub fn set_assigned_plane(&mut self, plane_id: Option<u32>) -> &mut Self {
         self.assigned_plane = plane_id;
         self

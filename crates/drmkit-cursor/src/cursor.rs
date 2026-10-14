@@ -60,8 +60,8 @@ impl Cursor {
     /// - [`CursorError::Io`] if the file cannot be read.
     /// - [`CursorError::Malformed`] if it is not a cursor file, is truncated,
     ///   or contradicts itself.
-    /// - [`CursorError::TooLarge`] if it declares more frames or larger frames
-    ///   than the loader accepts.
+    /// - [`CursorError::TooLarge`] if the size it would load has more frames,
+    ///   or larger ones, than the loader accepts.
     /// - [`CursorError::NoImages`] if it parses but holds no images.
     pub fn load(resolved: &ThemeResolution, requested_size: u32) -> Result<Self, CursorError> {
         let bytes = std::fs::read(&resolved.source).map_err(|e| CursorError::Io(e.to_string()))?;
@@ -98,12 +98,9 @@ impl Cursor {
             requested_size
         };
 
-        let images = xcursor::parse(bytes, Limits::default())?;
-        let chosen = xcursor::nearest_size(&images, size).ok_or(CursorError::NoImages)?;
-
+        let images = xcursor::parse(bytes, Limits::default(), size)?;
         let frames: Vec<Frame> = images
             .into_iter()
-            .filter(|image| image.nominal_size == chosen)
             .map(|image| Frame {
                 pixels: image.pixels,
                 width: image.width,

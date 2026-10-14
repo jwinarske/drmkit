@@ -31,6 +31,10 @@ minor version may break the API and a patch version does not.
 - `drmkit-planes`: `Allocation::composited` reports transient-composited
   layers, which were neither placed nor reported, and no longer reports an
   unplaced composition layer, as the reference marks them (P-56).
+- `drmkit-cursor`: an animated cursor with many sizes loads, as it does in
+  the reference. The 256-frame cap counted every size in the file, so
+  Adwaita's busy cursors (six sizes of sixty frames) were refused as too
+  large; the size is now chosen first and only its frames count (P-57).
 
 ## [0.1.1] - 2026-10-14
 

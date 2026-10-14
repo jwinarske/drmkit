@@ -185,10 +185,17 @@ fn fixture_claiming_zpos(claim: bool) -> Option<Fixture> {
         .force_disable_candidates(crtc_index)
         .filter(|plane| plane.scans_out_linear(fourcc::ARGB8888))
         .count();
-    assert!(
-        planes > 0,
-        "a CRTC with no usable plane cannot display anything"
-    );
+    if planes == 0 {
+        // Not a broken probe: a device that frames no `ARGB8888` at all. A
+        // `panel-mipi-dbi` panel offers `RG16` and `XR24` and creates no
+        // framebuffer below its mode, so it refuses every layer this rig
+        // makes before the allocator sees one. On vkms this cannot happen,
+        // and the lane's coverage gate would report it if it did.
+        drmkit_testkit::skipped(
+            "no plane on this CRTC scans ARGB8888 out linear; the rig's layers are ARGB8888",
+        );
+        return None;
+    }
     println!("note: {planes} candidate plane(s) on this CRTC");
 
     let mut map = PlanePropertyMap::new();
@@ -788,7 +795,7 @@ fn the_canvas_plane_turns_off_when_composition_stops_vkms() {
     let (Some(background), Some(overlay)) =
         (fx.add_layer(0, 0, w, h), fx.add_layer(ox, oy, ow, oh))
     else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
     fx.paint(background, 0x00FF_0000).expect("paint");
@@ -855,7 +862,7 @@ fn composited_layers_return_to_planes_after_removal_vkms() {
         let index = u32::try_from(i).expect("small");
         let offset = i32::try_from(index * 8).expect("on screen");
         let Some(handle) = fx.add_layer(offset, offset, SIDE, SIDE) else {
-            drmkit_testkit::skipped("no dumb buffer for a layer");
+            drmkit_testkit::skipped("no layer buffer this device will frame");
             fx.teardown();
             return;
         };
@@ -957,7 +964,7 @@ fn the_first_commit_turns_off_foreign_planes_vkms() {
     // Topmost zpos: where planes stack by id, the layer lands on the last
     // plane, not on the one the console holds.
     let Some(layer) = fx.add_layer(64, 64, 64, 64) else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
     fx.paint(layer, 0x0000_FF00).expect("paint");

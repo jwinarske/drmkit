@@ -133,9 +133,10 @@ pub struct ScanoutBackend {
     /// Held raw because `Drop` has no device argument, and the restore is a
     /// legacy ioctl either way.
     device_fd: std::os::fd::RawFd,
-    /// The CRTC's vblank sequence right after the last commit that armed a
-    /// flip, which teardown waits past. `None` when unknown.
-    armed_flip_seq: Option<u64>,
+    /// What teardown waits on for the last commit's flip: the CRTC's vblank
+    /// sequence right after it, or only its event where the CRTC has no
+    /// counter. `None` when that commit armed no flip.
+    armed_flip_seq: Option<crate::armed_flip::ArmedFlip>,
 }
 
 impl std::fmt::Debug for ScanoutBackend {

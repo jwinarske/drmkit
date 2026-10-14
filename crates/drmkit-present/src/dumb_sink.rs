@@ -170,9 +170,10 @@ pub struct DumbScanoutSink {
     /// raw because `Drop` has no device argument -- the ring's dumb buffers
     /// hold it the same way, for the same reason.
     device_fd: std::os::fd::RawFd,
-    /// The CRTC's vblank sequence right after the last commit that armed a
-    /// flip, which teardown waits past. `None` when unknown.
-    armed_flip_seq: Option<u64>,
+    /// What teardown waits on for the last commit's flip: the CRTC's vblank
+    /// sequence right after it, or only its event where the CRTC has no
+    /// counter. `None` when that commit armed no flip.
+    armed_flip_seq: Option<crate::armed_flip::ArmedFlip>,
 }
 
 /// How many bytes a `height`-row frame at `stride` occupies.

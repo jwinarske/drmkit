@@ -34,7 +34,7 @@ fn a_steady_frame_writes_only_its_fb_id_vkms() {
         return;
     };
     if fx.add_placeable_layer().is_none() {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     }
 
@@ -85,7 +85,7 @@ fn forcing_full_writes_puts_every_property_back_on_the_wire_vkms() {
         return;
     };
     if fx.add_placeable_layer().is_none() {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     }
 
@@ -141,7 +141,7 @@ fn a_layer_added_to_a_warm_scene_still_reaches_a_plane_vkms() {
         return;
     }
     if fx.add_layer(0, 0, LAYER_W, LAYER_H).is_none() {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     }
 
@@ -149,7 +149,7 @@ fn a_layer_added_to_a_warm_scene_still_reaches_a_plane_vkms() {
     fx.commit().expect("the warm frame");
 
     if fx.add_layer(32, 32, 32, 32).is_none() {
-        drmkit_testkit::skipped("no dumb buffer for a second layer");
+        drmkit_testkit::skipped("no second layer buffer this device will frame");
         return;
     }
     let report = fx.commit().expect("the frame that adds a layer");
@@ -186,7 +186,7 @@ fn a_translated_layer_writes_its_rectangle_and_its_fb_vkms() {
         return;
     }
     let Some(handle) = fx.add_layer(32, 32, LAYER_W, LAYER_H) else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
 
@@ -224,7 +224,7 @@ fn moving_a_layer_defeats_the_fast_path_and_the_next_frame_recovers_it_vkms() {
         return;
     }
     let Some(handle) = fx.add_layer(32, 32, LAYER_W, LAYER_H) else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
 
@@ -311,7 +311,7 @@ fn an_emptied_scene_writes_nothing_and_keeps_its_last_frame_vkms() {
     };
     let (w, h) = fx.mode_size();
     let Some(handle) = fx.add_layer(0, 0, w, h) else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
     let first = fx.commit().expect("the frame with a layer");
@@ -359,7 +359,7 @@ fn the_first_frame_on_a_dark_crtc_places_its_layer_vkms() {
         .set_crtc(crtc, None, (0, 0), &[], None)
         .expect("switch the CRTC off");
     if fx.add_placeable_layer().is_none() {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     }
 

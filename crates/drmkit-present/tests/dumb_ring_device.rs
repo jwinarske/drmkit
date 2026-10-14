@@ -53,7 +53,10 @@ fn a_reused_slot_eventually_asks_for_a_partial_repaint_vkms() {
     let _guard = card_guard();
     let Some(device) = open_card() else { return };
 
-    let mut source = DumbRingSource::new(128, 128, drmkit_fmt::fourcc::XRGB8888, 3)
+    // Sized where the device frames it: a `panel-mipi-dbi` panel creates no
+    // framebuffer but its mode's.
+    let (width, height) = drmkit_testkit::framebuffer::size(&device, 128, 128);
+    let mut source = DumbRingSource::new(width, height, drmkit_fmt::fourcc::XRGB8888, 3)
         .expect("XRGB8888 has a known bpp");
 
     let mut saw_full = false;
@@ -66,7 +69,7 @@ fn a_reused_slot_eventually_asks_for_a_partial_repaint_vkms() {
                 match repaint {
                     Repaint::Full => {
                         saw_full = true;
-                        for row in 0..128 {
+                        for row in 0..height {
                             if let Some(row) = mapping.row_mut(row) {
                                 row.fill(0);
                             }
@@ -123,7 +126,8 @@ fn slots_are_allocated_as_the_ring_grows_vkms() {
     let _guard = card_guard();
     let Some(device) = open_card() else { return };
 
-    let mut source = DumbRingSource::new(64, 64, drmkit_fmt::fourcc::XRGB8888, 3)
+    let (width, height) = drmkit_testkit::framebuffer::size(&device, 64, 64);
+    let mut source = DumbRingSource::new(width, height, drmkit_fmt::fourcc::XRGB8888, 3)
         .expect("XRGB8888 has a known bpp");
     assert_eq!(source.allocated(), 0, "nothing before the first paint");
 
@@ -146,7 +150,8 @@ fn acquiring_without_painting_blocks_rather_than_repeating_a_frame_vkms() {
     let _guard = card_guard();
     let Some(device) = open_card() else { return };
 
-    let mut source = DumbRingSource::new(64, 64, drmkit_fmt::fourcc::XRGB8888, 2)
+    let (width, height) = drmkit_testkit::framebuffer::size(&device, 64, 64);
+    let mut source = DumbRingSource::new(width, height, drmkit_fmt::fourcc::XRGB8888, 2)
         .expect("XRGB8888 has a known bpp");
     assert!(
         source.acquire().is_err(),

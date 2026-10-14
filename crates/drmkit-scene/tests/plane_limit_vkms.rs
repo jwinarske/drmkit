@@ -58,7 +58,7 @@ fn the_canvas_counts_against_the_plane_limit_vkms() {
             lw,
             lh,
         ) else {
-            drmkit_testkit::skipped("no dumb buffer for a layer");
+            drmkit_testkit::skipped("no layer buffer this device will frame");
             return;
         };
         fx.paint(handle, color).expect("paint");

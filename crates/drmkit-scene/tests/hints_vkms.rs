@@ -33,7 +33,7 @@ fn a_content_type_change_forces_a_reallocation_vkms() {
         return;
     };
     let Some(handle) = fx.add_placeable_layer() else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
 
@@ -102,7 +102,7 @@ fn a_refresh_hint_round_trips_through_a_commit_vkms() {
         return;
     };
     let Some(handle) = fx.add_layer(0, 0, LAYER_W, LAYER_H) else {
-        drmkit_testkit::skipped("no dumb buffer for a layer");
+        drmkit_testkit::skipped("no layer buffer this device will frame");
         return;
     };
 
@@ -193,7 +193,7 @@ fn under_plane_pressure_the_placed_layers_outrank_the_dropped_ones_vkms() {
     for (index, priority) in priorities.iter().copied().enumerate() {
         let offset = i32::try_from(index).expect("a small index") * 8;
         let Some(handle) = fx.add_layer(offset, offset, 32, 32) else {
-            drmkit_testkit::skipped("no dumb buffer for a layer");
+            drmkit_testkit::skipped("no layer buffer this device will frame");
             return;
         };
         fx.scene

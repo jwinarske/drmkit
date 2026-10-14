@@ -159,9 +159,10 @@ pub fn stack_zpos(entries: &mut [StackEntry<'_>]) -> bool {
 /// `armed` is every plane the frame programs -- allocated, pinned and the
 /// composition canvas alike -- with the zpos its layer requests. One function
 /// for the frame that is committed and the assignments that are tested, so the
-/// kernel is never asked about one stack and handed another. Planes the
-/// numbering does not rank are left out; when no dense numbering fits, every
-/// rankable plane gets its requested value and the `TEST_ONLY` decides.
+/// kernel is never asked about one stack and handed another. Planes with no
+/// requested zpos are left out, and one with no zpos range keeps its requested
+/// value; when no dense numbering fits, every rankable plane gets its
+/// requested value and the `TEST_ONLY` decides.
 #[must_use]
 pub fn stacked_zpos(registry: &PlaneRegistry, armed: &[(u32, Option<u64>)]) -> Vec<(u32, u64)> {
     let mut entries = Vec::with_capacity(armed.len());

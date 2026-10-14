@@ -16,7 +16,7 @@
 //! - [`ConnectorCapabilities`] and [`CrtcCapabilities`] — the properties this
 //!   pipe actually exposes, so a caller writes what the driver has rather than
 //!   what the spec allows.
-//! - [`HotplugMonitor`] — the kernel's own uevent stream, behind the `hotplug`
+//! - `HotplugMonitor` — the kernel's own uevent stream, behind the `hotplug`
 //!   feature.
 //! - [`DriverProfile`] — device capabilities, probed and never inferred from
 //!   the driver's name.
@@ -37,7 +37,7 @@
 //!   every frame. Its green/blue/red primary ordering and tail padding are both
 //!   invisible on screen and both change the bytes, so this is diffed against
 //!   the reference too, over twelve vectors.
-//! - [`edid`] — what the sink says about itself, behind the `edid` feature.
+//! - `edid` — what the sink says about itself, behind the `edid` feature.
 //!
 //! # Features
 //!

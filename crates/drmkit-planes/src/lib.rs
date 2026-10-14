@@ -28,7 +28,7 @@
 //! about proposing well enough that few proposals are needed. It seeds with a
 //! maximum bipartite matching, orders candidates by a score, backtracks by
 //! dropping the layer it can most afford to composite, and spends at most
-//! [`Allocator::DEFAULT_MAX_TEST_COMMITS`] test commits on a frame before
+//! [`Allocator::DEFAULT_MAX_TEST_COMMITS`] test commits per search before
 //! settling for what it has. Layers that do not overlap are solved
 //! independently, so a busy corner of the screen does not make the rest of it
 //! expensive.

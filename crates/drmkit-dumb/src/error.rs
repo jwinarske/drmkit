@@ -9,7 +9,8 @@ use rustix::io::Errno;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum DumbError {
-    /// Zero-sized, zero-format, or out-of-range dimensions.
+    /// Zero or out-of-range dimensions, a zero format or bpp, or a `FourCC`
+    /// the `drm` crate does not recognize.
     /// `errc::invalid_argument`.
     #[error("invalid dumb buffer configuration: {reason}")]
     InvalidConfig {

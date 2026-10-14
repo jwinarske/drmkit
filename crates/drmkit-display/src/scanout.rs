@@ -157,9 +157,10 @@ pub enum ScanoutError {
 
     /// A display is attached but no CRTC can drive it.
     ///
-    /// Every CRTC its encoders allow is already taken by another output --
-    /// the ordinary case on hardware with more connectors than pipes.
-    #[error("connector {connector_id} has a display but no CRTC free to drive it")]
+    /// None of its encoders lists a CRTC it can drive, or none of them could be
+    /// read. Whether a CRTC is already driving another output is not checked,
+    /// here or in the reference.
+    #[error("connector {connector_id} has a display but no CRTC its encoders can drive")]
     NoCrtc {
         /// The connector that could not be routed.
         connector_id: u32,
@@ -177,7 +178,8 @@ pub enum ScanoutError {
 }
 
 impl ScanoutTarget {
-    /// Find the first output with a display on it.
+    /// Find an output with a display on it, preferring connector types in
+    /// [`rank::MAIN`] order.
     ///
     /// Enables universal planes, without which the kernel hides primary and
     /// cursor planes and this could only ever fail. Most callers will have

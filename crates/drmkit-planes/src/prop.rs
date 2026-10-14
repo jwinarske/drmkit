@@ -5,11 +5,13 @@
 
 /// Property tags a layer recognizes.
 ///
-/// The set is **closed**: every KMS plane property the scene and allocator
-/// emit lives here, and an unrecognized name handed to
+/// The set is **closed**: every KMS plane property a layer carries lives
+/// here, and an unrecognized name handed to
 /// [`Layer::set_property_by_name`](crate::Layer::set_property_by_name) is
 /// dropped — a kernel commit would reject it with `EINVAL` anyway, so
-/// accepting it would only hide the typo.
+/// accepting it would only hide the typo. The scene writes a few per-plane
+/// extras, such as `COLOR_ENCODING` and `FB_DAMAGE_CLIPS`, from plane
+/// capabilities rather than from the layer.
 ///
 /// Adding a property means adding a variant here and extending
 /// [`PropTag::name`] and [`PropTag::class`]. Both are exhaustive `match`es, so
@@ -88,8 +90,10 @@ impl PropTag {
     /// Every tag, in enum order.
     ///
     /// Listing them explicitly rather than deriving a count keeps the
-    /// exhaustiveness of [`PropTag::class`] meaningful: a variant added
-    /// without being added here fails the completeness test below it.
+    /// exhaustiveness of [`PropTag::class`] meaningful: a variant inserted
+    /// without being added here breaks the index-contiguity check in
+    /// `every_prop_tag_is_classified`. One appended at the end is not caught,
+    /// so keep the array's size in step.
     pub const ALL: [Self; 16] = [
         Self::FbId,
         Self::FbModifier,

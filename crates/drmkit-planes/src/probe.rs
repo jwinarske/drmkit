@@ -32,8 +32,8 @@ impl PlaneRegistry {
     ///
     /// # Errors
     ///
-    /// [`CoreError::Io`](drmkit_core::CoreError::Io) if the plane list itself
-    /// cannot be read.
+    /// [`CoreError::Io`](drmkit_core::CoreError::Io) if the plane list or the
+    /// CRTC resource list cannot be read.
     pub fn probe(device: &Device) -> Result<Self> {
         let handles = device
             .plane_handles()

@@ -221,8 +221,9 @@ impl ConnectorCapabilities {
     ///
     /// # Errors
     ///
-    /// [`CoreError::Io`](drmkit_core::CoreError::Io) if the connector's
-    /// properties cannot be read.
+    /// [`CoreError::NoSuchObject`](drmkit_core::CoreError::NoSuchObject) for
+    /// connector id 0; otherwise [`CoreError::Io`](drmkit_core::CoreError::Io)
+    /// if the connector's properties cannot be read.
     pub fn probe(device: &Device, connector_id: u32) -> Result<Self> {
         let mut properties = PropertyStore::new();
         properties.cache_properties(device, connector_id, ObjectType::Connector)?;

@@ -92,7 +92,8 @@ pub struct Layer {
     values: [u64; NUM_PROPS],
     /// One bit per [`PropTag`]; 16 tags fit a `u16` exactly.
     set_mask: u16,
-    /// Memoized [`Layer::property_hash`], invalidated on every mutation.
+    /// Memoized [`Layer::property_hash`], invalidated whenever a property value
+    /// changes.
     cached_hash: Cell<Option<u64>>,
     force_composited: bool,
     transient_composited: bool,
@@ -159,8 +160,8 @@ impl Layer {
 
     /// Set a property by canonical KMS name.
     ///
-    /// An unrecognized name is dropped and reported, rather than silently
-    /// ignored as in the C++: the kernel would reject it anyway, and a caller
+    /// Returns `false`, and sets nothing, for an unrecognized name, rather than
+    /// silently ignoring it as the C++ does: the kernel would reject it anyway, and a caller
     /// that mistyped a name wants to know.
     pub fn set_property_by_name(&mut self, name: &str, value: u64) -> bool {
         match PropTag::from_name(name) {
@@ -236,7 +237,7 @@ impl Layer {
     /// classification lives in [`PropTag::class`]'s exhaustive `match` rather
     /// than in an `if` here.
     ///
-    /// Memoized; invalidated by every mutation.
+    /// Memoized; invalidated whenever a property value changes.
     #[must_use]
     pub fn property_hash(&self) -> u64 {
         if let Some(cached) = self.cached_hash.get() {
@@ -326,7 +327,7 @@ impl Layer {
     /// owns.
     ///
     /// The allocator must skip such a layer during assignment, scoring, and
-    /// test commits, exactly as it skips a composition layer. EGL stream
+    /// test commits. EGL stream
     /// sources establish their plane state out of band, so an allocator test
     /// commit would reject a stream-bound plane for lacking the kernel-internal
     /// `FB_ID` those extensions set up.
@@ -522,8 +523,8 @@ impl Layer {
             return false;
         };
         // SRC_* are 16.16, so compare at that precision. Truncating to whole
-        // pixels, as drm-cxx does, reads 800.25 source pixels onto 800 as 1:1
-        // (drm-cxx#348).
+        // pixels, as drm-cxx did before drm-cxx#348, reads 800.25 source pixels
+        // onto 800 as 1:1.
         src_w != (crtc_w << 16) || src_h != (crtc_h << 16)
     }
 }

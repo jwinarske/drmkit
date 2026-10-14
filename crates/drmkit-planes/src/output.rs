@@ -20,7 +20,7 @@ use crate::prop::PropTag;
 /// Here every layer is owned by the `Output` and the composition layer is
 /// identified by [`LayerId`]. Holding a `&mut Layer` in the struct would infect
 /// every caller with a lifetime parameter for no benefit, and owning it removes
-/// the second vector — and with it the C++'s dead `rebuild_layer_ptrs`, which
+/// the second vector — and with it the C++'s since-removed `rebuild_layer_ptrs`, which
 /// would have silently undone [`sort_layers_by_zpos`](Self::sort_layers_by_zpos)
 /// had anything called it (drm-cxx#237).
 #[derive(Debug, Default)]

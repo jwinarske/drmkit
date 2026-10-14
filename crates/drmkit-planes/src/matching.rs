@@ -20,7 +20,7 @@
 //! search, so a preferred plane is tried first among otherwise equal options.
 //! A score can never cause a layer to go unplaced that could have been placed.
 //! That ordering is what makes the allocator's stability bonus safe to add —
-//! see [`Allocator`](crate::Allocator).
+//! see [`WARM_STABILITY_BONUS`](crate::WARM_STABILITY_BONUS).
 
 use std::collections::VecDeque;
 

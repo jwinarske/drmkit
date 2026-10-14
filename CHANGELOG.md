@@ -22,6 +22,12 @@ minor version may break the API and a patch version does not.
   `CoreError::Io(EACCES)`, the errno as the reference returns it, rather than
   `CoreError::NotMaster`, whose "not DRM master" misdiagnosed a permissions
   problem.
+- `drmkit-display`: `DriverProfile::probe` turns on universal planes and
+  atomic before scanning, as the reference does, so `fb_damage_clips` no
+  longer reads false on a descriptor that has not gone atomic yet; and a
+  node whose resource list cannot be read probes to defaults rather than
+  failing. `ScanoutTarget` discovery no longer fails when a driver refuses
+  universal planes (P-55).
 
 ## [0.1.1] - 2026-10-14
 

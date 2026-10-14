@@ -659,6 +659,53 @@ mod profile_vkms {
              participate in anything"
         );
     }
+
+    /// The probe turns universal planes on before it scans, as the reference
+    /// does, so it sees the primary and cursor planes a fresh descriptor is
+    /// not shown. Without that a driver's `FB_DAMAGE_CLIPS` on its primary --
+    /// where amdgpu has it -- would read as absent.
+    #[test]
+    #[ignore = "needs a DRM device"]
+    fn the_probe_sees_every_plane_vkms() {
+        use drm::control::Device as _;
+
+        let Some(device) = open_card_or_skip() else {
+            return;
+        };
+        let before = device.plane_handles().map_or(0, |planes| planes.len());
+        DriverProfile::probe(&device).expect("probe a KMS node");
+        let after = device.plane_handles().map_or(0, |planes| planes.len());
+        assert!(
+            after > before,
+            "a fresh descriptor sees {before} planes and the probe saw no more \
+             ({after}): universal planes were not turned on"
+        );
+    }
+
+    /// A node with no KMS resources still probes, with the per-object
+    /// capabilities left at their defaults, as the reference's does. A render
+    /// node is the one every GPU host has.
+    #[test]
+    #[ignore = "needs a DRM render node"]
+    fn a_node_without_resources_probes_to_defaults() {
+        let Some(path) = std::fs::read_dir("/dev/dri").ok().and_then(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .find(|path| {
+                    path.file_name()
+                        .is_some_and(|name| name.to_string_lossy().starts_with("renderD"))
+                })
+        }) else {
+            println!("note: skipped -- no render node");
+            return;
+        };
+        let device = Device::open(&path).expect("open the render node");
+        let profile = DriverProfile::probe(&device).expect("a render node still probes");
+        assert!(!profile.name.is_empty());
+        assert!(!profile.vrr_capable && !profile.fb_damage_clips);
+        assert_eq!(profile.psr, crate::PanelSelfRefresh::Unknown);
+    }
 }
 
 /// The LUT and matrix builders, which are pure arithmetic.

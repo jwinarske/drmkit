@@ -46,7 +46,8 @@ impl Device {
     ///
     /// # Errors
     ///
-    /// - [`CoreError::Io`] if the node cannot be opened.
+    /// - [`CoreError::Io`] if the node cannot be opened, or
+    ///   [`CoreError::NotMaster`] when the refusal is `EACCES`.
     /// - [`CoreError::NotADrmDevice`] if `drmGetVersion` fails on it, which is
     ///   how the C++ distinguishes a real card from any other character device.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -161,7 +162,8 @@ impl Device {
     ///
     /// # Errors
     ///
-    /// [`CoreError::NotMaster`] if another client already holds it.
+    /// [`CoreError::Io`] with `EBUSY` if another client already holds it, or
+    /// [`CoreError::NotMaster`] if the caller lacks the privilege to take it.
     pub fn set_master(&self) -> Result<()> {
         drm::Device::acquire_master_lock(self).map_err(|e| CoreError::from_io(&e))
     }

@@ -5,8 +5,8 @@
 //!
 //! When a scene has more layers than the CRTC has usable planes, the ones that
 //! did not get a plane still have to reach the screen. They are blended on the
-//! CPU into a single full-screen ARGB8888 surface, in stacking order, and that
-//! surface goes on a plane of its own.
+//! CPU into a single full-screen surface, in stacking order and in ARGB8888,
+//! and that surface goes on a plane of its own.
 //!
 //! This module is the blend arithmetic, and nothing else. It reads and writes
 //! plain byte slices, so every rule below — clipping, scaling, premultiplied
@@ -62,7 +62,7 @@ pub struct CompositeRect {
     reason = "built by callers, with no default to fill a new field from"
 )]
 pub struct CompositeSrc<'a> {
-    /// The pixels, tightly packed rows of `src_stride_bytes`.
+    /// The pixels, rows `src_stride_bytes` apart.
     pub pixels: &'a [u8],
     /// Distance between row starts, which may exceed `src_width * 4`.
     pub src_stride_bytes: u32,
@@ -434,12 +434,17 @@ pub fn canvas_format_for_plane(plane: &PlaneCapabilities) -> Option<u32> {
 ///
 /// Scalar. The reference hand-vectorizes this with NEON and leans on
 /// autovectorization elsewhere; here the loop is written so the compiler can
-/// do the same, and the conversion is one row per frame per canvas rather
-/// than anything on the per-layer path.
+/// do the same, and the conversion runs once per canvas row per frame rather
+/// than on the per-layer path.
 ///
 /// Public because the decoration tier's framebuffer presenter converts into
 /// an fbdev mapping the same way, and a second copy of a channel-order
 /// conversion is a second place for red and blue to be swapped.
+///
+/// # Panics
+///
+/// If `src` is shorter than `pixels * 4` bytes, or `dst` shorter than `pixels`
+/// times the output format's bytes per pixel.
 pub fn convert_row(dst: &mut [u8], src: &[u8], pixels: usize, out_fourcc: u32) {
     match out_fourcc {
         // The shadow is already this. `XRGB8888` differs only in that the
@@ -483,7 +488,8 @@ pub fn convert_row(dst: &mut [u8], src: &[u8], pixels: usize, out_fourcc: u32) {
 
 /// A double-buffered software composition surface.
 ///
-/// Owns two ARGB8888 dumb buffers and alternates between them: the CPU paints
+/// Owns two dumb buffers in the canvas format -- `ARGB8888` unless made with
+/// [`create_in`](Self::create_in) -- and alternates between them: the CPU paints
 /// the back while the kernel scans out the front. A single buffer tears
 /// visibly — the scanout reads the same memory the CPU is writing, so a
 /// horizontal seam appears wherever it caught a half-painted frame. The cost
@@ -523,9 +529,9 @@ impl CompositeCanvas {
     ///
     /// For the single-plane fallback: pass what
     /// [`canvas_format_for_plane`] returned, and the canvas emits that
-    /// instead of `ARGB8888`. Blending still happens in `ARGB8888` -- see
-    /// [`shadow`](Self#structfield.shadow) -- so a 565 canvas quantizes once
-    /// at flush rather than at every layer.
+    /// instead of `ARGB8888`. Blending still happens in `ARGB8888`, in a
+    /// shadow buffer, so a 565 canvas quantizes once at flush rather than at
+    /// every layer.
     ///
     /// # Errors
     ///
@@ -604,7 +610,8 @@ impl CompositeCanvas {
         blend_into(&mut self.shadow, w * 4, w, h, src, src_rect, dst_rect);
     }
 
-    /// Copy the painted shadow into the back buffer.
+    /// Copy the painted shadow into the back buffer, converting it to the
+    /// canvas format.
     ///
     /// Row by row rather than one call, because the kernel is free to pad a
     /// dumb buffer's stride above `width * 4`; copying straight through would
@@ -658,7 +665,8 @@ impl CompositeCanvas {
     /// Reads the framebuffer's own memory rather than the shadow, which is the
     /// only way to tell that [`flush`](Self::flush) actually reached the buffer
     /// the kernel will scan out. Zero for a pixel outside the canvas, or once
-    /// the mapping has been dropped.
+    /// the mapping has been dropped. Reads 32 bits at a 4-byte pitch, so it
+    /// is only meaningful on a 32-bit canvas.
     #[must_use]
     pub fn back_pixel(&self, x: u32, y: u32) -> u32 {
         if x >= self.width || y >= self.height {

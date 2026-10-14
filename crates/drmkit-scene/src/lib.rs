@@ -18,11 +18,11 @@
 //! scene.layer_mut(handle)?.set_display(DisplayParams { .. });
 //!
 //! // per frame
-//! let build = scene.build_frame(&registry, crtc_index, kind, &mut committer)?;
+//! let mut build = scene.build_frame(&registry, crtc_index, kind, &mut committer)?;
 //! emit_frame(&mut request, &map, &mut build, modeset)?;
 //! arm_acquire_fences(&mut build, &mut request, &map, true)?;
 //! let result = request.commit(&device, flags);
-//! let report = scene.finalize_frame(build, result.into());
+//! let report = scene.finalize_frame(build, classify(&result));
 //! // ... and when the page-flip event arrives
 //! scene.flip_landed();
 //! ```
@@ -51,7 +51,7 @@
 //!
 //! # The release contract
 //!
-//! Two of the six pinned invariants live here, and both are about *when* a
+//! Two of the four pinned invariants this crate carries are about *when* a
 //! buffer goes back to its source:
 //!
 //! - **Invariant 1** — a buffer is released only after the page flip that stops

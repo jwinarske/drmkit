@@ -6,7 +6,7 @@
 //! Port of `src/core/` plus `src/modeset/atomic.{hpp,cpp}` from drm-cxx @
 //! `dc2915b`.
 //!
-//! Three things live here:
+//! The main pieces:
 //!
 //! - [`Device`] — an open DRM node, owning or borrowing its descriptor.
 //! - [`PropertyStore`] — a per-object property cache, so building a frame's
@@ -53,8 +53,8 @@ pub use error::{CoreError, Result};
 pub use property::{ObjectType, PropertyInfo, PropertyStore};
 pub use vblank::{crtc_sequence, event_pending};
 
-/// Re-exported so consumers need not depend on `drm` directly for the types
-/// that appear in this crate's signatures.
+// Re-exported so consumers need not depend on `drm` directly for the types
+// that appear in this crate's signatures.
 pub use drm::ClientCapability;
 pub use drm::control::AtomicCommitFlags;
 pub use drm::control::Mode;

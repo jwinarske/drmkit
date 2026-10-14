@@ -412,10 +412,11 @@ impl FrameBuild {
 
     /// Which layer landed on which plane, as lowered property bags.
     ///
-    /// This is what an apply commit writes. The search that produced it ran
-    /// against `TEST_ONLY` commits, so by the time a caller sees this the
-    /// kernel has already accepted this exact set -- emitting it is the cheap
-    /// part.
+    /// This is what an apply commit writes. Unless the frame took the FB-only
+    /// fast path, the search that produced it ran against `TEST_ONLY` commits,
+    /// so by the time a caller sees this the kernel has already accepted this
+    /// exact set -- emitting it is the cheap part. On the fast path the real
+    /// commit is the first test.
     #[must_use]
     pub fn plan(&self) -> &[PlanePlan] {
         &self.plan
@@ -518,8 +519,9 @@ pub enum SceneError {
 /// Four of the six pinned invariants are the scene's: buffers released a flip
 /// late rather than an ioctl early (1), a failed commit releasing immediately
 /// because no flip will gate it (2), the FB-only fast path (4), and teardown
-/// draining an outstanding flip before letting go of what it scans out (5).
-/// None of them is something a caller opts into; they are what the type does.
+/// not letting go of what an outstanding flip still scans out (5). The first
+/// three are what the type does. The fifth it checks: landing the flip is the
+/// caller's job, and dropping a scene with one still armed asserts.
 pub struct LayerScene {
     crtc_id: u32,
     slots: Vec<Slot>,
@@ -701,7 +703,8 @@ impl LayerScene {
         LayerHandle { id, generation: 1 }
     }
 
-    /// Remove a layer. A stale handle is a no-op.
+    /// Remove a layer, returning whether there was one. A stale handle is a
+    /// no-op and returns `false`.
     ///
     /// If the layer's buffers are still in flight, its source is kept alive
     /// until they come back — releasing to a dropped source would strand them.
@@ -891,6 +894,9 @@ impl LayerScene {
     /// - [`SceneError::Suspended`] while the scene is suspended.
     /// - [`SceneError::Source`] if a source failed for a real reason.
     /// - [`SceneError::NotMaster`] if the allocator lost DRM master.
+    /// - [`SceneError::DetachPending`] if a [`rebind`](Self::rebind) to another
+    ///   CRTC left planes lit that [`commit_detach`](crate::commit_detach) has
+    ///   not yet turned off.
     pub fn build_frame<C: TestCommitter>(
         &mut self,
         registry: &PlaneRegistry,
@@ -1143,25 +1149,11 @@ impl LayerScene {
         self.canvas.as_ref().map(CompositeCanvas::fourcc)
     }
 
-    /// Blend the layers the allocator dropped, and say which plane to put them
-    /// on.
-    ///
-    /// Returns the canvas plane and its lowered properties, or `None` when
-    /// nothing needs compositing or the frame cannot rescue them.
-    ///
-    /// The rescue is best-effort and silent by design, matching upstream: no
-    /// canvas, no free plane, or a source that cannot be read leaves those
-    /// layers off the screen for this frame rather than failing the commit.
-    /// That asymmetry is deliberate — the canvas's properties go into the same
-    /// atomic request as everything else, so once it is armed a kernel
-    /// rejection takes the whole frame down, including every layer that *was*
-    /// placed. Dropping one layer beats dropping all of them.
     /// Allocate planes, holding one back for the composition canvas when the
     /// frame turns out to need one.
     ///
-    /// The canvas takes a plane, and until this ran nothing had validated a
-    /// frame that included it: the allocator tests the layer assignment, and
-    /// `compose_unassigned` adds the canvas afterwards. On hardware that can
+    /// The canvas takes a plane, and a frame validated without it is not the
+    /// frame that commits. On hardware that can
     /// light fewer planes than it advertises the difference is fatal --
     /// rockchip's VOP2 on an RK3566 offers three planes and accepts two, so a
     /// validated two-plane assignment plus a canvas is a frame the kernel
@@ -1174,11 +1166,9 @@ impl LayerScene {
     /// out to be needed and nothing was reserved up front, hold a plane back
     /// and allocate again. The second pass runs only on frames that composite.
     ///
-    /// This narrows the problem rather than closing it. Where the hardware
-    /// limit is at or below the candidate count, `assigned` is already the
-    /// most the kernel would take, so `assigned` plus a canvas overshoots
-    /// whatever is held back. Closing it means putting the canvas plane into
-    /// the assignments the allocator tests -- see P-18 and drm-cxx#244.
+    /// Either way the held plane is armed with the canvas in every test the
+    /// allocator issues, so what the kernel accepts is the whole frame, canvas
+    /// included -- see P-18 and drm-cxx#244.
     fn allocate_with_canvas<C: TestCommitter>(
         &mut self,
         refs: &[LayerRef<'_>],
@@ -1448,6 +1438,19 @@ impl LayerScene {
         zpos.saturating_add(1)
     }
 
+    /// Blend the layers the allocator dropped, and say which plane to put them
+    /// on.
+    ///
+    /// Returns the canvas plane and its lowered properties, or `None` when
+    /// nothing needs compositing or the frame cannot rescue them.
+    ///
+    /// The rescue is best-effort and silent by design, matching upstream: no
+    /// canvas, no free plane, or a source that cannot be read leaves those
+    /// layers off the screen for this frame rather than failing the commit.
+    /// That asymmetry is deliberate — the canvas's properties go into the same
+    /// atomic request as everything else, so once it is armed a kernel
+    /// rejection takes the whole frame down, including every layer that *was*
+    /// placed. Dropping one layer beats dropping all of them.
     fn compose_unassigned(
         &mut self,
         allocation: &drmkit_planes::Allocation,
@@ -2036,7 +2039,7 @@ struct Composition {
 ///
 /// A layer counts as eligible when its zpos matches the pin, or when it has
 /// none at all: an unpinned layer is free to land there and the scoring bonus
-/// in `plane_score` will put it there. So does the unique lowest layer when
+/// in [`drmkit_planes::score_pair`] will put it there. So does the unique lowest layer when
 /// every other one sits above a fixed slot -- see
 /// [`lower_bottom_layer_to_primary_slot`], which is what then lands it there.
 ///
@@ -2409,9 +2412,9 @@ fn revoke_refused_pin(
 /// Whether a plane can actually take the layer pinned to it.
 ///
 /// Three ways a pin fails, and all three are the caller describing hardware
-/// that is not there: a plane on another CRTC, a plane that cannot scan the
-/// layer's format out in its layout, or a plane the scene has already
-/// reserved for something else. Committing an impossible pin would fail the
+/// that is not there: a plane that does not exist or is not on this CRTC, a
+/// cursor plane (the cursor path owns those), or a plane that cannot scan the
+/// layer's format out in its layout. Committing an impossible pin would fail the
 /// `TEST_ONLY` and take the whole frame down -- every correctly placed layer
 /// with it -- so the check happens here, and a refused pin costs the caller
 /// determinism rather than a frame.
@@ -2507,8 +2510,8 @@ impl Drop for LayerScene {
             // the panic that actually started it.
             debug_assert!(
                 false,
-                "LayerScene dropped with a page-flip event still armed: call \
-                 drain() or dispatch the event first (invariant 5)"
+                "LayerScene dropped with a page-flip event still armed: dispatch \
+                 the event (flip_landed) first (invariant 5)"
             );
         }
     }

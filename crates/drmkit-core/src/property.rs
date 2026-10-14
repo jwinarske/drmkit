@@ -49,7 +49,8 @@ pub struct PropertyInfo {
     /// immutable, range, enum, and blob properties without re-querying. Only
     /// the immutable bit is actually consulted anywhere in the tree, and the
     /// `drm` crate surfaces the rest through typed accessors, so this carries
-    /// the one bit that has a caller and leaves the rest to
+    /// the one flag bit that has a caller -- an unsigned range's bounds are in
+    /// [`range`](Self::range) -- and leaves the rest to
     /// [`get_property`](drm::control::Device::get_property).
     pub immutable: bool,
     /// Inclusive `(min, max)` for an **unsigned** range property, `None` for
@@ -98,7 +99,9 @@ impl PropertyStore {
     ///
     /// # Errors
     ///
-    /// [`CoreError::Io`] if the object's property set cannot be read at all.
+    /// [`CoreError::NoSuchObject`] for object id 0. Otherwise, if the object's
+    /// property set cannot be read at all, the kernel's refusal: normally
+    /// [`CoreError::Io`].
     pub fn cache_properties(
         &mut self,
         device: &Device,
@@ -185,8 +188,9 @@ impl PropertyStore {
     ///
     /// # Errors
     ///
-    /// [`CoreError::NoSuchProperty`] if the object has no such property, if it
-    /// is not an enum, or if it has no variant by that name.
+    /// [`CoreError::NoSuchObject`] if the object was never cached;
+    /// [`CoreError::NoSuchProperty`] if it has no such property, if it is not
+    /// an enum, or if it has no variant by that name.
     pub fn enum_value(
         &self,
         device: &Device,
@@ -231,8 +235,9 @@ impl PropertyStore {
     ///
     /// # Errors
     ///
-    /// [`CoreError::NoSuchProperty`] if the object has no such property or it
-    /// is not a bitmask.
+    /// [`CoreError::NoSuchObject`] if the object was never cached;
+    /// [`CoreError::NoSuchProperty`] if it has no such property or it is not a
+    /// bitmask.
     pub fn bitmask_bits(&self, device: &Device, object_id: u32, property: &str) -> Result<u64> {
         let id = self.property_id(object_id, property)?;
         let missing = || CoreError::NoSuchProperty {

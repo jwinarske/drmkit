@@ -45,9 +45,9 @@ pub enum BindingModel {
     /// The driver binds a producer directly to the plane, and the scene must
     /// **not** write `FB_ID` for this layer.
     ///
-    /// EGL Streams and relatives. The hook exists in the minimal cut as
-    /// dormant surface (DR-4) so the scene does not need rewriting when the
-    /// streams tier lands; no source in the minimal cut reports it.
+    /// EGL Streams and relatives. The hook exists as dormant surface (DR-4) so
+    /// the scene does not need rewriting when the streams tier lands; no
+    /// in-tree source reports it yet.
     DriverOwnsBinding,
 }
 
@@ -170,8 +170,9 @@ pub enum SourceError {
     /// **Flow control, not a failure.** The source has no frame to contribute
     /// this vblank.
     ///
-    /// The scene skips the layer for this commit and calls `acquire` again on
-    /// the next one; the layer is counted in
+    /// The layer keeps its plane and goes on showing its previous framebuffer
+    /// -- or is left out, if it has never produced one -- and `acquire` is
+    /// called again on the next commit; the layer is counted in
     /// [`layers_skipped_no_frame`](crate::CommitReport::layers_skipped_no_frame),
     /// never in the failure paths. A live source returns this before its first
     /// sample lands, and any time the producer falls behind with no cached
@@ -189,7 +190,7 @@ pub enum SourceError {
     ///
     /// Returned by the default [`map`](LayerBufferSource::map) and
     /// [`export_dma_buf`](LayerBufferSource::export_dma_buf). A source that
-    /// supports neither is **uncompositable**: when the allocator cannot place
+    /// does not support `map` is **uncompositable**: when the allocator cannot place
     /// it, the scene has no way to rescue it and the layer stays dropped for
     /// the frame.
     #[error("not supported by this source")]
@@ -312,8 +313,8 @@ pub trait LayerBufferSource {
     ///
     /// Composition fallback reads through this to rescue layers the allocator
     /// could not place. A source whose pixels live only in GPU memory returns
-    /// [`SourceError::Unsupported`] — and is then uncompositable unless it can
-    /// [`export_dma_buf`](Self::export_dma_buf) instead.
+    /// [`SourceError::Unsupported`] — and is then uncompositable: the scene's
+    /// CPU composition reads only through this.
     ///
     /// # Errors
     ///
@@ -328,10 +329,10 @@ pub trait LayerBufferSource {
 
     /// Export the currently-acquired buffer's DMA-BUF planes.
     ///
-    /// The escape from the map-uncompositable trap: a source whose pixels never
-    /// reach CPU memory — a V4L2 capture buffer — can still be composited by
-    /// importing its DMA-BUF, so the layer no longer blanks when the allocator
-    /// cannot place it.
+    /// For a consumer that imports DMA-BUFs: a source whose pixels never reach
+    /// CPU memory — a V4L2 capture buffer — can be handed on this way. Upstream
+    /// composites such a layer on the GPU; that compositor is not ported yet,
+    /// and the scene's CPU composition reads only through [`map`](Self::map).
     ///
     /// # Errors
     ///
@@ -342,8 +343,9 @@ pub trait LayerBufferSource {
 
     /// Bind a driver-owned producer to a plane.
     ///
-    /// Called after the allocator settles on a plane and before the first
-    /// acquire for it. The no-op default is correct for every
+    /// For a [`BindingModel::DriverOwnsBinding`] source, after the allocator
+    /// settles on a plane and before the first acquire for it. Dormant like
+    /// that variant: nothing in the scene calls it yet. The no-op default is correct for every
     /// [`BindingModel::SceneSubmitsFbId`] source.
     ///
     /// # Errors
@@ -354,7 +356,8 @@ pub trait LayerBufferSource {
         Ok(())
     }
 
-    /// Unbind from a plane, when the layer is reassigned or retired.
+    /// Unbind from a plane, when the layer is reassigned or retired. Dormant,
+    /// as [`bind_to_plane`](Self::bind_to_plane) is.
     fn unbind_from_plane(&mut self, plane_id: u32) {
         let _ = plane_id;
     }

@@ -107,8 +107,8 @@ pub struct PlanePropertyMap {
     /// with `EINVAL` -- taking the whole frame down with it, every correctly
     /// programmed layer included.
     pub(crate) zpos_range: HashMap<u32, (u64, u64)>,
-    /// The largest `alpha` each plane advertises, where it is not the full 16
-    /// bits. Layers carry 16-bit alpha; see [`drmkit_planes::rescale_alpha`].
+    /// The largest `alpha` each plane advertises, where it advertises a
+    /// range. Layers carry 16-bit alpha; see [`drmkit_planes::rescale_alpha`].
     pub(crate) alpha_max: HashMap<u32, u64>,
     /// The colorimetry each plane's last real commit carried.
     ///
@@ -269,8 +269,9 @@ impl PlanePropertyMap {
 
 /// Emit one layer's properties onto a plane.
 ///
-/// Skips tags the plane does not expose or marks immutable, and the two hint
-/// tags the kernel never sees. Returns how many properties were written.
+/// Skips tags the plane does not expose or marks immutable, the two hint tags
+/// the kernel never sees, `FB_ID` on an externally bound layer, and values
+/// unchanged from `baseline`. Returns what was written, as [`LayerWrites`].
 ///
 /// # Errors
 ///
@@ -727,7 +728,7 @@ impl<'a> Modeset<'a> {
 
 /// Emit a built frame's apply commit.
 ///
-/// Writes, in order: the modeset properties if this is the first commit, then
+/// Writes, in order: the modeset properties if `modeset` is given, then
 /// a disable for every candidate plane the frame did not use, then each
 /// assigned layer. The disables come before the applies for the reason
 /// [`emit_disable`] gives.
@@ -739,7 +740,7 @@ impl<'a> Modeset<'a> {
 /// [`CoreError`] if a property write is rejected before the commit.
 /// # The modeset must outlive the commit, not this call
 ///
-/// A [`Modeset`] holds a [`PropertyBlob`](drmkit_core::PropertyBlob) that is
+/// A [`Modeset`] holds a [`PropertyBlob`] that is
 /// destroyed when it drops, and the request carries only the blob's **id**.
 /// Taking `&Modeset` means it is alive *here*; it says nothing about whether
 /// it is alive at `commit`. A modeset built inside a loop that emits several
@@ -750,7 +751,7 @@ impl<'a> Modeset<'a> {
 /// Build them all first, into something that outlives the commit:
 ///
 /// ```ignore
-/// let modesets: Vec<Modeset<'_>> = slots.iter().map(|s| Modeset::learn(..)).collect()?;
+/// let modesets: Vec<Modeset<'_>> = slots.iter().map(|s| Modeset::learn(..)).collect::<Result<_, _>>()?;
 /// for (slot, modeset) in slots.iter().zip(&modesets) {
 ///     emit_frame(&mut request, &map, &mut build, Some(modeset))?;
 /// }

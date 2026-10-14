@@ -35,7 +35,10 @@ pub enum ColorPrimaries {
 }
 
 impl ColorPrimaries {
-    /// Widest last, so the derived `Ord` ranks gamut directly.
+    /// Whether `self` is a wider gamut than `other`.
+    ///
+    /// Variants are declared widest last, so the derived `Ord` ranks gamut
+    /// directly.
     ///
     /// Deliberate: a separate rank function and a variant order that
     /// disagreed would be a silent mis-ranking, and there is nothing to
@@ -114,7 +117,7 @@ pub struct OutputSignalling {
     /// Whether HDR was called for and could not be carried.
     ///
     /// The layers asked for it and the connector cannot: no
-    /// `HDR_OUTPUT_METADATA`, or a `max bpc` ceiling below 10. The metadata
+    /// `HDR_OUTPUT_METADATA`, or no `max bpc` that reaches 10. The metadata
     /// is dropped rather than sent, and this says so -- a caller that wants
     /// to tone-map itself, or tell the user, has no other way to find out.
     pub hdr_downgraded: bool,

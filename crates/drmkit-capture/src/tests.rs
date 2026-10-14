@@ -693,6 +693,75 @@ mod jpeg {
         image
     }
 
+    /// The luma component's sampling factors, from the file's SOF0 header:
+    /// `0x22` is 4:2:0, `0x11` is 4:4:4.
+    fn luma_sampling(bytes: &[u8]) -> u8 {
+        let sof = bytes
+            .windows(2)
+            .position(|marker| marker == [0xFF, 0xC0])
+            .expect("a baseline JPEG has an SOF0 marker");
+        // Marker, length (2), precision, height (2), width (2), component
+        // count, then per component: id, sampling, table.
+        bytes[sof + 2 + 2 + 1 + 2 + 2 + 1 + 1]
+    }
+
+    /// Chroma is subsampled 4:2:0 at every quality, as libjpeg does for the
+    /// reference. The encoder used here keeps full-resolution chroma from 90
+    /// up, which is the quality callers ask for -- a different, larger file.
+    #[test]
+    fn chroma_is_subsampled_at_every_quality() {
+        let luma = vec![0x80u8; 32 * 32];
+        let chroma = vec![0x80u8; 32 * 16];
+        let frame = Nv12Frame {
+            luma: &luma,
+            luma_stride: 32,
+            chroma: &chroma,
+            chroma_stride: 32,
+            width: 32,
+            height: 32,
+        };
+        for quality in [50, 90, 100] {
+            let scratch = Scratch::new(&format!("sampling-rgb-{quality}"));
+            write_jpg(&solid(32, 32, 0xFF80_4020), scratch.path(), quality).expect("encode");
+            assert_eq!(luma_sampling(&scratch.bytes()), 0x22, "RGB at {quality}");
+
+            let scratch = Scratch::new(&format!("sampling-nv12-{quality}"));
+            write_jpg_nv12(&frame, scratch.path(), quality).expect("encode");
+            assert_eq!(luma_sampling(&scratch.bytes()), 0x22, "NV12 at {quality}");
+        }
+    }
+
+    /// Past 65,500 pixels the reference's libjpeg refuses, and so does this,
+    /// before a file is created. The format's 16-bit field would otherwise be
+    /// handed a clamped value and the frame cropped or sheared, reported as
+    /// written.
+    #[test]
+    fn a_dimension_past_the_jpeg_limit_is_refused() {
+        let scratch = Scratch::new("too-wide");
+        assert!(
+            write_jpg(&solid(65_501, 1, 0xFF00_0000), scratch.path(), 90).is_err(),
+            "one pixel past the limit"
+        );
+        assert!(
+            !scratch.path().exists(),
+            "refused before anything is written"
+        );
+
+        let luma = vec![0u8; 65_501];
+        let chroma = vec![0x80u8; 65_502];
+        let frame = Nv12Frame {
+            luma: &luma,
+            luma_stride: 65_501,
+            chroma: &chroma,
+            chroma_stride: 65_502,
+            width: 65_501,
+            height: 1,
+        };
+        assert!(write_jpg_nv12(&frame, scratch.path(), 90).is_err());
+
+        write_jpg(&solid(65_500, 1, 0xFF00_0000), scratch.path(), 90).expect("at the limit");
+    }
+
     /// An empty image is refused rather than written.
     ///
     /// A zero-byte JPEG is not a JPEG, and a caller that got `Ok` would go on

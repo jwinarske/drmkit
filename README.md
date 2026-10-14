@@ -148,7 +148,7 @@ that measurement did not support. See [`docs/parity-findings.md`](docs/parity-fi
 **Upstream first.** drm-cxx is the origin of authority: anything this port
 surfaces is [filed there](docs/upstream-findings.md) rather than fixed only
 here, and the default for a bug is to reproduce the C++ behaviour so the two
-agree byte for byte. Thirty-four issues filed so far, plus three against
+agree byte for byte. Thirty-six issues filed so far, plus three against
 third-party libraries.
 
 **Three drivers, then fifty.** Every device test runs on vkms in CI and is

@@ -35,6 +35,10 @@ minor version may break the API and a patch version does not.
   the reference. The 256-frame cap counted every size in the file, so
   Adwaita's busy cursors (six sizes of sixty frames) were refused as too
   large; the size is now chosen first and only its frames count (P-57).
+- `drmkit-capture`: JPEG output is 4:2:0 at every quality, as the
+  reference's libjpeg writes it; from quality 90 up it was 4:4:4. A
+  dimension past 65,500 pixels is refused rather than cropped or sheared
+  and reported as written (P-58).
 
 ## [0.1.1] - 2026-10-14
 

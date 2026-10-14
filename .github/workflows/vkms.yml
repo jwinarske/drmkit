@@ -160,6 +160,44 @@ jobs:
                  "one is attached to this run; commit it to start gating."
           fi
 
+      # The GBM suites again, as the two older libgbm generations drmkit-gbm
+      # supports: v1 only (the SA8155P's, no `*_with_modifiers2`), and older
+      # than Mesa 17 (no modifier entry points, no `gbm_bo_get_modifier` or
+      # `gbm_bo_get_plane_count`). The runner's Mesa is the newest, so without
+      # this only the v2 path runs here. `DRMKIT_GBM_HIDE_SYMBOLS` makes the
+      # library look older; `the_hidden_entry_points_are_the_missing_ones`
+      # fails the pass if the hiding did not take.
+      #
+      # After the coverage check and outside its log on purpose: the same case
+      # names run again, and the check reads a name it has seen as one case.
+      - name: run the GBM suites as older libgbm
+        run: |
+          grep -E '/(drmkit_gbm|drmkit_scene_gbm|drmkit_scene_sources|backend_device)-[0-9a-f]+$' \
+            test-binaries.txt > gbm-binaries.txt
+          echo "rerunning $(wc -l < gbm-binaries.txt) GBM test binaries"
+          test -s gbm-binaries.txt
+          {
+            echo '#!/bin/sh'
+            echo 'modprobe vkms enable_cursor=1 enable_overlay=1 enable_writeback=1 || modprobe vkms || { echo "FATAL: cannot load vkms"; exit 1; }'
+            echo 'udevadm settle || true'
+            echo 'test -e /dev/dri/card0 || { echo "FATAL: vkms loaded but no card node"; exit 1; }'
+            echo 'rc=0'
+            for shape in \
+              'v1:gbm_bo_create_with_modifiers2,gbm_surface_create_with_modifiers2' \
+              'pre-17:gbm_bo_create_with_modifiers2,gbm_surface_create_with_modifiers2,gbm_bo_create_with_modifiers,gbm_surface_create_with_modifiers,gbm_bo_get_modifier,gbm_bo_get_plane_count'
+            do
+              name=${shape%%:*}
+              hide=${shape#*:}
+              while read -r bin; do
+                echo "echo \"===== $name: $(basename "$bin") =====\""
+                echo "DRMKIT_GBM_HIDE_SYMBOLS=$hide \"$bin\" --include-ignored --nocapture || rc=1"
+              done < gbm-binaries.txt
+            done
+            echo 'exit "$rc"'
+          } > run-gbm-shapes.sh
+          chmod +x run-gbm-shapes.sh
+          vng --run --verbose --cpus 2 --memory 2G --exec "$PWD/run-gbm-shapes.sh"
+
       - name: keep what the lane covered
         if: always()
         uses: actions/upload-artifact@v4

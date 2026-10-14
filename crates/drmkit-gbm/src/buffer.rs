@@ -229,18 +229,30 @@ impl GbmBuffer {
     /// Not a formality. A tiled or compressed buffer scanned out as though it
     /// were linear is not slightly wrong — it is unreadable — so this has to
     /// travel with the buffer to whatever registers the framebuffer.
+    ///
+    /// `DRM_FORMAT_MOD_INVALID` from a libgbm older than Mesa 17.0, which
+    /// cannot say: the layout is the driver's implicit one, and a framebuffer
+    /// is registered without a modifier.
     #[must_use]
     pub fn modifier(&self) -> u64 {
-        // SAFETY: the buffer is live.
-        unsafe { (self.device.gbm.bo_get_modifier)(self.ptr) }
+        const INVALID: u64 = (1 << 56) - 1;
+        self.device.gbm.bo_get_modifier.map_or(INVALID, |get| {
+            // SAFETY: the buffer is live.
+            unsafe { get(self.ptr) }
+        })
     }
 
     /// How many planes the layout uses.
+    ///
+    /// One from a libgbm older than Mesa 17.0, which cannot say and allocates
+    /// nothing else.
     #[must_use]
     pub fn plane_count(&self) -> u32 {
-        // SAFETY: the buffer is live.
-        let count = unsafe { (self.device.gbm.bo_get_plane_count)(self.ptr) };
-        u32::try_from(count).unwrap_or(0)
+        self.device.gbm.bo_get_plane_count.map_or(1, |get| {
+            // SAFETY: the buffer is live.
+            let count = unsafe { get(self.ptr) };
+            u32::try_from(count).unwrap_or(0)
+        })
     }
 
     /// Plane 0's GEM handle on the device's descriptor, which is what a

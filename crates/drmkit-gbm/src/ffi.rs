@@ -14,6 +14,21 @@
 //! The signatures are `gbm.h`'s, transcribed. Nothing checks them against the
 //! header at build time, so each is kept to the exact C types, and every one
 //! is exercised by this crate's device tests.
+//!
+//! # Older libgbm
+//!
+//! Three generations are in use, and all three are supported:
+//!
+//! | libgbm | Has | Here |
+//! |---|---|---|
+//! | Mesa 21.3+ | the `*_with_modifiers2` pair, with usage flags | v2 |
+//! | Mesa 17.1+, and the SA8155P's | `*_with_modifiers`, no usage | v1 |
+//! | older | no modifier entry points, and before 17.0 no `gbm_bo_get_modifier` or `gbm_bo_get_plane_count` | unconstrained; modifier `INVALID`, one plane |
+//!
+//! Every Mesa board and vkms are the first, so on their own they would test
+//! only it. [`HIDE_ENV`] makes the library look older than it is: it names
+//! optional entry points to treat as missing, and the vkms lane runs the GBM
+//! suites again as the second and third generations with it.
 
 use std::ffi::{c_char, c_int, c_uint, c_void};
 use std::sync::OnceLock;
@@ -63,8 +78,11 @@ pub(crate) struct Gbm {
     pub(crate) bo_get_height: unsafe extern "C" fn(BoPtr) -> u32,
     pub(crate) bo_get_stride: unsafe extern "C" fn(BoPtr) -> u32,
     pub(crate) bo_get_format: unsafe extern "C" fn(BoPtr) -> u32,
-    pub(crate) bo_get_modifier: unsafe extern "C" fn(BoPtr) -> u64,
-    pub(crate) bo_get_plane_count: unsafe extern "C" fn(BoPtr) -> c_int,
+    /// Mesa 17.0. Without it a buffer's layout is unknown: `INVALID`.
+    pub(crate) bo_get_modifier: Option<unsafe extern "C" fn(BoPtr) -> u64>,
+    /// Mesa 17.0. Without it a buffer is taken as one plane, which is all a
+    /// libgbm that old allocates.
+    pub(crate) bo_get_plane_count: Option<unsafe extern "C" fn(BoPtr) -> c_int>,
     pub(crate) bo_get_handle: unsafe extern "C" fn(BoPtr) -> BoHandle,
     pub(crate) bo_get_fd: unsafe extern "C" fn(BoPtr) -> c_int,
 
@@ -84,6 +102,24 @@ pub(crate) struct Gbm {
 /// The library names tried, in order: the runtime soname every distribution
 /// ships, then the development symlink some vendor trees have instead.
 const NAMES: [&str; 2] = ["libgbm.so.1", "libgbm.so"];
+
+/// Optional entry points to treat as missing, comma-separated, read once
+/// when libgbm is opened: `DRMKIT_GBM_HIDE_SYMBOLS=gbm_bo_create_with_modifiers2,
+/// gbm_surface_create_with_modifiers2` is the SA8155P's libgbm on a Mesa
+/// machine. For testing the older paths where the library is newer; a
+/// required entry point cannot be hidden, and naming one does nothing.
+pub const HIDE_ENV: &str = "DRMKIT_GBM_HIDE_SYMBOLS";
+
+/// The entry points [`HIDE_ENV`] can hide.
+#[cfg(test)]
+pub(crate) const OPTIONAL: [&str; 6] = [
+    "gbm_bo_create_with_modifiers2",
+    "gbm_bo_create_with_modifiers",
+    "gbm_surface_create_with_modifiers2",
+    "gbm_surface_create_with_modifiers",
+    "gbm_bo_get_modifier",
+    "gbm_bo_get_plane_count",
+];
 
 static GBM: OnceLock<Result<Gbm, String>> = OnceLock::new();
 
@@ -123,42 +159,77 @@ macro_rules! required {
     };
 }
 
-/// Look up a symbol the library may not have.
+/// Look up a symbol the library may not have, or that [`HIDE_ENV`] hides.
 macro_rules! optional {
-    ($library:expr, $name:literal) => {
-        // SAFETY: as `required!`.
-        unsafe { $library.get(concat!($name, "\0").as_bytes()) }
-            .ok()
-            .map(|symbol| *symbol)
+    ($library:expr, $hidden:expr, $name:literal) => {
+        if $hidden.iter().any(|hidden| hidden == $name) {
+            None
+        } else {
+            // SAFETY: as `required!`.
+            unsafe { $library.get(concat!($name, "\0").as_bytes()) }
+                .ok()
+                .map(|symbol| *symbol)
+        }
     };
 }
 
 fn resolve(library: Library) -> Result<Gbm, String> {
+    let hidden: Vec<String> = std::env::var(HIDE_ENV)
+        .unwrap_or_default()
+        .split(',')
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+        .collect();
     Ok(Gbm {
         create_device: required!(library, "gbm_create_device"),
         device_destroy: required!(library, "gbm_device_destroy"),
         device_get_backend_name: required!(library, "gbm_device_get_backend_name"),
         bo_create: required!(library, "gbm_bo_create"),
-        bo_create_with_modifiers2: optional!(library, "gbm_bo_create_with_modifiers2"),
-        bo_create_with_modifiers: optional!(library, "gbm_bo_create_with_modifiers"),
+        bo_create_with_modifiers2: optional!(library, hidden, "gbm_bo_create_with_modifiers2"),
+        bo_create_with_modifiers: optional!(library, hidden, "gbm_bo_create_with_modifiers"),
         bo_destroy: required!(library, "gbm_bo_destroy"),
         bo_get_width: required!(library, "gbm_bo_get_width"),
         bo_get_height: required!(library, "gbm_bo_get_height"),
         bo_get_stride: required!(library, "gbm_bo_get_stride"),
         bo_get_format: required!(library, "gbm_bo_get_format"),
-        bo_get_modifier: required!(library, "gbm_bo_get_modifier"),
-        bo_get_plane_count: required!(library, "gbm_bo_get_plane_count"),
+        bo_get_modifier: optional!(library, hidden, "gbm_bo_get_modifier"),
+        bo_get_plane_count: optional!(library, hidden, "gbm_bo_get_plane_count"),
         bo_get_handle: required!(library, "gbm_bo_get_handle"),
         bo_get_fd: required!(library, "gbm_bo_get_fd"),
         surface_create: required!(library, "gbm_surface_create"),
-        surface_create_with_modifiers2: optional!(library, "gbm_surface_create_with_modifiers2"),
-        surface_create_with_modifiers: optional!(library, "gbm_surface_create_with_modifiers"),
+        surface_create_with_modifiers2: optional!(
+            library,
+            hidden,
+            "gbm_surface_create_with_modifiers2"
+        ),
+        surface_create_with_modifiers: optional!(
+            library,
+            hidden,
+            "gbm_surface_create_with_modifiers"
+        ),
         surface_destroy: required!(library, "gbm_surface_destroy"),
         surface_lock_front_buffer: required!(library, "gbm_surface_lock_front_buffer"),
         surface_release_buffer: required!(library, "gbm_surface_release_buffer"),
         surface_has_free_buffers: required!(library, "gbm_surface_has_free_buffers"),
         _library: library,
     })
+}
+
+#[cfg(test)]
+impl Gbm {
+    /// Whether an entry point in [`OPTIONAL`] was resolved: `None` for any
+    /// other name.
+    pub(crate) fn has(&self, name: &str) -> Option<bool> {
+        Some(match name {
+            "gbm_bo_create_with_modifiers2" => self.bo_create_with_modifiers2.is_some(),
+            "gbm_bo_create_with_modifiers" => self.bo_create_with_modifiers.is_some(),
+            "gbm_surface_create_with_modifiers2" => self.surface_create_with_modifiers2.is_some(),
+            "gbm_surface_create_with_modifiers" => self.surface_create_with_modifiers.is_some(),
+            "gbm_bo_get_modifier" => self.bo_get_modifier.is_some(),
+            "gbm_bo_get_plane_count" => self.bo_get_plane_count.is_some(),
+            _ => return None,
+        })
+    }
 }
 
 /// What the last failed libgbm call left in `errno`, for an error message.

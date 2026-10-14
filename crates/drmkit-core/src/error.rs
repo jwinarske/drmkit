@@ -44,10 +44,9 @@ pub enum CoreError {
         name: String,
     },
 
-    /// The operation needs a live descriptor and the handle has none. Also
-    /// what an I/O error from the `drm` crate becomes when it carries no
-    /// `errno`.
-    /// `errc::bad_file_descriptor`.
+    /// The operation needs a live descriptor and the handle has none.
+    /// `errc::bad_file_descriptor`. Also what an I/O error from the `drm` crate
+    /// becomes when it carries no `errno`.
     #[error("device holds no descriptor")]
     NoDevice,
 

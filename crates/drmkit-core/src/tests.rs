@@ -81,6 +81,30 @@ fn open_empty_path_returns_error() {
     assert!(Device::open("").is_err());
 }
 
+/// A node the caller may not open is a permissions problem, not DRM master.
+///
+/// `NotMaster` is what a scene suspends on, and its message says "not DRM
+/// master" -- the wrong diagnosis for a user missing from the `video` group.
+/// The reference returns the open's errno as it is, so this is `Io(EACCES)`.
+#[test]
+fn open_without_permission_is_io_not_master() {
+    let path = std::env::temp_dir().join(format!("drmkit-no-access-{}", std::process::id()));
+    std::fs::write(&path, b"").expect("create");
+    std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o000))
+        .expect("chmod");
+    // Root opens it regardless, and there is nothing to check.
+    let refused = std::fs::File::open(&path).is_err();
+    let result = Device::open(&path);
+    std::fs::remove_file(&path).expect("remove");
+    if !refused {
+        return;
+    }
+    assert!(
+        matches!(result, Err(CoreError::Io(rustix::io::Errno::ACCESS))),
+        "a permissions failure is not a master failure: {result:?}"
+    );
+}
+
 /// `DeviceTest.MoveConstructorTransfersFd`
 ///
 /// The C++ case name is aspirational — its body only checks that opening a

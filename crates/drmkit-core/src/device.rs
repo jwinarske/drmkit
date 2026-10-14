@@ -46,8 +46,7 @@ impl Device {
     ///
     /// # Errors
     ///
-    /// - [`CoreError::Io`] if the node cannot be opened, or
-    ///   [`CoreError::NotMaster`] when the refusal is `EACCES`.
+    /// - [`CoreError::Io`] if the node cannot be opened.
     /// - [`CoreError::NotADrmDevice`] if `drmGetVersion` fails on it, which is
     ///   how the C++ distinguishes a real card from any other character device.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -57,7 +56,9 @@ impl Device {
             rustix::fs::OFlags::RDWR | rustix::fs::OFlags::CLOEXEC,
             rustix::fs::Mode::empty(),
         )
-        .map_err(CoreError::from_errno)?;
+        // Not `from_errno`: `EACCES` here is the node's permissions, not DRM
+        // master, and the reference returns the errno as it is.
+        .map_err(CoreError::Io)?;
 
         let device = Self {
             fd: Fd::Owned(file),

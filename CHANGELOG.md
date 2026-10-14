@@ -8,6 +8,21 @@ minor version may break the API and a patch version does not.
 
 ## [Unreleased]
 
+### Fixed
+
+- `drmkit-scene`: a source's damage is bounded before it reaches the kernel,
+  as the reference does. More than 16 rectangles repaints the whole frame,
+  each rectangle is clipped to the buffer, and one left empty is dropped. A
+  clip outside the buffer could otherwise make the kernel refuse the whole
+  commit (P-53).
+- `drmkit-scene`: the first fast-path frame the kernel refuses is logged as a
+  warning, once, as the reference does. The latch was set but nothing logged
+  (P-54).
+- `drmkit-core`: `Device::open` reports a node the caller may not open as
+  `CoreError::Io(EACCES)`, the errno as the reference returns it, rather than
+  `CoreError::NotMaster`, whose "not DRM master" misdiagnosed a permissions
+  problem.
+
 ## [0.1.1] - 2026-10-14
 
 ### Fixed

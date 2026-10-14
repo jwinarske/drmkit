@@ -36,9 +36,8 @@ impl PingPong {
 
     /// A single buffer, for the legacy path.
     ///
-    /// `drmModeSetCursor` uploads the pixels when the cursor is installed and
-    /// would need reinstalling for a content change anyway, so a second buffer
-    /// buys nothing there.
+    /// The legacy ioctls take one buffer handle and have no flip to alternate
+    /// on, so a second buffer buys nothing there.
     #[must_use]
     pub const fn single() -> Self {
         Self {
@@ -57,9 +56,9 @@ impl PingPong {
     /// The buffer to draw the next frame into.
     ///
     /// The one that is not on screen, so drawing cannot tear. With a single
-    /// buffer there is no choice, and the tear is accepted — the legacy path
-    /// rejects rotation and reinstalls on content change, so the window is
-    /// narrow.
+    /// buffer there is no choice, and the tear is accepted: the legacy path
+    /// redraws the buffer the CRTC is showing, which only a new shape or an
+    /// animation frame does.
     #[must_use]
     pub const fn draw_target(self) -> usize {
         if self.single {

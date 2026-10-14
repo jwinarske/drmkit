@@ -263,8 +263,8 @@ impl<'a> Renderer<'a> {
             });
         }
 
-        // One buffer: the call uploads on install and would need reinstalling
-        // for a content change anyway.
+        // One buffer: the legacy ioctls take one handle and have no flip to
+        // alternate on.
         let size = preferred_size(config.preferred_size, PlanePath::Legacy, None);
         let buffers = allocate_pair(device, size, plane.fourcc)?;
 
@@ -334,8 +334,15 @@ impl<'a> Renderer<'a> {
     ///
     /// # Errors
     ///
-    /// [`CursorError::Io`] if the buffer cannot be mapped.
+    /// - [`CursorError::Unsupported`] for any rotation but
+    ///   [`Rotation::None`] on [`PlanePath::Legacy`], leaving the cursor as it
+    ///   was. `drmModeSetCursor` has nowhere to put one, as at
+    ///   [`Renderer::create`], and the reference refuses here too.
+    /// - [`CursorError::Io`] if the buffer cannot be mapped.
     pub fn set_rotation(&mut self, rotation: Rotation) -> Result<(), CursorError> {
+        if rotation != Rotation::None && self.plane.path == PlanePath::Legacy {
+            return Err(CursorError::Unsupported);
+        }
         self.rotation = rotation;
         match self.drawn_frame {
             Some(index) => self.draw(index),

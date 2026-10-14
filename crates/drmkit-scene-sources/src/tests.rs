@@ -342,6 +342,82 @@ fn external_format() -> SourceFormat {
     }
 }
 
+/// An import's GEM handles go when it does.
+///
+/// Each handle holds a reference to its dma-buf, so one left open pins the
+/// buffer until the device descriptor closes -- a producer cycling through
+/// buffers would grow kernel memory without bound, eviction or not. The
+/// reference closes them after removing the framebuffer.
+///
+/// The buffer is allocated on one open of the card and imported on another,
+/// so the importing file has no handle of its own for it: re-importing while
+/// the source lives finds the source's handle, and once the source is gone a
+/// close of that handle must be refused as already closed.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn an_import_closes_its_gem_handles_vkms() {
+    use drm::control::Device as _;
+
+    let _guard = card_guard();
+    let Some(exporter) = open_card() else { return };
+    let Some(importer) = open_card() else { return };
+    let Some((fd, pitch)) = real_dma_buf(&exporter, 64, 64) else {
+        panic!("vkms allocates and exports a dumb buffer");
+    };
+    let planes = [ExternalPlane {
+        fd: fd.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+
+    let source =
+        ExternalDmaBufSource::create(&importer, external_format(), &planes, None).expect("import");
+    let handle = importer
+        .prime_fd_to_buffer(fd.as_fd())
+        .expect("the source's handle, found again");
+    drop(source);
+
+    assert!(
+        importer.close_buffer(handle).is_err(),
+        "the source left its GEM handle open"
+    );
+}
+
+/// A failed import closes what it imported before the kernel refused it.
+///
+/// A pitch too narrow for the width passes every check here and is refused at
+/// `AddFB2`, after the handle exists: the reference unwinds that import, and
+/// so must this.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_refused_import_closes_its_gem_handles_vkms() {
+    use drm::control::Device as _;
+
+    let _guard = card_guard();
+    let Some(exporter) = open_card() else { return };
+    let Some(importer) = open_card() else { return };
+    let Some((fd, _)) = real_dma_buf(&exporter, 64, 64) else {
+        panic!("vkms allocates and exports a dumb buffer");
+    };
+    // Imported first, so the handle is known; the source's import finds the
+    // same one.
+    let handle = importer.prime_fd_to_buffer(fd.as_fd()).expect("import");
+    let narrow = [ExternalPlane {
+        fd: fd.as_fd(),
+        offset: 0,
+        pitch: 4,
+    }];
+
+    assert!(
+        ExternalDmaBufSource::create(&importer, external_format(), &narrow, None).is_err(),
+        "a 4-byte pitch cannot hold a 64-pixel row"
+    );
+    assert!(
+        importer.close_buffer(handle).is_err(),
+        "the failed import left its GEM handle open"
+    );
+}
+
 // --- validation, no card needed ---------------------------------------------
 
 #[test]

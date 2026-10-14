@@ -605,6 +605,7 @@
   "create_without_a_framebuffer_vkms": "ran",
   "crtc_id_is_always_written": "ran",
   "crtcs_do_not_share_state": "ran",
+  "cursor_planes_carry_the_devices_cursor_caps": "ran",
   "cursor_planes_enforce_their_maximum_size": "ran",
   "damage_becomes_corner_pairs_not_widths": "ran",
   "damage_is_clamped_to_the_canvas": "ran",

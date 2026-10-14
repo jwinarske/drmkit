@@ -77,12 +77,12 @@
 ///
 /// Kept as a constant so a consumer — and the port's own tooling — can tell at
 /// a glance which C++ baseline a given drmkit build claims parity with.
-pub const UPSTREAM_BASELINE: &str = "4a0b64a";
+pub const UPSTREAM_BASELINE: &str = "2b260d0";
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn baseline_is_recorded() {
-        assert_eq!(super::UPSTREAM_BASELINE, "4a0b64a");
+        assert_eq!(super::UPSTREAM_BASELINE, "2b260d0");
     }
 }

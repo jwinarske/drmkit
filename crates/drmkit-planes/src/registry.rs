@@ -228,9 +228,12 @@ pub struct PlaneCapabilities {
     pub color_ranges: ColorRangeValues,
     /// Per-plane color pipeline support.
     pub color_pipeline: ColorPipeline,
-    /// Maximum cursor width, when this is a cursor plane.
+    /// The device's `DRM_CAP_CURSOR_WIDTH`, on a cursor plane. Zero on any
+    /// other plane, and where the driver reports none; zero leaves the
+    /// allocator's cursor-size guard off.
     pub cursor_max_w: u32,
-    /// Maximum cursor height, when this is a cursor plane.
+    /// The device's `DRM_CAP_CURSOR_HEIGHT`, on a cursor plane, as
+    /// [`cursor_max_w`](Self::cursor_max_w).
     pub cursor_max_h: u32,
     /// One bandwidth class per distinct advertised modifier, sorted by
     /// modifier, so the allocator hot path never re-decodes modifier bits.

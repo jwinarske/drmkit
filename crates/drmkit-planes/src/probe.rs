@@ -3,6 +3,7 @@
 
 //! Reading a device's planes and what each of them can do.
 
+use drm::Device as _;
 use drm::control::Device as _;
 
 use drmkit_core::{Device, ObjectType, PropertyStore, Result};
@@ -45,6 +46,21 @@ impl PlaneRegistry {
             .resource_handles()
             .map_err(|error| drmkit_core::CoreError::from(io_errno(&error)))?;
 
+        // Device-wide caps, which bound cursor planes only (drm-cxx
+        // `50ae097`). Zero where the driver reports none, which leaves the
+        // allocator's cursor-size guard off.
+        let cursor_cap = |cap| {
+            device
+                .get_driver_capability(cap)
+                .ok()
+                .and_then(|value| u32::try_from(value).ok())
+                .unwrap_or(0)
+        };
+        let cursor_max = (
+            cursor_cap(drm::DriverCapability::CursorWidth),
+            cursor_cap(drm::DriverCapability::CursorHeight),
+        );
+
         let mut capabilities = Vec::with_capacity(handles.len());
         for handle in handles {
             let Ok(plane) = device.get_plane(handle) else {
@@ -58,7 +74,14 @@ impl PlaneRegistry {
             {
                 continue;
             }
-            capabilities.push(probe_plane(device, &resources, &properties, id, &plane));
+            capabilities.push(probe_plane(
+                device,
+                &resources,
+                &properties,
+                id,
+                &plane,
+                cursor_max,
+            ));
         }
         let mut registry = Self::from_capabilities(capabilities);
         for (index, crtc) in resources.crtcs().iter().enumerate() {
@@ -77,6 +100,7 @@ fn probe_plane(
     properties: &PropertyStore,
     id: u32,
     plane: &drm::control::plane::Info,
+    cursor_max: (u32, u32),
 ) -> PlaneCapabilities {
     let value = |name: &str| properties.property_value(id, name).ok();
     let present = |name: &str| properties.property_id(id, name).is_ok();
@@ -99,17 +123,24 @@ fn probe_plane(
     let format_table = in_formats(device, properties, id);
     let has_format_modifiers = !format_table.is_empty();
 
+    let plane_type = match value("type") {
+        Some(PLANE_TYPE_PRIMARY) => PlaneType::Primary,
+        Some(PLANE_TYPE_CURSOR) => PlaneType::Cursor,
+        // Overlay is the kernel's zero, and also the safe answer for a
+        // plane whose type could not be read: treating an unknown plane
+        // as primary would have the scene put a backing store on it.
+        Some(PLANE_TYPE_OVERLAY | _) | None => PlaneType::Overlay,
+    };
+    let (cursor_max_w, cursor_max_h) = if plane_type == PlaneType::Cursor {
+        cursor_max
+    } else {
+        (0, 0)
+    };
+
     PlaneCapabilities {
         id,
         possible_crtcs: crtc_mask(resources, plane.possible_crtcs()),
-        plane_type: match value("type") {
-            Some(PLANE_TYPE_PRIMARY) => PlaneType::Primary,
-            Some(PLANE_TYPE_CURSOR) => PlaneType::Cursor,
-            // Overlay is the kernel's zero, and also the safe answer for a
-            // plane whose type could not be read: treating an unknown plane
-            // as primary would have the scene put a backing store on it.
-            Some(PLANE_TYPE_OVERLAY | _) | None => PlaneType::Overlay,
-        },
+        plane_type,
         formats: plane.formats().to_vec(),
         format_table,
         has_format_modifiers,
@@ -150,8 +181,8 @@ fn probe_plane(
                 .and_then(|size| u32::try_from(size).ok())
                 .unwrap_or(0),
         },
-        cursor_max_w: 0,
-        cursor_max_h: 0,
+        cursor_max_w,
+        cursor_max_h,
         modifier_classes: Vec::new(),
     }
 }

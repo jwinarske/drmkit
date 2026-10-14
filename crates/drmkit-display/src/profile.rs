@@ -120,10 +120,19 @@ impl DriverProfile {
     /// as an error: `DRM_CAP_*` is additive, and a kernel too old to know a cap
     /// answers the same way as one whose hardware lacks it.
     ///
+    /// Turns on universal planes and atomic for `device` first, as the
+    /// reference does: without them the kernel hides primary and cursor
+    /// planes, and `FB_DAMAGE_CLIPS` is only shown to atomic clients, so
+    /// [`fb_damage_clips`](Self::fb_damage_clips) would read false on a device
+    /// that has it. Either being refused leaves the scan to see what it can.
+    /// The per-object scans are best-effort the same way: a resource list that
+    /// cannot be read leaves [`vrr_capable`](Self::vrr_capable) and
+    /// [`psr`](Self::psr) at their defaults rather than failing the probe.
+    ///
     /// # Errors
     ///
-    /// [`drmkit_core::CoreError`] if the driver name or the resource list
-    /// cannot be read at all — which means this is not a working KMS node.
+    /// [`drmkit_core::CoreError`] if the driver name cannot be read — which
+    /// means this is not a DRM node at all.
     pub fn probe(device: &Device) -> Result<Self, drmkit_core::CoreError> {
         use drm::control::Device as _;
 
@@ -132,7 +141,10 @@ impl DriverProfile {
 
         let prime = decode_prime_caps(cap(drm::DriverCapability::Prime).unwrap_or(0));
 
-        let resources = device.resource_handles().map_err(|e| errno(&e))?;
+        // Refusals are not errors: an older kernel, or a node that is not KMS,
+        // answers with whatever it can show.
+        let _ = device.enable_universal_planes();
+        let _ = device.enable_atomic();
 
         // Per-object capabilities are found by enumeration, not by asking the
         // device: they are properties of planes and CRTCs, and a device may
@@ -148,8 +160,12 @@ impl DriverProfile {
             }
         }
 
+        let resources = device.resource_handles().ok();
+        let crtcs = resources.as_ref().map_or(&[][..], |r| r.crtcs());
+        let connectors = resources.as_ref().map_or(&[][..], |r| r.connectors());
+
         let mut vrr_capable = false;
-        for crtc in resources.crtcs() {
+        for crtc in crtcs {
             if object_has_property(device, (*crtc).into(), ObjectType::Crtc, "VRR_ENABLED") {
                 vrr_capable = true;
                 break;
@@ -159,7 +175,7 @@ impl DriverProfile {
         // Unknown unless a connector is actually connected: an unplugged eDP
         // says nothing about what is on screen, because nothing is.
         let mut psr = PanelSelfRefresh::Unknown;
-        for handle in resources.connectors() {
+        for handle in connectors {
             let Ok(info) = device.get_connector(*handle, false) else {
                 continue;
             };

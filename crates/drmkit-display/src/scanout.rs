@@ -248,7 +248,9 @@ impl ScanoutTarget {
         ranks: &[Interface],
         only: Option<u32>,
     ) -> Result<std::result::Result<Self, ScanoutError>> {
-        device.enable_universal_planes()?;
+        // Asked for, not required, as the reference does: a driver that refuses
+        // it shows what it shows, and a missing primary is reported as such.
+        let _ = device.enable_universal_planes();
 
         let resources = device.resource_handles().map_err(|error| errno(&error))?;
 

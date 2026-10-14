@@ -260,9 +260,27 @@ impl LayerBufferSource for ExternalDmaBufRing {
         for slot in &mut self.slots {
             slot.forget();
         }
-        // Nothing is on screen and the forgotten slots have no descriptors
-        // left to lend, so there is no acquired buffer to describe.
+        // Nothing is on screen and nothing is acquired any more, so there is
+        // no buffer to describe.
         self.presented = None;
         self.presenter.reset();
+    }
+
+    /// Re-import every slot on the new descriptor, as the reference does.
+    ///
+    /// The producer's buffers survive the pause; the framebuffers forgotten
+    /// with the old descriptor are registered again, so the ring presents
+    /// again. On any failure every slot imported here is torn down, as the
+    /// reference unwinds, and the ring presents nothing until it is rebuilt.
+    fn on_session_resumed(&mut self, device: &Device) -> Result<(), SourceError> {
+        for index in 0..self.slots.len() {
+            if let Err(error) = self.slots[index].reimport(device, self.format) {
+                for slot in &mut self.slots[..index] {
+                    slot.release();
+                }
+                return Err(crate::external::source_error(&error));
+            }
+        }
+        Ok(())
     }
 }

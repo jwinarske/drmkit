@@ -53,6 +53,11 @@ minor version may break the API and a patch version does not.
   goes, and when it fails, as the reference does. They were never closed,
   so every buffer a producer had handed over stayed pinned until the device
   was closed (P-62).
+- `drmkit-scene-sources`: an external dma-buf source and an external ring
+  re-import their buffers on a session resume, as the reference does. After
+  a VT switch the source's layer failed every commit and the ring's went
+  blank. The GBM source no longer tears its old import down through the dead
+  descriptor when it re-allocates (P-63).
 - `drmkit-session`: a device that cannot be reopened on resume no longer
   costs the others. It is reported as the new `SessionEvent::DeviceLost`
   and the rest resume, as the reference reports it through

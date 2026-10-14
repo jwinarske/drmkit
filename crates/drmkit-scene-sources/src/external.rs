@@ -121,6 +121,59 @@ impl ImportedFramebuffer {
         self.fb = None;
         self.handles.clear();
     }
+
+    /// Import the kept descriptors again on `device`, after a session resume.
+    ///
+    /// The old framebuffer and handles went with the old descriptor, so they
+    /// are forgotten rather than torn down -- an ioctl on that descriptor
+    /// would at best fail and at worst land on whatever reused its number.
+    /// The buffer itself is unchanged; only its import is new. On failure
+    /// nothing is left imported, and `fb_id` reports `None`.
+    ///
+    /// # Errors
+    ///
+    /// [`ExternalError`] if a descriptor cannot be imported or the kernel
+    /// refuses the framebuffer.
+    pub(crate) fn reimport(
+        &mut self,
+        device: &Device,
+        format: SourceFormat,
+    ) -> Result<(), ExternalError> {
+        self.forget();
+        if self.duped_fds.is_empty() {
+            return Ok(());
+        }
+        let fourcc = drm::buffer::DrmFourcc::try_from(format.fourcc).map_err(|_| {
+            ExternalError::Invalid {
+                reason: "format is not a recognized DRM FourCC",
+            }
+        })?;
+        let (fb, handles) = import_planes(
+            device,
+            format,
+            fourcc,
+            &self.duped_fds,
+            &self.offsets,
+            &self.pitches,
+        )?;
+        self.fb = Some(fb);
+        self.handles = handles;
+        self.device_fd = device.raw_fd();
+        Ok(())
+    }
+
+    /// Tear the import down on its own descriptor, as a drop would, keeping
+    /// the descriptors for another try.
+    pub(crate) fn release(&mut self) {
+        // SAFETY: as in `Drop`: the descriptor these were made on, borrowed
+        // only for these ioctls.
+        let borrowed = unsafe { BorrowedFd::borrow_raw(self.device_fd) };
+        let device = RawDevice { fd: borrowed };
+        if let Some(fb) = self.fb.take() {
+            let _ = device.destroy_framebuffer(fb);
+        }
+        close_handles(&device, &mut self.handles);
+    }
 }
 
 impl Drop for ImportedFramebuffer {
@@ -151,6 +204,65 @@ fn close_handles(device: &impl drm::control::Device, handles: &mut Vec<drm::buff
     handles.dedup();
     for handle in handles.drain(..) {
         let _ = device.close_buffer(handle);
+    }
+}
+
+/// Import `fds` into GEM handles on `device` and register a framebuffer over
+/// them: the kernel half of an import, shared by a first import and a
+/// re-import after a session resume.
+///
+/// On failure every handle imported so far is closed again, as the
+/// reference's `import_slot` unwinds.
+fn import_planes(
+    device: &Device,
+    format: SourceFormat,
+    fourcc: drm::buffer::DrmFourcc,
+    fds: &[OwnedFd],
+    offsets: &[u32],
+    pitches: &[u32],
+) -> Result<(framebuffer::Handle, Vec<drm::buffer::Handle>), ExternalError> {
+    let mut layout_handles = [None; MAX_PLANES];
+    let mut layout_offsets = [0u32; MAX_PLANES];
+    let mut layout_pitches = [0u32; MAX_PLANES];
+    let mut imported = Vec::with_capacity(fds.len());
+    for (index, fd) in fds.iter().enumerate() {
+        let handle = match device.prime_fd_to_buffer(fd.as_fd()) {
+            Ok(handle) => handle,
+            Err(e) => {
+                close_handles(device, &mut imported);
+                return Err(ExternalError::Io(errno_of(&e)));
+            }
+        };
+        imported.push(handle);
+        layout_handles[index] = Some(handle);
+        layout_offsets[index] = offsets[index];
+        layout_pitches[index] = pitches[index];
+    }
+
+    // Which path the modifier takes is the device's to decide; see
+    // `drmkit_core::framebuffer_modifier`.
+    let declared = drmkit_core::framebuffer_modifier(device, format.modifier);
+    let layout = ImportedLayout {
+        width: format.width,
+        height: format.height,
+        fourcc,
+        modifier: declared,
+        handles: layout_handles,
+        offsets: layout_offsets,
+        pitches: layout_pitches,
+    };
+    let flags = if declared.is_some() {
+        FbCmd2Flags::MODIFIERS
+    } else {
+        FbCmd2Flags::empty()
+    };
+
+    match device.add_planar_framebuffer(&layout, flags) {
+        Ok(fb) => Ok((fb, imported)),
+        Err(e) => {
+            close_handles(device, &mut imported);
+            Err(ExternalError::Io(errno_of(&e)))
+        }
     }
 }
 
@@ -257,57 +369,15 @@ impl ExternalDmaBufSource {
             })?);
         }
 
-        let mut handles = [None; MAX_PLANES];
-        let mut offsets = [0u32; MAX_PLANES];
-        let mut pitches = [0u32; MAX_PLANES];
-        // Every handle imported so far, closed again if anything after it
-        // fails: the reference unwinds a failed import the same way.
-        let mut imported = Vec::with_capacity(planes.len());
-        for (index, (plane, fd)) in planes.iter().zip(duped.iter()).enumerate() {
-            let handle = match device.prime_fd_to_buffer(fd.as_fd()) {
-                Ok(handle) => handle,
-                Err(e) => {
-                    close_handles(device, &mut imported);
-                    return Err(ExternalError::Io(errno_of(&e)));
-                }
-            };
-            imported.push(handle);
-            handles[index] = Some(handle);
-            offsets[index] = plane.offset;
-            pitches[index] = plane.pitch;
-        }
-
-        // Which path the modifier takes is the device's to decide; see
-        // `drmkit_core::framebuffer_modifier`.
-        let declared = drmkit_core::framebuffer_modifier(device, format.modifier);
-        let layout = ImportedLayout {
-            width: format.width,
-            height: format.height,
-            fourcc,
-            modifier: declared,
-            handles,
-            offsets,
-            pitches,
-        };
-        let flags = if declared.is_some() {
-            FbCmd2Flags::MODIFIERS
-        } else {
-            FbCmd2Flags::empty()
-        };
-
-        let fb = match device.add_planar_framebuffer(&layout, flags) {
-            Ok(fb) => fb,
-            Err(e) => {
-                close_handles(device, &mut imported);
-                return Err(ExternalError::Io(errno_of(&e)));
-            }
-        };
+        let offsets: Vec<u32> = planes.iter().map(|plane| plane.offset).collect();
+        let pitches: Vec<u32> = planes.iter().map(|plane| plane.pitch).collect();
+        let (fb, imported) = import_planes(device, format, fourcc, &duped, &offsets, &pitches)?;
 
         Ok(Self {
             imported: ImportedFramebuffer {
                 duped_fds: duped,
-                offsets: offsets[..planes.len()].to_vec(),
-                pitches: pitches[..planes.len()].to_vec(),
+                offsets,
+                pitches,
                 fb: Some(fb),
                 handles: imported,
                 device_fd: device.raw_fd(),
@@ -445,9 +515,38 @@ impl LayerBufferSource for ExternalDmaBufSource {
         self.format
     }
 
-    // `map` and `export_dma_buf` keep their defaults for now: the pixels live
-    // behind a descriptor this type does not mmap, so it is uncompositable
-    // until the export path lands with the compositor that needs it.
+    // `map` keeps its default: the pixels live behind a descriptor this type
+    // does not mmap, and composition reaches them through `export_dma_buf`.
+
+    /// Re-import the buffer on the new descriptor, as the reference does.
+    ///
+    /// The buffer is the producer's and survives the pause; its framebuffer
+    /// and GEM handles do not. Without this, every acquire after a resume
+    /// would hand out a framebuffer id the new descriptor has never heard of.
+    fn on_session_resumed(&mut self, device: &Device) -> Result<(), SourceError> {
+        self.imported
+            .reimport(device, self.format)
+            .map_err(|error| source_error(&error))
+    }
+}
+
+/// An import failure as the scene reports it.
+pub(crate) fn source_error(error: &ExternalError) -> SourceError {
+    match error {
+        ExternalError::Io(errno) => SourceError::Failed(*errno),
+        ExternalError::Invalid { .. } => SourceError::Failed(rustix::io::Errno::INVAL),
+        // Only a pool's submit returns this, never an import.
+        ExternalError::Retired => SourceError::WouldBlock,
+    }
+}
+
+impl ExternalDmaBufSource {
+    /// Abandon the import without an ioctl: for an owner replacing this
+    /// source after a resume, whose descriptor took the import with it.
+    #[cfg(feature = "gbm")]
+    pub(crate) fn forget(&mut self) {
+        self.imported.forget();
+    }
 }
 
 impl Drop for ExternalDmaBufSource {

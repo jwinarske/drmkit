@@ -1039,6 +1039,76 @@ fn ring_of(device: &Device, n: usize) -> Option<(ExternalDmaBufRing, Vec<OwnedFd
     Some((ring, fds))
 }
 
+/// Whether `fb_id` names a framebuffer `device` can see.
+fn framebuffer_exists(device: &Device, fb_id: u32) -> bool {
+    use drm::control::Device as _;
+    drm::control::from_u32::<drm::control::framebuffer::Handle>(fb_id)
+        .is_some_and(|fb| device.get_framebuffer(fb).is_ok())
+}
+
+/// An external source presents again after a session resume.
+///
+/// The pause is modeled the way libseat does it: the old descriptor is
+/// closed, which takes its framebuffers with it, and the resume hands over a
+/// fresh one. The producer's buffer survives, so the reference re-imports it;
+/// without that every acquire after the resume hands out an id the new
+/// descriptor has never registered.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn an_external_source_reimports_on_resume_vkms() {
+    let _guard = card_guard();
+    let Some(before) = open_card() else { return };
+    let Some((fd, pitch)) = real_dma_buf(&before, 64, 64) else {
+        panic!("vkms allocates and exports a dumb buffer");
+    };
+    let planes = [ExternalPlane {
+        fd: fd.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+    let mut source =
+        ExternalDmaBufSource::create(&before, external_format(), &planes, None).expect("import");
+
+    source.on_session_paused();
+    drop(before);
+    let Some(after) = open_card() else { return };
+    source.on_session_resumed(&after).expect("re-import");
+
+    let fb_id = source.acquire().expect("acquire after resume").fb_id;
+    assert!(
+        framebuffer_exists(&after, fb_id),
+        "framebuffer {fb_id} is not registered on the new descriptor"
+    );
+}
+
+/// A ring presents again after a session resume, every slot of it.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_ring_reimports_every_slot_on_resume_vkms() {
+    let _guard = card_guard();
+    let Some(before) = open_card() else { return };
+    let Some((mut ring, _fds)) = ring_of(&before, 2) else {
+        panic!("dma-buf export");
+    };
+
+    ring.on_session_paused();
+    drop(before);
+    let Some(after) = open_card() else { return };
+    ring.on_session_resumed(&after).expect("re-import");
+
+    for slot in 0..2 {
+        ring.submit(slot, None, &[]);
+        let fb_id = ring
+            .acquire()
+            .unwrap_or_else(|error| panic!("slot {slot} after resume: {error}"))
+            .fb_id;
+        assert!(
+            framebuffer_exists(&after, fb_id),
+            "slot {slot}'s framebuffer {fb_id} is not registered on the new descriptor"
+        );
+    }
+}
+
 /// Every slot gets its own framebuffer.
 ///
 /// One id shared across slots would mean the producer's rotation changed

@@ -27,21 +27,28 @@ libseat = { workspace = true, optional = true }
 [features]
 default = ["libseat", "libseat-log"]
 libseat = ["dep:libseat"]
-# Route libseat's own diagnostics into the `log` crate: the binding's
-# `custom_logger`, which builds a C shim against libseat's headers. A feature
-# of its own so the docs build, which has no libseat, can leave it out.
-libseat-log = ["libseat", "libseat/custom_logger"]
+# Released in 0.1.0, when it turned on the binding's own logger, which sent
+# libseat's diagnostics to the `log` crate. They now always arrive through
+# drmkit-log, so it does nothing more than `libseat`. It stays, and stays a
+# default, because 0.1.x promised both.
+libseat-log = ["libseat"]
 
 # The seat probe needs a seat binding to probe with.
 [[example]]
 name = "seat"
 required-features = ["libseat"]
 
+# Sets LIBSEAT_BACKEND, which is only sound with no other thread running.
+[[test]]
+name = "seat_log"
+harness = false
+required-features = ["libseat"]
+
 [lints]
 workspace = true
 
-# docs.rs has no libseat. The binding's `docs_rs` feature skips both the
-# library probe and the logger shim, which is enough to document the seat.
+# docs.rs has no libseat. The binding's `docs_rs` feature skips the library
+# probe, which is enough to document the seat.
 [package.metadata.docs.rs]
 no-default-features = true
 features = ["libseat/docs_rs"]

@@ -98,6 +98,8 @@ impl LibseatBackend {
             }
         };
 
+        // Before the open, so libseat's reasons for refusing one are heard.
+        crate::seat_log::install();
         let mut seat = libseat::Seat::open(listener).map_err(|errno| {
             // Which backend refused, and why, is the whole of the diagnosis
             // when a seat is expected and does not appear.

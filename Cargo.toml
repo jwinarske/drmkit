@@ -76,9 +76,9 @@ drmkit-time = { version = "0.1.0", path = "crates/drmkit-time" }
 drm = { version = "0.15" }
 jpeg-encoder = { version = "0.6", default-features = false, features = ["std"] }
 png = { version = "0.18" }
-# default-features = false: the crate's `custom_logger` compiles a C shim
-# against libseat's headers in its build script, which a docs build has no
-# libseat to find. drmkit-session's `libseat-log` feature turns it back on.
+# default-features = false drops the crate's `custom_logger`, which installs a
+# handler for libseat's log from inside `Seat::open` -- over the one
+# drmkit-session installs first -- and sends it to the `log` crate.
 libseat = { version = "0.2", default-features = false }
 # default-features = false drops the wayland keymap-fd helper (and memmap2 with
 # it); drmkit compiles keymaps from names, a file, or a buffer it already has.

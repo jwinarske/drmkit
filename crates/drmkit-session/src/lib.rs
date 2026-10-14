@@ -25,13 +25,13 @@
 //! So the sequencing -- which devices are held, what happens to them across a
 //! pause, when the pause is acknowledged, what a caller is allowed to do while
 //! inactive -- lives in [`Session`] over a [`Backend`], and is tested against
-//! a fake. The libseat binding is a thin adapter behind the `libseat` feature;
-//! `libseat-log`, also on by default, routes libseat's own diagnostics into
-//! the `log` crate.
+//! a fake. The libseat binding is a thin adapter behind the `libseat` feature,
+//! and libseat's own diagnostics arrive through `drmkit-log`, tagged
+//! `[libseat]`, at error level.
 //!
 //! # Not here yet
 //!
-//! Three things the reference has and this does not.
+//! Two things the reference has and this does not.
 //!
 //! `TakeDeviceOpts::preserve_fd_across_resume` asks the seat to hand back the
 //! same descriptor rather than a fresh one, on the grounds that the
@@ -51,13 +51,6 @@
 //! reissued on a VT switch the way the DRM one is. Until it exists a caller
 //! passing their own opener gets input descriptors with an ordinary lifetime,
 //! which works and is not what the seat is for.
-//!
-//! The reference installs its own handler for libseat's log, at error level,
-//! and sends what arrives to `drm::log`. Here the binding's handler sends it
-//! at debug level to the `log` crate, which `drmkit-log` does not read: a
-//! caller with no `log` logger never sees libseat's reasons for refusing a
-//! seat. Taking it over means a C shim, since libseat hands a handler a
-//! `va_list`, and the binding already builds one.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
@@ -65,6 +58,8 @@ mod session;
 
 #[cfg(feature = "libseat")]
 mod seat;
+#[cfg(feature = "libseat")]
+mod seat_log;
 
 #[cfg(test)]
 mod tests;

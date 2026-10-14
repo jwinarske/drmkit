@@ -120,6 +120,62 @@ fn a_buffer_outlives_its_device() {
         .expect("the buffer's descriptor must outlive the GbmDevice it came from");
 }
 
+/// A surface keeps its device alive for as long as it lives.
+///
+/// The `gbm_surface` belongs to the `gbm_device` it was made on, and destroying
+/// it frees its buffers through that device and its descriptor. The `gbm`
+/// crate this replaced held the device but not the descriptor, so a surface
+/// outliving its `GbmDevice` relied on the caller's drop order to free through
+/// an open number. Creating and dropping an unbound surface is safe on Mesa,
+/// which is all this does with it.
+#[test]
+fn a_surface_outlives_its_device() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let gbm = GbmDevice::new(&device).expect("gbm device");
+    let surface = gbm
+        .create_surface(64, 64, fourcc::XRGB8888, &[])
+        .expect("a surface");
+    let raw = surface.as_raw();
+    drop(gbm);
+
+    assert!(
+        !raw.is_null(),
+        "the surface pointer an EGL producer would take"
+    );
+    drop(surface);
+}
+
+/// Any descriptor on a DRM node opens, not only a `drmkit_core::Device`.
+///
+/// `from_fd` is the way in for a caller that keeps its own DRM handle, and is
+/// the only one with the `drmkit-core` feature off. It duplicates, so the
+/// caller's descriptor is untouched.
+#[test]
+fn a_bare_descriptor_opens_as_a_gbm_device() {
+    let _guard = card_guard();
+    let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
+    let Ok(file) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+    else {
+        println!("note: skipped -- no DRM device at {path}");
+        return;
+    };
+    let gbm = GbmDevice::from_fd(&file).expect("open a GBM device from a bare descriptor");
+    let buffer = GbmBuffer::create(&gbm, 64, 64, fourcc::ARGB8888).expect("allocate");
+    drop(file);
+
+    assert!(
+        buffer.handle() != 0,
+        "a GEM handle on the duplicated descriptor"
+    );
+    buffer
+        .export()
+        .expect("the duplicate, not the caller's descriptor, holds the buffer");
+}
+
 /// The modifier travels with the buffer, consistently.
 ///
 /// A tiled or compressed buffer scanned out as though it were linear is not

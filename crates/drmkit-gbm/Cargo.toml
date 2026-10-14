@@ -10,9 +10,19 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+# `GbmDevice::new(&drmkit_core::Device)`. Off, the crate takes any DRM
+# descriptor through `GbmDevice::from_fd` and depends on nothing of drmkit's.
+default = ["drmkit-core"]
+drmkit-core = ["dep:drmkit-core"]
+
 [dependencies]
-drmkit-core = { workspace = true }
-drmkit-fmt = { workspace = true }
-gbm = { workspace = true }
+drmkit-core = { workspace = true, optional = true }
+# libgbm is opened at run time, not linked: see src/ffi.rs.
+libloading = { workspace = true }
 rustix = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+drmkit-core = { workspace = true }
+drmkit-fmt = { workspace = true }

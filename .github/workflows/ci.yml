@@ -55,11 +55,6 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets --all-features
 
-      # The v1 GBM entry points are only built for a libgbm without the v2
-      # ones (the SA8155P's ships none). Nothing else compiles that path.
-      - name: clippy (GBM v1 entry points)
-        run: DRMKIT_GBM_NO_MODIFIERS2=1 cargo clippy -p drmkit-gbm -p drmkit-scene-gbm --all-targets
-
       # cargo-msrv reads `package.rust-version`, which a virtual workspace root
       # does not have. Verify each member against its own manifest instead.
       - name: cargo-msrv verify
@@ -92,9 +87,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
-      # gbm-sys links against libgbm, which the runner image does not carry.
-      # Named explicitly rather than left to chance: without it the failure is
-      # a linker error naming a library nobody mentioned asking for.
+      # drmkit-gbm opens libgbm at run time, and the runner image does not
+      # carry it. Named explicitly rather than left to chance: without it the
+      # GBM cases fail to open a device for a reason nobody mentioned.
       - name: install system libraries
         run: |
           sudo apt-get update
@@ -161,23 +156,16 @@ jobs:
           sudo apt-get install -y ${{ matrix.packages }}
       # `xtask` is host-only repository tooling — it is excluded everywhere in
       # this lane. Cross-building it proves nothing and only needs a sysroot.
-      # drmkit-gbm and drmkit-session are held out of the *build* because
-      # gbm-sys and libseat-sys link against C libraries and there is no cross
-      # sysroot for either here: adding a foreign
-      # architecture to the runner's apt sources is fragile on amd64 and worse
-      # for riscv64, where the package may not exist at all. The real targets
-      # have libgbm; the runner does not.
+      # drmkit-gbm and drmkit-scene-gbm open libgbm at run time rather than
+      # linking it, so they build for every target with no sysroot. Their
+      # tests are held out of the qemu-user run only: they allocate against a
+      # card through the target's libgbm, and under qemu-user there is
+      # neither.
       #
-      # Only the link needs it, so `cargo check` below still compiles both
-      # crates for the target and no portability coverage is lost -- which is
-      # what these lanes are for. A type error, a bad cast, an assumption about
-      # pointer width would all still fail here.
-      #
-      # drmkit-scene-gbm goes with drmkit-gbm and for the same reason: it
-      # depends on it, so its test binaries link libgbm too. A crate that
-      # links a C library the runner has no cross sysroot for has to be
-      # checked rather than built, whether it names the library itself or
-      # inherits it.
+      # drmkit-session is held out of the build because libseat-sys links
+      # against a C library and there is no cross sysroot for it here: adding
+      # a foreign architecture to the runner's apt sources is fragile on amd64
+      # and worse for riscv64, where the package may not exist at all.
       #
       # drmkit-session is built and tested *without* its seat backend here.
       # libseat-sys's build script needs pkg-config to find libseat for the
@@ -185,9 +173,7 @@ jobs:
       # way to type-check the binding cross. The sequencing is the part with
       # the logic in it, and it is covered on every target; the binding is
       # covered on the host lanes, where the library is installed.
-      - run: cargo build --workspace --exclude xtask --exclude drmkit-gbm --exclude drmkit-scene-gbm --exclude drmkit-session --exclude drmkit-input --target ${{ matrix.target }}
-      - run: cargo check -p drmkit-gbm --target ${{ matrix.target }}
-      - run: cargo check -p drmkit-scene-gbm --target ${{ matrix.target }}
+      - run: cargo build --workspace --exclude xtask --exclude drmkit-session --exclude drmkit-input --target ${{ matrix.target }}
       - run: cargo build -p drmkit-session --no-default-features --target ${{ matrix.target }}
       # qemu-user runs T0 under the cross target; the runner comes from the
       # per-target .cargo fragment.

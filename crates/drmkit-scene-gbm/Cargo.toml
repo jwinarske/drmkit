@@ -21,7 +21,6 @@ drmkit-fmt = { workspace = true }
 drmkit-gbm = { workspace = true }
 drmkit-scene = { workspace = true }
 drmkit-sync = { workspace = true }
-gbm = { workspace = true }
 rustix = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
 

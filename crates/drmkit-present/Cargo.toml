@@ -32,8 +32,8 @@ device = [
     "dep:drmkit-display",
     "dep:drmkit-sync",
 ]
-# A GBM-backed producer. Separate from `device` because it links libgbm, which
-# a CPU-only consumer of the dumb path has no reason to pull in.
+# A GBM-backed producer. Separate from `device` because it opens libgbm, which
+# a CPU-only consumer of the dumb path has no reason to need at run time.
 gbm = ["device", "dep:drmkit-scene-sources", "drmkit-scene-sources/gbm"]
 
 [dependencies]

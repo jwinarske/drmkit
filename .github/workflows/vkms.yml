@@ -37,10 +37,10 @@ jobs:
       - name: install virtme-ng
         run: |
           sudo apt-get update
-          # libgbm is named explicitly even though this lane currently links
-          # without asking: it arrives as a transitive of the qemu/mesa stack,
-          # and depending on that is depending on someone else's dependency
-          # list not changing.
+          # libgbm is named explicitly, though drmkit-gbm opens it at run time
+          # and it arrives anyway as a transitive of the qemu/mesa stack:
+          # depending on that is depending on someone else's dependency list
+          # not changing.
           sudo apt-get install -y virtme-ng qemu-system-x86 linux-modules-extra-$(uname -r) libgbm-dev libseat-dev libxkbcommon-dev xkb-data libinput-dev libudev-dev
 
       - name: confirm vkms is available
@@ -69,8 +69,8 @@ jobs:
           # libudev, which the cross lanes have no sysroot for -- but its
           # cases need a real uevent and root, which is exactly what this
           # lane is. Without it they are built out and never run anywhere.
-          # The same goes for the `gbm` features: they link libgbm, and their
-          # cases need a card to allocate against. `drmkit-present/gbm` is
+          # The same goes for the `gbm` features: their cases need a card to
+          # allocate against, through a libgbm opened at run time. `drmkit-present/gbm` is
           # what builds the ScanoutBackend suite at all.
           cargo test --workspace --features drmkit-display/hotplug,drmkit-present/gbm,drmkit-scene-sources/gbm,drmkit-capture/jpeg --no-run --message-format=json \
             | jq -r 'select(.reason == "compiler-artifact" and .executable != null

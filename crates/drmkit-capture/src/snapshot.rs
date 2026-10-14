@@ -187,11 +187,19 @@ pub fn snapshot(device: &Device, crtc_id: u32) -> Result<Image, CaptureError> {
     };
     let (out_w, out_h) = (u32::from(mode.size().0), u32::from(mode.size().1));
 
-    let mut frames = collect_planes(device, crtc_id)?;
+    let Collected {
+        mut frames,
+        enumerated,
+        unbound,
+    } = collect_planes(device, crtc_id)?;
     if frames.is_empty() {
+        // The counts are what tell the causes apart, as in the reference: no
+        // planes enumerated at all is a client without universal planes, and
+        // every plane unbound is a CRTC that is really blank.
         drmkit_log::log_warn!(
-            "capture: crtc {crtc_id} has no readable plane -- if the atomic client cap is not \
-             enabled, the kernel hides the geometry properties and every plane looks empty"
+            "capture: crtc {crtc_id} has {enumerated} enumerated planes, {unbound} unbound to \
+             this crtc, none readable -- snapshot aborted (plane geometry needs \
+             DRM_CLIENT_CAP_ATOMIC on the fd)"
         );
         return Err(CaptureError::NothingReadable);
     }
@@ -208,22 +216,35 @@ pub fn snapshot(device: &Device, crtc_id: u32) -> Result<Image, CaptureError> {
     Ok(image)
 }
 
+/// What [`collect_planes`] found.
+struct Collected {
+    /// Every readable plane bound to the CRTC.
+    frames: Vec<PlaneFrame>,
+    /// Planes the kernel listed to this client.
+    enumerated: usize,
+    /// Of those, the ones on another CRTC or showing nothing.
+    unbound: usize,
+}
+
 /// Map every readable plane bound to `crtc_id`.
-fn collect_planes(device: &Device, crtc_id: u32) -> Result<Vec<PlaneFrame>, CaptureError> {
+fn collect_planes(device: &Device, crtc_id: u32) -> Result<Collected, CaptureError> {
     let handles = device
         .plane_handles()
         .map_err(|e| CaptureError::Io(std::io::Error::other(e.to_string())))?;
 
+    let enumerated = handles.len();
+    let mut unbound = 0;
     let mut frames = Vec::new();
     for handle in handles {
         let plane_id: u32 = handle.into();
         let Ok(info) = device.get_plane(handle) else {
             continue;
         };
-        if info.crtc().map(u32::from) != Some(crtc_id) {
-            continue;
-        }
-        let Some(fb) = info.framebuffer() else {
+        let (Some(fb), true) = (
+            info.framebuffer(),
+            info.crtc().map(u32::from) == Some(crtc_id),
+        ) else {
+            unbound += 1;
             continue;
         };
         match map_plane(device, plane_id, fb) {
@@ -233,7 +254,11 @@ fn collect_planes(device: &Device, crtc_id: u32) -> Result<Vec<PlaneFrame>, Capt
             }
         }
     }
-    Ok(frames)
+    Ok(Collected {
+        frames,
+        enumerated,
+        unbound,
+    })
 }
 
 /// Everything that can make one plane unreadable, as a message rather than an

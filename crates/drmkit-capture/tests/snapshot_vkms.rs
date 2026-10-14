@@ -284,11 +284,35 @@ fn without_the_atomic_cap_there_is_nothing_to_read_vkms() {
         drmkit_testkit::skipped("could not retake master");
         return;
     }
+    // Every case in this binary holds the card lock, so nothing else logs.
+    let captured: std::sync::Arc<std::sync::Mutex<Vec<String>>> = std::sync::Arc::default();
+    let sink = std::sync::Arc::clone(&captured);
+    drmkit_log::set_log_sink(move |_, message| {
+        sink.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(message.to_owned());
+    });
+    let result = snapshot(&plain, crtc_id);
+    drmkit_log::reset_log_sink();
     assert!(
         matches!(
-            snapshot(&plain, crtc_id),
+            result,
             Err(CaptureError::NothingReadable | CaptureError::NoMode)
         ),
         "a non-atomic client must fail rather than return a blank capture"
     );
+    // Upstream's warning carries the counts that tell a missing cap from a
+    // blank CRTC: how many planes the client was shown, and how many of them
+    // were bound elsewhere or empty.
+    if matches!(result, Err(CaptureError::NothingReadable)) {
+        let captured = captured
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(
+            captured
+                .iter()
+                .any(|message| message.contains("enumerated planes") && message.contains("unbound")),
+            "the warning names the counts: {captured:?}"
+        );
+    }
 }

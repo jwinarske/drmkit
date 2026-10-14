@@ -46,6 +46,9 @@ minor version may break the API and a patch version does not.
   reference's errno -- `EBADF` for an empty fence or an empty merge,
   `ETIMEDOUT` for a timeout -- where it gave errno-less kinds. An empty
   fence's `ErrorKind` is no longer `InvalidInput` (P-60).
+- `drmkit-capture`: the warning for a capture with nothing readable gives
+  the enumerated and unbound plane counts, as the reference's does, so a
+  missing client cap can be told from a blank CRTC (P-61).
 
 ## [0.1.1] - 2026-10-14
 

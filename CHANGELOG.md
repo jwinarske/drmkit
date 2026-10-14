@@ -6,6 +6,16 @@ this file covers all of them. The format follows
 [Semantic Versioning](https://semver.org/) as Cargo reads it: before 1.0, a
 minor version may break the API and a patch version does not.
 
+## [Unreleased]
+
+### Fixed
+
+- `drmkit-session`: libseat's own diagnostics (why a seat could not be
+  opened) now arrive through `drmkit-log`, tagged `[libseat]`, at error
+  level, as the reference routes them. They went to the `log` crate at debug
+  level, which `drmkit-log` does not read. The `libseat-log` feature no
+  longer does anything beyond `libseat`, and is kept for 0.1.x.
+
 ## [0.1.0] - 2026-10-14
 
 The first release: a behavioral-parity port of
@@ -41,4 +51,5 @@ What the port leaves out, and why, is recorded per test file in
 [`TEST_PARITY.md`](TEST_PARITY.md) and per divergence in
 [`docs/parity-findings.md`](docs/parity-findings.md).
 
+[Unreleased]: https://github.com/jwinarske/drmkit/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/jwinarske/drmkit/releases/tag/v0.1.0

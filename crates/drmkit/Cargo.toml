@@ -80,7 +80,7 @@ edid = ["display", "drmkit-display/edid"]          # libdisplay-info
 hotplug = ["display", "drmkit-display/hotplug"]    # libudev
 libinput = ["input", "drmkit-input/libinput"]      # libinput, libudev
 xkb = ["input", "drmkit-input/xkb"]                # xkbcommon
-libseat = ["session", "drmkit-session/libseat", "drmkit-session/libseat-log"]
+libseat = ["session", "drmkit-session/libseat"]
 
 [lints]
 workspace = true

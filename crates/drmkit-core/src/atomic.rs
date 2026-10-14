@@ -196,7 +196,8 @@ impl AtomicRequest {
     /// variable is already the opt-in. `why` labels the dump.
     ///
     /// [`test`](Self::test) and [`commit`](Self::commit) call it themselves on
-    /// a rejection, and on the first request accepted after one: a rejected
+    /// a rejection other than [`CoreError::NotMaster`], and on the first
+    /// request accepted after one: a rejected
     /// request beside an accepted one is what shows the difference, where a
     /// rejection alone is read as whatever looks suspicious. Upstream wires
     /// the same two dumps into its allocator and scene; here every request

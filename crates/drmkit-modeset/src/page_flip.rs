@@ -156,13 +156,16 @@ impl PageFlip {
     ///
     /// The dispatcher takes **no** ownership: the caller closes `fd`.
     /// [`remove_source`](Self::remove_source) must run, or this dispatcher be
-    /// dropped, before the descriptor is closed — otherwise the kernel keeps
-    /// firing `EPOLLERR` on the stale registration.
+    /// dropped, before the descriptor is closed — otherwise the callback stays
+    /// registered: adding the recycled descriptor number later is refused as a
+    /// duplicate, and if the file is still open through a `dup`, its events
+    /// keep firing the old callback.
     ///
     /// # Errors
     ///
-    /// [`ModesetError::InvalidSource`] for a negative or already-registered
-    /// descriptor.
+    /// - [`ModesetError::InvalidSource`] for a negative or already-registered
+    ///   descriptor.
+    /// - [`ModesetError::Io`] if epoll refuses the descriptor.
     pub fn add_source(&mut self, fd: RawFd, callback: SourceCallback) -> Result<()> {
         if fd < 0 || self.sources.contains_key(&fd) || self.drm_fd == Some(fd) {
             return Err(ModesetError::InvalidSource);
@@ -211,8 +214,9 @@ impl PageFlip {
     ///
     /// Foreign sources are **not** re-bound: their descriptors are caller-owned
     /// and may or may not survive the resume. A caller whose sources did not
-    /// survive must `remove_source` the old descriptor — already a no-op once
-    /// the kernel reclaimed it — and `add_source` the new one.
+    /// survive must `remove_source` the old descriptor — its epoll
+    /// registration went with the close, but its callback did not — and
+    /// `add_source` the new one.
     ///
     /// # Errors
     ///

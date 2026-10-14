@@ -65,7 +65,7 @@ impl Default for LayerPlacement {
 
 /// A snapshot of a single commit.
 ///
-/// Every field is a count that starts at zero. `#[non_exhaustive]` because the
+/// Every field starts at zero, false or empty. `#[non_exhaustive]` because the
 /// C++ has grown counters additively — `layers_skipped_no_frame`,
 /// `fb_delta_fast_path`, the fence counters — and keeping that freedom means a
 /// new counter is not a breaking change.
@@ -98,8 +98,9 @@ pub struct CommitReport {
     /// Layers neither placed nor composited: dropped this frame.
     pub layers_unassigned: usize,
 
-    /// Layers whose source returned [`WouldBlock`](crate::SourceError::WouldBlock)
-    /// and were skipped.
+    /// Layers whose source returned [`WouldBlock`](crate::SourceError::WouldBlock),
+    /// and which held their previous frame -- or stayed absent, if they had
+    /// none.
     ///
     /// Flow control, not failure — a live source with nothing to contribute
     /// this vblank. Graphable as a per-layer frame-stall signal.

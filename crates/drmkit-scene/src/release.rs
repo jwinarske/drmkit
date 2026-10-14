@@ -238,7 +238,7 @@ impl ReleaseQueue {
     ///
     /// This does not wait on the kernel and must not: the scene's drop stays
     /// non-blocking, and landing an armed flip first is the caller's job. See
-    /// [`ScenePendingFlip`](crate::ScenePendingFlip).
+    /// [`ScenePendingFlip`].
     pub fn drain(&mut self) -> Released {
         let mut acquisitions = std::mem::take(&mut self.two_ago);
         acquisitions.append(&mut self.previous);

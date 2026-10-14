@@ -27,8 +27,8 @@ pub struct LoweringInput {
     pub crtc_id: u32,
     /// A stacking position to use when the caller set none.
     ///
-    /// The scene derives this from the plane the layer is likely to land on;
-    /// `None` leaves `zpos` unwritten entirely.
+    /// The scene itself passes `None`; with this and the layer's own `zpos`
+    /// both unset, `zpos` is not written.
     pub default_zpos: Option<u64>,
 }
 

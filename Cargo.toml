@@ -1,8 +1,7 @@
 # drmkit — Rust port of drm-cxx (behavioral-parity port; see plan.md).
 #
 # Baseline: jwinarske/drm-cxx @ 4a0b64a (v2.0.1+6, PR #238).
-# Phase 0 carries only the leaf crates plus xtask; the crate map in plan.md §5
-# lists the full set and the phase that lands each one.
+# The crate map in plan.md §5 lists every crate and what it ports.
 
 [workspace]
 resolver = "3"
@@ -46,7 +45,7 @@ authors = ["Joel Winarske <joel.winarske@linux.com>"]
 repository = "https://github.com/jwinarske/drmkit"
 homepage = "https://github.com/jwinarske/drmkit"
 keywords = ["drm", "kms", "display", "graphics", "embedded"]
-categories = ["graphics", "os::linux-apis", "no-std"]
+categories = ["graphics", "os::linux-apis"]
 
 [workspace.dependencies]
 drmkit-core = { version = "0.0.0", path = "crates/drmkit-core" }
@@ -56,7 +55,10 @@ drmkit-scene-gbm = { version = "0.0.0", path = "crates/drmkit-scene-gbm" }
 drmkit-scene-set = { version = "0.0.0", path = "crates/drmkit-scene-set" }
 drmkit-capture = { version = "0.0.0", path = "crates/drmkit-capture" }
 drmkit-cursor = { version = "0.0.0", path = "crates/drmkit-cursor" }
-drmkit-testkit = { version = "0.0.0", path = "crates/drmkit-testkit" }
+# Path-only: the testkit is never published, and only a path-only
+# dev-dependency is dropped from a published manifest rather than looked up on
+# crates.io.
+drmkit-testkit = { path = "crates/drmkit-testkit" }
 drmkit-display = { version = "0.0.0", path = "crates/drmkit-display" }
 drmkit-fmt = { version = "0.0.0", path = "crates/drmkit-fmt" }
 drmkit-input = { version = "0.0.0", path = "crates/drmkit-input" }

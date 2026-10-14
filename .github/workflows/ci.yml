@@ -76,6 +76,13 @@ jobs:
         env:
           RUSTDOCFLAGS: -Dwarnings
 
+      # Every crate that will be published has to package, and build from its
+      # own tarball. Two things only show up here or at publish time: a
+      # versioned dependency on a crate that is never published (the testkit),
+      # and a dev-dependency cycle that leaves no crate able to go first.
+      - name: publish dry run
+        run: cargo publish --workspace --dry-run
+
       - name: cargo-deny
         uses: EmbarkStudios/cargo-deny-action@v2
         with:

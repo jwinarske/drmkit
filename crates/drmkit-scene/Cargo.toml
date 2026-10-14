@@ -27,7 +27,10 @@ thiserror = { workspace = true }
 drmkit-testkit = { workspace = true }
 rustix = { workspace = true, features = ["std", "event"] }
 drmkit-fmt = { workspace = true }
-drmkit-scene-sources = { workspace = true }
+# Path-only, because drmkit-scene-sources depends on this crate: a versioned
+# dev-dependency would make each wait on the other at publish time. Cargo
+# drops a path-only one from the published manifest.
+drmkit-scene-sources = { path = "../drmkit-scene-sources" }
 drm = { workspace = true }
 drmkit-modeset = { workspace = true }
 # The plane-order cases read the screen back.

@@ -340,7 +340,10 @@ pub struct Diagnostics {
 pub struct Allocation {
     /// Which layer goes on which plane.
     pub assignment: PlaneAssignment,
-    /// Layers that could not be placed and must be composited.
+    /// Layers without a plane, which the caller must composite: the ones the
+    /// search could not place and the force- and transient-composited ones it
+    /// never tried, in stacking order. Never the composition layer itself, nor
+    /// an externally bound or pinned layer, whose planes the scene owns.
     pub composited: Vec<LayerId>,
     /// What the pass did.
     pub diagnostics: Diagnostics,
@@ -875,7 +878,7 @@ impl Allocator {
         {
             let assignment = self.previous.clone();
             self.canvas_plane = self.previous_canvas_plane;
-            let composited = Self::unplaced(&placeable, &assignment);
+            let composited = Self::to_composite(layers, &assignment);
             return Ok(Allocation {
                 assignment,
                 composited,
@@ -898,7 +901,7 @@ impl Allocator {
                 stacking_consistent_all(&planes, &self.previous, &placeable)
                     && multirect_complete(&planes, &self.previous)
             }
-            && let Some(allocation) = self.warm_start(&placeable, canvas, committer)?
+            && let Some(allocation) = self.warm_start(&placeable, layers, canvas, committer)?
         {
             return Ok(allocation);
         }
@@ -918,7 +921,7 @@ impl Allocator {
             self.arm_canvas(None, committer);
             searched?
         };
-        let composited = Self::unplaced(&placeable, &assignment);
+        let composited = Self::to_composite(layers, &assignment);
         if composited.is_empty() {
             self.canvas_plane = None;
         }
@@ -926,7 +929,7 @@ impl Allocator {
         self.previous = assignment.clone();
         self.previous_valid = !assignment.is_empty();
         self.previous_canvas_plane = self.canvas_plane;
-        self.previous_composited.clone_from(&composited);
+        self.previous_composited = Self::unplaced(&placeable, &assignment);
         self.previous_free = self.free_planes(&self.previous, layers, registry, crtc_index);
 
         Ok(Allocation {
@@ -946,6 +949,7 @@ impl Allocator {
     fn warm_start<C: TestCommitter>(
         &mut self,
         placeable: &[LayerRef<'_>],
+        layers: &[LayerRef<'_>],
         canvas: Option<u32>,
         committer: &mut C,
     ) -> Result<Option<Allocation>, TestFailure> {
@@ -964,7 +968,7 @@ impl Allocator {
         match verdict {
             Ok(()) => {
                 let assignment = self.previous.clone();
-                let composited = Self::unplaced(placeable, &assignment);
+                let composited = Self::to_composite(layers, &assignment);
                 // The plane the test armed is the canvas's now, and stays
                 // paired with the cached assignment.
                 self.canvas_plane = canvas.filter(|_| !composited.is_empty());
@@ -1193,7 +1197,28 @@ impl Allocator {
             .collect()
     }
 
-    /// Layers that did not get a plane.
+    /// What the caller must composite: every layer without a plane, as
+    /// upstream marks them after each pass -- transient-composited layers
+    /// included, which the search never sees -- except the composition
+    /// layer itself and the layers whose planes the scene owns. In stacking
+    /// order, ties in the order given.
+    fn to_composite(layers: &[LayerRef<'_>], assignment: &PlaneAssignment) -> Vec<LayerId> {
+        let mut unplaced: Vec<&LayerRef<'_>> = layers
+            .iter()
+            .filter(|entry| {
+                !entry.layer.is_composition_layer()
+                    && !entry.layer.is_externally_bound()
+                    && !entry.layer.is_pinned()
+                    && !assignment.entries().iter().any(|(_, id)| *id == entry.id)
+            })
+            .collect();
+        unplaced.sort_by_key(|entry| entry.layer.property(PropTag::Zpos).unwrap_or(0));
+        unplaced.into_iter().map(|entry| entry.id).collect()
+    }
+
+    /// Searched layers that did not get a plane: the cache's record of what
+    /// the last search composited, which is what the next frame's
+    /// [`has_new_layer`](Self::has_new_layer) compares against.
     fn unplaced(placeable: &[LayerRef<'_>], assignment: &PlaneAssignment) -> Vec<LayerId> {
         placeable
             .iter()

@@ -173,6 +173,58 @@ fn force_composited_layers_are_routed_to_composition() {
     assert_eq!(result.composited, vec![LayerId(2)]);
 }
 
+/// A transient-composited layer is kept off every plane like a forced one and,
+/// like a forced one, comes back for composition -- upstream marks every layer
+/// without a plane after each pass, the search's or not. Left out of the
+/// report it would be neither placed nor blended: gone from the screen.
+#[test]
+fn transient_composited_layers_are_routed_to_composition() {
+    let mut transient = layer_at(0, 0, 640, 480, 1);
+    transient.set_transient_composited(true);
+    let layers = vec![
+        (LayerId(1), layer_at(0, 0, 1920, 1080, 0)),
+        (LayerId(2), transient),
+    ];
+
+    let mut allocator = Allocator::new();
+    let mut committer = Committer::default();
+    let first = allocator
+        .allocate(&refs(&layers), &registry(), 0, &mut committer)
+        .expect("allocate");
+    assert_eq!(first.assignment.len(), 1);
+    assert_eq!(first.composited, vec![LayerId(2)]);
+
+    let next = allocator
+        .allocate(&refs(&layers), &registry(), 0, &mut committer)
+        .expect("allocate");
+    assert_eq!(next.composited, vec![LayerId(2)], "and on the next frame");
+}
+
+/// The composition layer is the canvas, not something to blend onto it:
+/// upstream never marks it, placed or not.
+#[test]
+fn an_unplaced_composition_layer_is_not_reported_for_composition() {
+    let mut canvas = Layer::new();
+    canvas
+        .set_property(PropTag::CrtcW, 1920)
+        .set_property(PropTag::CrtcH, 1080);
+    canvas.set_composition_layer(true);
+    let layers = vec![(LayerId(1), canvas)];
+
+    let mut allocator = Allocator::new();
+    let mut committer = Committer::default();
+    let result = allocator
+        .allocate(&refs(&layers), &registry(), 0, &mut committer)
+        .expect("allocate");
+
+    assert!(result.assignment.is_empty(), "no format, so no plane");
+    assert!(
+        result.composited.is_empty(),
+        "the canvas is never blended onto itself: {:?}",
+        result.composited
+    );
+}
+
 /// Externally-bound and pinned layers are the scene's business: the allocator
 /// must not place them and must not report them for composition either.
 #[test]

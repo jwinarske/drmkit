@@ -162,6 +162,7 @@ impl Cursor {
     /// - [`CursorError::NoImages`] for an empty set.
     /// - [`CursorError::InvalidImage`] if any frame's pixel count disagrees
     ///   with its dimensions, or a dimension is zero or past the limit.
+    /// - [`CursorError::TooLarge`] for more frames than the loader accepts.
     pub fn from_frames(frames: Vec<Frame>) -> Result<Self, CursorError> {
         let limits = Limits::default();
         for frame in &frames {
@@ -234,7 +235,7 @@ impl Cursor {
     ///
     /// The index rather than the frame, so a caller redrawing into a buffer
     /// can tell that nothing has changed and skip the work. A cursor ticking
-    /// at 60Hz against a 100ms animation redraws on three frames in eighteen.
+    /// at 60 Hz through 100 ms frames redraws on one tick in six.
     #[must_use]
     pub fn frame_index_at(&self, elapsed: Duration) -> usize {
         if !self.is_animated() {

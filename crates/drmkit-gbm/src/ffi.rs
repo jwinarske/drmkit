@@ -12,8 +12,10 @@
 //! a binary that fails to start, and v1 or v2 is whichever the library has.
 //!
 //! The signatures are `gbm.h`'s, transcribed. Nothing checks them against the
-//! header at build time, so each is kept to the exact C types, and every one
-//! is exercised by this crate's device tests.
+//! header at build time, so each is kept to the exact C types. Every one is
+//! exercised by the device tests but the three only a bound surface can call
+//! -- `gbm_surface_lock_front_buffer`, `_release_buffer` and
+//! `_has_free_buffers` -- since nothing here binds one.
 //!
 //! # Older libgbm
 //!

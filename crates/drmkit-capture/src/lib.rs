@@ -3,12 +3,13 @@
 
 //! Read back what a CRTC is scanning out, and write it to a file.
 //!
-//! [`snapshot`] composites the planes bound to a CRTC into an [`Image`] the
+//! [`snapshot()`] composites the planes bound to a CRTC into an [`Image`] the
 //! size of its active mode, reading each plane's buffer back through a
 //! dma-buf. [`write_png`] puts one on disk.
 //!
 //! This is a readback path, not a rendering one: it reads buffers that already
-//! exist and blends them on the CPU exactly as the display controller would.
+//! exist and blends them on the CPU as the display controller would, for
+//! planes that are neither cropped nor scaled.
 //! What it cannot read -- tiled buffers, YUV, anything not host-mappable -- it
 //! skips with a warning rather than failing the capture, because a screenshot
 //! missing its video overlay is more use than no screenshot.
@@ -39,7 +40,7 @@ pub enum CaptureError {
     /// No plane on the CRTC could be read.
     ///
     /// Either the CRTC really is blank, or every plane on it was skipped --
-    /// see [`snapshot`] for what gets skipped, and note that a client which
+    /// see [`snapshot()`] for what gets skipped, and note that a client which
     /// has not enabled the atomic cap cannot see plane geometry at all.
     #[error("no plane on the CRTC could be read back")]
     NothingReadable,

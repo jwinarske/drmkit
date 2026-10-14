@@ -59,11 +59,12 @@ pub enum GbmError {
     ///
     /// Usually the format, the modifier set, or the usage flags: a driver
     /// advertises what it can scan out through `IN_FORMATS`, and asking for
-    /// anything else fails here rather than at commit time.
+    /// anything else fails here rather than at commit time. Also returned when
+    /// a buffer cannot be exported as a dma-buf.
     #[error("gbm allocation failed: {0}")]
     Allocation(String),
 
-    /// An ioctl failed.
+    /// The DRM descriptor could not be duplicated.
     #[error("gbm operation failed: {0}")]
     Io(#[from] rustix::io::Errno),
 }

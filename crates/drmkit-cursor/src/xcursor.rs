@@ -8,8 +8,6 @@
 //!
 //! # Why this is not the `xcursor` crate
 //!
-//! Filed as <https://github.com/esposm03/xcursor-rs/issues/30>.
-//!
 //! Because a cursor file is untrusted input -- it comes from a user theme
 //! directory or wherever `XCURSOR_PATH` points -- and every number in it is
 //! attacker-controlled. `xcursor` 0.3.11 sizes its pixel buffer from the
@@ -45,6 +43,8 @@
 //! remains before anything is allocated. The limits are the caller's, so a
 //! fuzz target can drive the same code with the same bounds the real loader
 //! uses.
+//!
+//! Filed as <https://github.com/esposm03/xcursor-rs/issues/30>.
 
 use crate::CursorError;
 
@@ -156,8 +156,8 @@ impl<'a> Reader<'a> {
 ///
 /// - [`CursorError::Malformed`] for a file that is not a cursor, is
 ///   truncated, or whose offsets do not point where they claim.
-/// - [`CursorError::TooLarge`] for a file within `limits`' reach but past it:
-///   too many frames, or a frame too big.
+/// - [`CursorError::TooLarge`] for a file that exceeds `limits`: too many
+///   frames, or a frame too big.
 pub(crate) fn parse(bytes: &[u8], limits: Limits) -> Result<Vec<RawImage>, CursorError> {
     let mut reader = Reader::new(bytes);
     reader.tag(*MAGIC)?;

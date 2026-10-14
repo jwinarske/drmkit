@@ -186,7 +186,7 @@ fn vs_describe(m: u64) -> String {
     }
 }
 
-/// A human-readable rendering, e.g. `ARM_AFBC(16x16|SPARSE|YTR)` or
+/// A human-readable rendering, e.g. `ARM_AFBC(16x16|YTR|SPARSE)` or
 /// `QCOM_COMPRESSED(UBWC)`.
 ///
 /// ```

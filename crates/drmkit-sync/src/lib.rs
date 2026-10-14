@@ -86,8 +86,8 @@ const SYNC_IOC_MERGE: rustix::ioctl::Opcode =
 
 /// A kernel `sync_file` fence.
 ///
-/// Default-constructs empty, so a caller can hand one to a commit as an
-/// out-parameter the way the C++ does.
+/// Default-constructs empty, as the C++ does. Here a commit's `OUT_FENCE_PTR`
+/// comes back as an `OwnedFd`, which [`SyncFence::from_owned`] adopts.
 #[derive(Debug, Default)]
 pub struct SyncFence {
     fd: Option<OwnedFd>,
@@ -108,7 +108,7 @@ impl SyncFence {
     ///
     /// # Errors
     ///
-    /// [`SyncError::Io`] if `dup` fails — in practice `EMFILE` or `ENFILE`.
+    /// [`SyncError::Io`] if `dup` fails — in practice `EMFILE`.
     pub fn import(fd: BorrowedFd<'_>) -> Result<Self, SyncError> {
         let duped = fd.try_clone_to_owned().map_err(|e| {
             // io::Error from a failed dup always carries an errno.
@@ -143,7 +143,8 @@ impl SyncFence {
         self.fd.as_ref().map(AsFd::as_fd)
     }
 
-    /// Release the descriptor to the caller, leaving this fence empty.
+    /// Release the descriptor to the caller, consuming the fence; `None` if it
+    /// held none.
     #[must_use]
     pub fn into_owned_fd(self) -> Option<OwnedFd> {
         self.fd

@@ -19,13 +19,14 @@
 //!
 //! # Deviations from the C++ original
 //!
-//! The C++ `set_log_level` / `set_log_sink` are documented thread-unsafe
-//! ("install once during application startup, before spinning up worker
-//! threads"). Here both are genuinely thread-safe: the level is an
-//! [`AtomicU8`] and the sink lives behind an [`RwLock`] whose guard is
-//! released before the sink runs, so a sink that logs cannot deadlock and a
-//! sink that panics cannot wedge logging for the rest of the process. The
-//! startup-only discipline remains good practice; it is no longer load-bearing.
+//! The C++ `set_log_sink` is documented thread-unsafe ("install once during
+//! application startup, before spinning up worker threads"), and its
+//! `set_log_level` is a plain unsynchronized write. Here both are genuinely
+//! thread-safe: the level is an [`AtomicU8`] and the sink lives behind an
+//! [`RwLock`] whose guard is released before the sink runs, so a sink that logs
+//! cannot deadlock and a sink that panics cannot wedge logging for the rest of
+//! the process. The startup-only discipline remains good practice; it is no
+//! longer load-bearing.
 //!
 //! # Untrusted content in log records
 //!
@@ -39,19 +40,21 @@
 //!
 //! The C++ original has the same property. Rather than diverge silently, the
 //! rule for the port is: **sanitize at the point the untrusted string enters a
-//! record, not in the sink.** `drmkit-display` (phase 4) owns that for EDID —
-//! the sink cannot tell a monitor name from a driver name once they are one
-//! formatted string. Consumers who route this into a terminal and cannot
-//! trust their displays should install a sink that escapes control characters.
+//! record, not in the sink.** Any crate that logs an EDID string must sanitize
+//! it before formatting -- none currently logs one -- because the sink cannot
+//! tell a monitor name from a driver name once they are one formatted string.
+//! Consumers who route this into a terminal and cannot trust their displays
+//! should install a sink that escapes control characters.
 //!
 //! # Initial level
 //!
 //! The C++ side bakes its default in at compile time via `DRM_CXX_LOG_LEVEL`.
 //! Here the initial level resolves once, on first use, from the
 //! `DRMKIT_LOG_LEVEL` environment variable (`silent`/`error`/`warn`/`info`/
-//! `debug`, case-insensitive, or the numeric discriminant). An unset or
-//! unparseable value yields [`LogLevel::Info`], matching the C++ default. An
-//! explicit [`set_log_level`] before first use always wins.
+//! `debug`, case-insensitive, or the numeric discriminant, plus the aliases
+//! `off`/`none`, `warning` and `trace`). An unset or unparseable value yields
+//! [`LogLevel::Info`], matching the C++ default. An explicit [`set_log_level`]
+//! before first use always wins.
 //!
 //! # Example
 //!
@@ -120,8 +123,9 @@ impl LogLevel {
     /// The lowercase tag the default sink prints inside `[drm:...]`.
     ///
     /// [`LogLevel::Silent`] has no tag and yields `"silent"` only for
-    /// diagnostics; it is never printed, because the level gate rejects it
-    /// first.
+    /// diagnostics; the built-in sink never prints it -- the level gate
+    /// rejects it, and the sink drops one that `log_channel!` passes through.
+    /// A custom sink may still receive it.
     #[must_use]
     pub const fn tag(self) -> &'static str {
         match self {

@@ -141,8 +141,10 @@ impl Drop for Mapping {
 /// Read back the current plane composition of `crtc_id` into an image sized to
 /// its active mode.
 ///
-/// Planes are composited bottom-up by `zpos`, `SRC_OVER`, exactly as the
-/// display controller would.
+/// Planes are composited bottom-up by `zpos`, `SRC_OVER`, as the display
+/// controller would for planes that are neither cropped nor scaled: the whole
+/// framebuffer is sampled, ignoring `SRC_*`, and scaling is nearest-neighbour,
+/// as in the reference.
 ///
 /// **The atomic client cap must be enabled on `device` first.** Plane
 /// placement is read from `CRTC_X`/`CRTC_Y`/`CRTC_W`/`CRTC_H`, which the
@@ -157,7 +159,7 @@ impl Drop for Mapping {
 ///
 /// - **Non-linear modifiers** -- tiled, AFBC, DCC. Untiling them on the CPU is
 ///   a per-vendor job and reading them correctly is not guessable.
-/// - **Anything but `ARGB8888` and `XRGB8888`.** YUV in particular: a video
+/// - **Anything but `ARGB8888`, `XRGB8888` and `RGB565`.** YUV in particular: a video
 ///   overlay is usually both tiled and YUV, so covering it means GPU-assisted
 ///   readback.
 /// - **Buffers that cannot be mapped**, which includes VRAM with no
@@ -170,7 +172,8 @@ impl Drop for Mapping {
 /// - [`CaptureError::NothingReadable`] if no plane on the CRTC could be read.
 ///   This is the "you forgot the atomic cap" symptom as well as the genuinely
 ///   blank one; the warnings say which.
-/// - [`CaptureError::Io`] if the kernel refuses to enumerate resources.
+/// - [`CaptureError::Io`] if the CRTC -- an unknown `crtc_id` included -- or
+///   the plane list cannot be queried.
 pub fn snapshot(device: &Device, crtc_id: u32) -> Result<Image, CaptureError> {
     let crtc = device
         .get_crtc(drm::control::crtc::Handle::from(

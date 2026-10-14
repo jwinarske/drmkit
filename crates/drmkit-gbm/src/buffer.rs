@@ -249,7 +249,7 @@ impl GbmBuffer {
     /// How many planes the layout uses.
     ///
     /// One from a libgbm older than Mesa 17.0, which cannot say and allocates
-    /// nothing else.
+    /// nothing else; `0` if libgbm reports an error.
     #[must_use]
     pub fn plane_count(&self) -> u32 {
         self.device.gbm.bo_get_plane_count.map_or(1, |get| {

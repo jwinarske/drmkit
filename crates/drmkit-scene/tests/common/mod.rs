@@ -351,6 +351,25 @@ impl Fixture {
         self.scene.enable_composition(&self.device, w, h).ok()
     }
 
+    /// Give the scene a canvas the size of the mode, in a format this CRTC's
+    /// primary scans out: the single-plane fallback, where an `ARGB8888`
+    /// canvas could not be armed. Returns the primary's id, the format the
+    /// canvas holds, and the one `canvas_format_for_plane` negotiates for the
+    /// primary, which should be the same.
+    pub(crate) fn enable_composition_on_primary(&mut self) -> Option<(u32, u32, u32)> {
+        let (w, h) = self.mode_size();
+        let primary = self
+            .registry
+            .for_crtc(self.crtc_index)
+            .find(|plane| plane.plane_type == drmkit_planes::PlaneType::Primary)?
+            .clone();
+        self.scene
+            .enable_composition_on(&self.device, w, h, &primary)
+            .ok()?;
+        let negotiated = drmkit_scene::canvas_format_for_plane(&primary)?;
+        Some((primary.id, self.scene.canvas_fourcc()?, negotiated))
+    }
+
     /// Fill a layer's buffer with one opaque `xrgb` color.
     pub(crate) fn paint(&mut self, handle: LayerHandle, xrgb: u32) -> Option<()> {
         let layer = self.scene.layer_mut(handle)?;

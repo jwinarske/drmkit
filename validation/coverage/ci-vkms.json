@@ -20,6 +20,7 @@
   "a_callers_preference_list_is_the_one_used_vkms": "ran",
   "a_cancel_after_the_timer_fired_emits_nothing": "ran",
   "a_canvas_allocates_two_framebuffers_vkms": "ran",
+  "a_canvas_in_its_planes_format_reaches_the_screen_vkms": "ran",
   "a_canvas_shorter_than_it_claims_is_refused": "ran",
   "a_canvas_zpos_above_the_plane_range_is_clamped_not_sent": "ran",
   "a_capability_skip_records_fine": "ran",

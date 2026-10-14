@@ -25,10 +25,11 @@ use rustix::io::Errno;
 
 /// Errors from fence operations.
 ///
-/// The variants carry the same discriminants the C++ `std::error_code` paths
-/// document, so a consumer bridging both implementations sees the same
-/// classification. In particular `EAGAIN`-style flow control never hides
-/// inside a generic I/O error.
+/// The variants mirror the C++ failure cases one for one, and converting to
+/// [`io::Error`] gives the errno the C++ `std::error_code` carries for each --
+/// `EBADF`, `ETIMEDOUT`, `EBADF`, or the syscall's own -- so a consumer
+/// bridging both implementations sees the same classification. In particular
+/// `EAGAIN`-style flow control never hides inside a generic I/O error.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SyncError {
@@ -46,6 +47,7 @@ pub enum SyncError {
     TimedOut,
 
     /// The merge ioctl succeeded but returned no descriptor.
+    /// `errc::bad_file_descriptor`, as in the C++.
     #[error("SYNC_IOC_MERGE returned no fence")]
     MergeReturnedNothing,
 
@@ -57,9 +59,10 @@ pub enum SyncError {
 impl From<SyncError> for io::Error {
     fn from(e: SyncError) -> Self {
         match e {
-            SyncError::Empty => Self::from(io::ErrorKind::InvalidInput),
-            SyncError::TimedOut => Self::from(io::ErrorKind::TimedOut),
-            SyncError::MergeReturnedNothing => Self::from(io::ErrorKind::Other),
+            SyncError::Empty | SyncError::MergeReturnedNothing => {
+                Self::from_raw_os_error(Errno::BADF.raw_os_error())
+            }
+            SyncError::TimedOut => Self::from_raw_os_error(Errno::TIMEDOUT.raw_os_error()),
             SyncError::Io(errno) => Self::from_raw_os_error(errno.raw_os_error()),
         }
     }

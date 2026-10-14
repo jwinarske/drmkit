@@ -205,3 +205,32 @@ fn open_fd_count() -> usize {
         .expect("/proc/self/fd")
         .count()
 }
+
+/// Converting to `io::Error` gives the errno the C++ `std::error_code`
+/// carries, so a consumer bridging the two sees one classification: an empty
+/// fence and a merge that returned nothing are `EBADF`, a timeout is
+/// `ETIMEDOUT`, and a syscall's own errno passes through.
+#[test]
+fn each_error_converts_to_the_references_errno() {
+    use rustix::io::Errno;
+
+    let errno = |error: SyncError| std::io::Error::from(error).raw_os_error();
+    assert_eq!(errno(SyncError::Empty), Some(Errno::BADF.raw_os_error()));
+    assert_eq!(
+        errno(SyncError::MergeReturnedNothing),
+        Some(Errno::BADF.raw_os_error())
+    );
+    assert_eq!(
+        errno(SyncError::TimedOut),
+        Some(Errno::TIMEDOUT.raw_os_error())
+    );
+    assert_eq!(
+        errno(SyncError::Io(Errno::MFILE)),
+        Some(Errno::MFILE.raw_os_error())
+    );
+    assert_eq!(
+        std::io::Error::from(SyncError::TimedOut).kind(),
+        std::io::ErrorKind::TimedOut,
+        "and the kind a Rust caller matches on is unchanged"
+    );
+}

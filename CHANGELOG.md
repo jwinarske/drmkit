@@ -39,6 +39,9 @@ minor version may break the API and a patch version does not.
   reference's libjpeg writes it; from quality 90 up it was 4:4:4. A
   dimension past 65,500 pixels is refused rather than cropped or sheared
   and reported as written (P-58).
+- `drmkit-cursor`: `Renderer::set_rotation` refuses a rotation on the legacy
+  path with `Unsupported`, as `create` does and as the reference does, rather
+  than pre-rotating the pixels in software (P-59).
 
 ## [0.1.1] - 2026-10-14
 

@@ -684,6 +684,17 @@ fn a_preferred_legacy_cursor_reserves_the_cursor_plane_vkms() {
     assert_eq!(renderer.plane().path, PlanePath::Legacy);
     assert_eq!(renderer.reserved_plane_id(), cursor_plane);
 
+    // drmModeSetCursor has no rotation, so the reference refuses one here as
+    // it does at create, rather than pre-rotating the pixels and leaving the
+    // hotspot wrong.
+    assert_eq!(
+        renderer.set_rotation(drmkit_cursor::Rotation::Quarter),
+        Err(drmkit_cursor::CursorError::Unsupported)
+    );
+    renderer
+        .set_rotation(drmkit_cursor::Rotation::None)
+        .expect("upright is always fine");
+
     renderer.set_cursor(square()).expect("set cursor");
     renderer.move_to(10, 10);
     renderer.commit().expect("install");

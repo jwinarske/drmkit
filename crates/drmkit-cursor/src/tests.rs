@@ -874,6 +874,41 @@ fn too_many_frames_is_refused() {
     );
 }
 
+/// The frame cap counts the size being loaded, not the whole file.
+///
+/// An animated theme ships every frame at every size: Adwaita's busy cursor
+/// is six sizes of sixty frames, 360 images. The reference, through
+/// libxcursor, picks the size first and caps only its frames, so it loads
+/// that cursor; capping the file would refuse it.
+#[test]
+fn the_frame_cap_counts_only_the_chosen_size() {
+    let mut builder = FileBuilder::new();
+    for size in [24, 32, 48, 64, 96, 128] {
+        for frame in 0..60 {
+            builder = builder.image(
+                ImageSpec::new(size, 1, 1)
+                    .delay(16)
+                    .fill(size * 100 + frame),
+            );
+        }
+    }
+    let cursor = Cursor::from_bytes(&builder.build(), 32).expect("360 images, 60 per size");
+    assert_eq!(cursor.frames().len(), 60);
+    assert_eq!(cursor.first().pixels[0], 3200, "the 32 pixel set, in order");
+}
+
+/// A real one, where the host has it.
+#[test]
+fn adwaitas_busy_cursor_loads() {
+    let path = std::path::Path::new("/usr/share/icons/Adwaita/cursors/wait");
+    let Ok(bytes) = std::fs::read(path) else {
+        println!("note: skipped -- no {}", path.display());
+        return;
+    };
+    let cursor = Cursor::from_bytes(&bytes, 24).expect("Adwaita's wait cursor");
+    assert!(cursor.is_animated());
+}
+
 #[test]
 fn a_toc_count_larger_than_the_file_is_refused() {
     // The other unbounded number in the header.

@@ -50,12 +50,16 @@ use crate::CursorError;
 
 /// What the loader will accept from a file.
 ///
-/// The reference applies the same two bounds after parsing, which works there
-/// because libxcursor validates against the real file size first. Here they
-/// have to be enforced during the parse or they are enforced too late.
+/// The reference applies the same two bounds after libxcursor has parsed, by
+/// which point each image was already allocated at its declared size; a
+/// failed malloc there degrades to a load failure. Here they are enforced
+/// during the parse, before anything is allocated -- and, as there, only to
+/// the size being loaded.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Limits {
-    /// Frames in one cursor. Real animated cursors ship a few dozen.
+    /// Frames of the chosen size. Real animated cursors ship a few dozen per
+    /// size, and a file holds several sizes: Adwaita's busy cursor is six
+    /// sizes of sixty frames.
     pub max_frames: usize,
     /// Width or height of one frame. Larger than any real cursor, and far
     /// larger than any cursor plane.
@@ -148,17 +152,25 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// Parse every image in a cursor file.
+/// Parse the images of one size out of a cursor file: the nominal size
+/// nearest `requested`, chosen from the table of contents before any image is
+/// read, as libxcursor chooses it.
 ///
 /// Images come back in file order, which is the order the animation plays in.
+/// The other sizes are never read, so their frames count against nothing.
 ///
 /// # Errors
 ///
 /// - [`CursorError::Malformed`] for a file that is not a cursor, is
 ///   truncated, or whose offsets do not point where they claim.
 /// - [`CursorError::TooLarge`] for a file that exceeds `limits`: too many
-///   frames, or a frame too big.
-pub(crate) fn parse(bytes: &[u8], limits: Limits) -> Result<Vec<RawImage>, CursorError> {
+///   frames of the chosen size, or one of them too big.
+/// - [`CursorError::NoImages`] for a file that lists no image at all.
+pub(crate) fn parse(
+    bytes: &[u8],
+    limits: Limits,
+    requested: u32,
+) -> Result<Vec<RawImage>, CursorError> {
     let mut reader = Reader::new(bytes);
     reader.tag(*MAGIC)?;
     let header_len = reader.u32_le()?;
@@ -174,22 +186,33 @@ pub(crate) fn parse(bytes: &[u8], limits: Limits) -> Result<Vec<RawImage>, Curso
         return Err(CursorError::Malformed);
     }
 
+    // An image entry's subtype is its nominal size, which is what the size is
+    // chosen from. Bounded by the room check above, so this cannot be made to
+    // allocate more than the file's own length.
     reader.seek(header_len as usize)?;
-    let mut image_offsets: Vec<u32> = Vec::new();
+    let mut entries: Vec<(u32, u32)> = Vec::new();
     for _ in 0..entry_count {
         let chunk_type = reader.u32_le()?;
-        let _subtype = reader.u32_le()?;
+        let subtype = reader.u32_le()?;
         let position = reader.u32_le()?;
         if chunk_type == CHUNK_IMAGE {
-            if image_offsets.len() >= limits.max_frames {
-                return Err(CursorError::TooLarge);
-            }
-            image_offsets.push(position);
+            entries.push((subtype, position));
         }
     }
 
-    let mut images = Vec::with_capacity(image_offsets.len());
-    for offset in image_offsets {
+    let chosen = nearest_size(entries.iter().map(|(size, _)| *size), requested)
+        .ok_or(CursorError::NoImages)?;
+    let offsets: Vec<u32> = entries
+        .iter()
+        .filter(|(size, _)| *size == chosen)
+        .map(|(_, position)| *position)
+        .collect();
+    if offsets.len() > limits.max_frames {
+        return Err(CursorError::TooLarge);
+    }
+
+    let mut images = Vec::with_capacity(offsets.len());
+    for offset in offsets {
         reader.seek(offset as usize)?;
         images.push(parse_image(&mut reader, limits)?);
     }
@@ -249,14 +272,11 @@ fn parse_image(reader: &mut Reader<'_>, limits: Limits) -> Result<RawImage, Curs
     })
 }
 
-/// The nominal size in `images` closest to `requested`.
+/// The nominal size in `sizes` closest to `requested`.
 ///
 /// Cursor files are multi-resolution packs. Ties go to the smaller size: a
 /// cursor slightly too small sits inside the plane, where one slightly too
 /// large has to be cropped or scaled.
-pub(crate) fn nearest_size(images: &[RawImage], requested: u32) -> Option<u32> {
-    images
-        .iter()
-        .map(|image| image.nominal_size)
-        .min_by_key(|size| (size.abs_diff(requested), *size))
+fn nearest_size(sizes: impl Iterator<Item = u32>, requested: u32) -> Option<u32> {
+    sizes.min_by_key(|size| (size.abs_diff(requested), *size))
 }

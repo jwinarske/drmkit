@@ -92,9 +92,9 @@ pub struct CrtcColorPipeline<'a> {
     capabilities: CrtcCapabilities,
     /// The property ids, resolved once.
     ///
-    /// The reference re-reads the CRTC's whole property set on every apply --
-    /// nine properties on amdgpu, seven on vkms, so eight or ten ioctls per
-    /// commit for three numbers that never change.
+    /// As the reference does: re-reading the CRTC's property set on every
+    /// apply cost eight to ten ioctls per commit for three numbers that never
+    /// change.
     properties: StageProperties,
     degamma: Option<PropertyBlob<'a>>,
     ctm: Option<PropertyBlob<'a>>,
@@ -180,7 +180,8 @@ impl<'a> CrtcColorPipeline<'a> {
     ///
     /// # Errors
     ///
-    /// [`PipelineError::NoSuchStage`] if the CRTC has no degamma stage.
+    /// - [`PipelineError::NoSuchStage`] if the CRTC has no degamma stage.
+    /// - [`PipelineError::Core`] if the blob cannot be created.
     pub fn set_pq_to_linear(&mut self) -> Result<(), PipelineError> {
         self.require(Stage::Degamma)?;
         self.set_lut(Stage::Degamma, build_pq_eotf_lut)
@@ -202,7 +203,8 @@ impl<'a> CrtcColorPipeline<'a> {
     ///
     /// # Errors
     ///
-    /// [`PipelineError::NoSuchStage`] if the CRTC has no matrix stage.
+    /// - [`PipelineError::NoSuchStage`] if the CRTC has no matrix stage.
+    /// - [`PipelineError::Core`] if the blob cannot be created.
     pub fn set_bt2020_to_bt709(&mut self) -> Result<(), PipelineError> {
         self.require(Stage::Ctm)?;
         self.set_ctm_blob(build_bt2020_to_bt709_ctm())
@@ -212,7 +214,8 @@ impl<'a> CrtcColorPipeline<'a> {
     ///
     /// # Errors
     ///
-    /// [`PipelineError::NoSuchStage`] if the CRTC has no gamma stage.
+    /// - [`PipelineError::NoSuchStage`] if the CRTC has no gamma stage.
+    /// - [`PipelineError::Core`] if the blob cannot be created.
     pub fn set_linear_to_pq(&mut self) -> Result<(), PipelineError> {
         self.require(Stage::Gamma)?;
         self.set_lut(Stage::Gamma, build_pq_oetf_lut)

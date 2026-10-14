@@ -78,8 +78,9 @@ pub struct SupportedColorimetry {
 ///
 /// From the EDID Display Range Limits descriptor, tag `0xFD`. On a
 /// variable-refresh panel this is its VRR window; on a fixed-rate one the two
-/// are equal. Absent when the EDID carries no range descriptor, which is not
-/// the same as a panel with no range -- it is a panel that did not say.
+/// are equal. Absent when the EDID carries no range descriptor, or one with a
+/// zero maximum or a minimum above its maximum, which is not the same as a
+/// panel with no range -- it is a panel that did not say.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(
     clippy::exhaustive_structs,

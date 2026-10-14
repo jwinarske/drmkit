@@ -46,8 +46,8 @@ const INPUT_FRAC_DIV: f64 = 64.0;
 pub enum ToneMapCurve {
     /// Clamp at 1.0.
     ///
-    /// For HLG, whose OOTF has already done the work, and for pipelines that
-    /// want the matrix and transfer functions without a subjective curve.
+    /// For pipelines that want the matrix and transfer functions without a
+    /// subjective curve.
     None,
     /// `x / (1 + x)`. Cheap, keeps shadows, rolls highlights off smoothly.
     #[default]
@@ -217,8 +217,9 @@ impl ToneMapper {
 
     /// HLG down to an SDR display.
     ///
-    /// Always Reinhard: HLG's OOTF has already shaped the highlights, so a
-    /// second subjective curve on top would double-compress them.
+    /// Always Reinhard, which only rolls off what lands above the target's
+    /// white. The curve is not selectable for HLG: its OOTF has already shaped
+    /// the highlights.
     #[must_use]
     pub fn hlg_to_bt709(target_max_nits: f32) -> Self {
         Self::new(
@@ -360,9 +361,9 @@ impl ToneMapper {
 
     /// Transform a run of pixels.
     ///
-    /// The direction is decided once rather than per pixel, which is the whole
-    /// reason this exists rather than the caller looping over
-    /// [`map`](Self::map).
+    /// Equivalent to calling [`map`](Self::map) on each pixel. Processes
+    /// `min(src.len(), dst.len())` pixels; any excess in either slice is left
+    /// alone.
     pub fn apply(&self, src: &[u64], dst: &mut [u64]) {
         for (out, pixel) in dst.iter_mut().zip(src) {
             *out = self.map(*pixel);

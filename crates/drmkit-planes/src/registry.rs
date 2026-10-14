@@ -181,7 +181,7 @@ pub struct PlaneCapabilities {
     /// Whether the plane may be asked to scale.
     ///
     /// Not a measured capability, and the name is the most optimistic reading
-    /// of what KMS offers. [`PlaneRegistry::probe`] sets it from the presence
+    /// of what KMS offers. `PlaneRegistry::probe` sets it from the presence
     /// of `SRC_W`, which every atomic plane has -- so on a real device it is
     /// true everywhere, vkms and its absent scaler included. There is no
     /// property that answers the question; the `TEST_ONLY` commit is what
@@ -394,7 +394,7 @@ impl PlaneRegistry {
     /// the SA8155P offers more planes than it has blend stages, and
     /// advertises zpos up to 10 while only 0 to 8 are usable. The allocator
     /// never asks the kernel about more armed planes than this. Read by
-    /// [`probe`](Self::probe) from the CRTC's `capabilities` blob
+    /// `probe` from the CRTC's `capabilities` blob
     /// ([`parse_blend_stage_limit`](crate::parse_blend_stage_limit)).
     #[must_use]
     pub fn blend_stage_limit(&self, crtc_index: u32) -> Option<usize> {

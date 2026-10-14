@@ -11,8 +11,10 @@
 //! creating the replacement and the atomic commit that repoints the connector
 //! property, the kernel is still holding the old id -- so the outgoing blob
 //! goes on a queue and [`HdrMetadataCache::acknowledge_committed`] drains it
-//! once the commit has landed. Draining early frees a blob the display is
-//! still using.
+//! once the commit has landed, as the reference does. The display itself is
+//! safe either way -- the kernel's committed state holds its own reference to
+//! the blob a property names -- but a blob destroyed before the commit leaves
+//! nothing to fall back to if that commit is refused.
 
 use std::collections::HashMap;
 

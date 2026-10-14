@@ -33,9 +33,10 @@ use crate::scoring::{
 /// > layer, and silently skip property writes the kernel needs.
 ///
 /// Keying on a caller-assigned id removes that hazard rather than mitigating
-/// it: a recycled allocation cannot masquerade as a previous layer, so there is
-/// nothing to invalidate and no window in which forgetting to do so corrupts a
-/// commit.
+/// it: a recycled allocation cannot masquerade as a previous layer, provided
+/// the caller never reuses an id ([`Output`](crate::Output) and the scene
+/// never do). [`Allocator::forget_layer`] is still worth calling, to keep the
+/// fast path warm and to force a full write on the plane the layer leaves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[allow(
     clippy::exhaustive_structs,
@@ -379,8 +380,10 @@ struct LastCommitted {
 ///    caller to blend, rather than the frame failing.
 ///
 /// The search is budgeted: [`DEFAULT_MAX_TEST_COMMITS`](Self::DEFAULT_MAX_TEST_COMMITS)
-/// test commits per frame, after which it takes the best arrangement it has
-/// proved. Exhausting the budget is reported rather than hidden, because "this
+/// test commits per search -- a compositing frame runs two, see
+/// [`set_max_test_commits`](Self::set_max_test_commits) -- after which it
+/// takes the best arrangement it has proved. Exhausting the budget is
+/// reported rather than hidden, because "this
 /// device is out of planes" and "raise the budget" want different answers from
 /// a caller.
 ///
@@ -703,12 +706,10 @@ impl Allocator {
     /// wasted `TEST_ONLY` commit for a configuration that cannot have become
     /// invalid, since dropping a layer only ever frees resources.
     ///
-    /// Upstream nulls the committed baseline's layer pointer here rather than
-    /// erasing it, because it keys identity on the `Layer`'s address and the
-    /// allocator would otherwise mistake a fresh layer at a recycled address
-    /// for a continuation of the old one -- and suppress property writes the
-    /// kernel needs. Generation-tagged [`LayerId`]s make that unrepresentable
-    /// here, so the entry is simply dropped.
+    /// The committed baseline's entry is kept and only its identity cleared,
+    /// as upstream does: it is the only record that the plane is still lit,
+    /// and a cleared identity forces a full property write for the next layer
+    /// to land there.
     pub fn forget_layer(&mut self, layer: LayerId) {
         while let Some(plane_id) = self.previous.get_plane_of(layer) {
             self.previous.remove(plane_id);
@@ -1106,8 +1107,8 @@ impl Allocator {
     /// The cached paths composite it again, on the last search's verdict --
     /// unless a composited layer has gone, which can leave the rest few enough
     /// to fit, or a plane has come free that the search did not have. Upstream
-    /// keeps the run on the canvas either way, so a scene that shrinks back
-    /// under the plane count goes on blending forever (drm-cxx#341).
+    /// fixed the same trap in drm-cxx#341, searching after any shrink that
+    /// leaves composition running.
     ///
     /// A free plane alone is no reason: on a controller that lights fewer
     /// planes than it offers (RK3566 VOP2: three eligible, two usable) the
@@ -1697,7 +1698,8 @@ fn caps_in<'a>(planes: &[&'a PlaneCapabilities], plane_id: u32) -> Option<&'a Pl
 }
 
 /// Whether `plane_id` may join `assignment`: not a multirect virtual plane, or
-/// one whose parent is already in it (see [`multirect_pairing_ok`]).
+/// one whose parent is already in it (see
+/// [`multirect_pairing_ok`](crate::multirect_pairing_ok)).
 ///
 /// As with stacking, a plane missing from `planes` is not held against it.
 fn fits_multirect(

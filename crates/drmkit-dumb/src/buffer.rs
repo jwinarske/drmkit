@@ -196,7 +196,10 @@ impl Buffer {
     /// # Errors
     ///
     /// - [`DumbError::InvalidConfig`] for zero dimensions, a zero format, a
-    ///   zero bpp, or dimensions past 16384.
+    ///   zero bpp, dimensions past 16384, or a `FourCC` the `drm` crate does
+    ///   not recognize.
+    /// - [`DumbError::TooLarge`] if the kernel's allocation size does not fit
+    ///   a `usize`.
     /// - [`DumbError::Io`] if an ioctl or the `mmap` fails.
     pub fn create(device: &Device, config: &Config) -> Result<Self> {
         if config.width == 0 || config.height == 0 {
@@ -279,7 +282,7 @@ impl Buffer {
     ///   set — fall back to [`Buffer::create`] for single-plane formats.
     /// - [`DumbError::InvalidConfig`] for zero or out-of-range dimensions.
     /// - [`DumbError::TooLarge`] if the row count or chroma offset would not
-    ///   fit the kernel's 32-bit fields.
+    ///   fit the kernel's 32-bit fields, or the allocation size a `usize`.
     /// - [`DumbError::Io`] if an ioctl or the `mmap` fails.
     pub fn create_planar(
         device: &Device,

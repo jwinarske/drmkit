@@ -418,7 +418,11 @@ impl ScanoutBackend {
 
         // The plane ids are taken before the closure: the commit reports them
         // back afterwards, and `build` is borrowed mutably inside.
-        let programmed: Vec<u32> = build.plan().iter().map(|entry| entry.plane_id).collect();
+        let programmed: Vec<_> = build
+            .plan()
+            .iter()
+            .map(|entry| (entry.plane_id, entry.color))
+            .collect();
 
         let emit = |request: &mut AtomicRequest,
                     slot: u64|
@@ -463,8 +467,8 @@ impl ScanoutBackend {
             *slot = fence;
         }
 
-        for plane_id in programmed {
-            self.map.note_color_committed(plane_id);
+        for (plane_id, color) in programmed {
+            self.map.note_color_committed(plane_id, color);
         }
         self.needs_modeset = false;
         self.vrr_armed = self.vrr_wanted;

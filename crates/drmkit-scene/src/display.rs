@@ -12,11 +12,13 @@
 //!
 //! # Scope
 //!
-//! The colorimetry, HDR metadata, and per-plane color-pipeline fields the C++
-//! carries here need `drmkit-display`, which lands in phase 4. This module has
-//! the geometry every commit needs; the color surface follows its dependency.
+//! The geometry every commit needs, the container colorimetry and transfer
+//! function the connector's signalling is derived from, and the YCbCr
+//! encoding and range a plane converts with. The C++'s per-plane
+//! color-pipeline fields (`degamma_tf`, `hdr_mult`, the shaper and blend
+//! stages) are not ported.
 
-pub use drmkit_planes::Rect;
+pub use drmkit_planes::{ColorEncoding, ColorRange, Rect};
 
 /// A source rectangle in 16.16 fixed point: the kernel's own `SRC_*`
 /// encoding, for a crop at sub-pixel precision. A Wayland viewport's source
@@ -84,6 +86,43 @@ pub struct DisplayParams {
     /// `None` is the SDR transfer. When *any* layer in a frame reports PQ or
     /// HLG the scene declares HDR on the connector.
     pub source_eotf: Option<drmkit_display::TransferFunction>,
+
+    /// The YCbCr-to-RGB matrix this layer's pixels were encoded with: the
+    /// plane's `COLOR_ENCODING`.
+    ///
+    /// `None` asks for BT.709. Only YUV formats are converted, so an RGB
+    /// layer is unaffected either way; the scene still writes the value, to
+    /// displace whatever the previous client left on the plane. A plane
+    /// without the encoding asked for gets BT.709, or BT.601 where that is
+    /// all it has.
+    pub color_encoding: Option<ColorEncoding>,
+
+    /// Whether this layer's YCbCr is limited or full range: the plane's
+    /// `COLOR_RANGE`. `None` asks for limited, which most camera and
+    /// broadcast video is.
+    pub color_range: Option<ColorRange>,
+}
+
+impl DisplayParams {
+    /// The YCbCr interpretation this layer asks its plane for, defaults
+    /// applied.
+    #[must_use]
+    pub fn ycbcr(&self) -> Ycbcr {
+        Ycbcr {
+            encoding: self.color_encoding.unwrap_or(ColorEncoding::Bt709),
+            range: self.color_range.unwrap_or(ColorRange::Limited),
+        }
+    }
+}
+
+/// How a plane converts a layer's YCbCr to RGB: its `COLOR_ENCODING` and
+/// `COLOR_RANGE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Ycbcr {
+    /// The matrix.
+    pub encoding: ColorEncoding,
+    /// The range.
+    pub range: ColorRange,
 }
 
 /// Convert whole pixels to the 16.16 fixed point KMS expects for `SRC_*`.

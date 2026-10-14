@@ -7,9 +7,8 @@
 # composite the bottom run (bg, l1..l3) on plane[0], under l4..l11. What still
 # differs, against 2b260d0, is upstream's second TEST_ONLY, its canvas probe
 # (893a938), where the port tests once with the canvas already armed -- by
-# design -- and the port's COLOR_ENCODING/COLOR_RANGE on the canvas plane,
-# which upstream leaves alone (P-52). After the `del` both now retire the
-# canvas: upstream's drm-cxx#341 is fixed in 110a126. See P-42.
+# design. After the `del` both now retire the canvas: upstream's drm-cxx#341
+# is fixed in 110a126. See P-42.
 #
 # Not a corner of the fleet: 773 of 1001 atomic devices in the drmdb corpus
 # (77%) have no plane whose zpos can be written -- i915 358, amdgpu 211,

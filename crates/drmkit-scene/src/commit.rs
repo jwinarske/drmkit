@@ -6,34 +6,73 @@
 //! This is the seam between the device-free search in `drmkit-planes` and the
 //! kernel. The allocator decides *what* to try; this knows *how* to ask.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use drmkit_core::{
     AtomicCommitFlags, CoreError, Device, Mode, ObjectType, PropertyBlob, PropertyStore,
 };
-use drmkit_planes::{LayerRef, PropTag, TestCommitter, TestFailure};
+use drmkit_planes::{
+    ColorEncoding, ColorEncodingValues, ColorRange, ColorRangeValues, LayerRef, PropTag,
+    TestCommitter, TestFailure,
+};
 
 use crate::frame::KernelResult;
 
-/// A plane's colorimetry properties, resolved to the values this scene writes.
+/// A plane's `COLOR_ENCODING` and `COLOR_RANGE`: each property's id, and the
+/// driver-assigned integer for every entry it lists.
 ///
-/// The KMS names are strings but the wire values are driver-assigned integers,
-/// so both are looked up per plane rather than assumed.
-#[derive(Debug, Clone, Copy)]
+/// The two are independent. A plane may expose one without the other, and
+/// each is written where it is writable, as upstream does.
+#[derive(Debug, Clone, Copy, Default)]
 struct ColorProps {
-    encoding_id: u32,
-    encoding_value: u64,
-    range_id: u32,
-    range_value: u64,
+    encoding: Option<(u32, ColorEncodingValues)>,
+    range: Option<(u32, ColorRangeValues)>,
 }
 
-/// The colorimetry this scene asks for on every plane it programs.
+impl ColorProps {
+    /// The values this plane takes for `want`, one per property it has.
+    fn resolve(&self, want: crate::Ycbcr) -> ResolvedColor {
+        ResolvedColor {
+            encoding: self
+                .encoding
+                .and_then(|(id, values)| Some((id, encoding_value(&values, want.encoding)?))),
+            range: self
+                .range
+                .and_then(|(id, values)| Some((id, range_value(&values, want.range)?))),
+        }
+    }
+}
+
+/// A plane's colorimetry as written: property id and value, for each of the
+/// pair the plane has a usable entry for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct ResolvedColor {
+    encoding: Option<(u32, u64)>,
+    range: Option<(u32, u64)>,
+}
+
+/// The `COLOR_ENCODING` value for `want`, or the nearest the plane has.
 ///
-/// BT.709 with limited range, matching upstream's default. A per-layer
-/// override is not modelled yet; when it is, it replaces these two values and
-/// nothing else about the emission changes.
-const DEFAULT_COLOR_ENCODING: &str = "ITU-R BT.709 YCbCr";
-const DEFAULT_COLOR_RANGE: &str = "YCbCr limited range";
+/// A driver that lacks the entry asked for gets BT.709, then BT.601: the
+/// fallback upstream's `arm_layer_plane_color_props` takes. Writing nothing
+/// instead would leave the plane on whatever the previous client chose.
+pub(crate) fn encoding_value(values: &ColorEncodingValues, want: ColorEncoding) -> Option<u64> {
+    let exact = match want {
+        ColorEncoding::Bt601 => values.bt601,
+        ColorEncoding::Bt709 => values.bt709,
+        ColorEncoding::Bt2020 => values.bt2020,
+    };
+    exact.or(values.bt709).or(values.bt601)
+}
+
+/// The `COLOR_RANGE` value for `want`, or limited, or full.
+pub(crate) fn range_value(values: &ColorRangeValues, want: ColorRange) -> Option<u64> {
+    let exact = match want {
+        ColorRange::Limited => values.limited,
+        ColorRange::Full => values.full,
+    };
+    exact.or(values.limited).or(values.full)
+}
 
 /// Resolves a layer's [`PropTag`]s to the DRM property ids of a given plane.
 ///
@@ -71,13 +110,15 @@ pub struct PlanePropertyMap {
     /// The largest `alpha` each plane advertises, where it is not the full 16
     /// bits. Layers carry 16-bit alpha; see [`drmkit_planes::rescale_alpha`].
     pub(crate) alpha_max: HashMap<u32, u64>,
-    /// Planes whose colorimetry the kernel has already taken.
+    /// The colorimetry each plane's last real commit carried.
     ///
     /// These properties are sticky across clients, so they have to be written
-    /// once to displace whatever the previous compositor left -- and then not
-    /// again, because restating an unchanged value every frame is exactly the
-    /// per-frame traffic the rest of the emit path works to avoid.
-    color_committed: HashSet<u32>,
+    /// to displace whatever the previous compositor left -- and then only when
+    /// a layer asks for something else, because restating an unchanged value
+    /// every frame is exactly the per-frame traffic the rest of the emit path
+    /// works to avoid. A frame that [restates](crate::FrameBuild::restates_sticky)
+    /// writes them regardless.
+    color_committed: HashMap<u32, ResolvedColor>,
 }
 
 impl PlanePropertyMap {
@@ -99,32 +140,40 @@ impl PlanePropertyMap {
         let mut store = PropertyStore::new();
         store.cache_properties(device, plane_id, ObjectType::Plane)?;
 
-        // Colorimetry is optional -- plenty of planes expose neither property,
-        // and a plane with only one of the pair is treated as having neither
-        // rather than being left half-configured.
-        let color = match (
-            store.property_id(plane_id, "COLOR_ENCODING"),
-            store.property_id(plane_id, "COLOR_RANGE"),
-        ) {
-            (Ok(encoding_id), Ok(range_id)) => Some(ColorProps {
-                encoding_id,
-                encoding_value: store.enum_value(
-                    device,
-                    plane_id,
-                    "COLOR_ENCODING",
-                    DEFAULT_COLOR_ENCODING,
-                )?,
-                range_id,
-                range_value: store.enum_value(
-                    device,
-                    plane_id,
-                    "COLOR_RANGE",
-                    DEFAULT_COLOR_RANGE,
-                )?,
-            }),
-            _ => None,
+        // Colorimetry is optional -- plenty of planes expose neither property.
+        // An immutable one is left out, since writing it fails the commit
+        // whatever the value, and an entry the driver does not list is `None`
+        // and falls back at emission.
+        let writable = |name: &str| {
+            store
+                .property_id(plane_id, name)
+                .ok()
+                .filter(|_| !store.is_immutable(plane_id, name).unwrap_or(false))
         };
-        if let Some(color) = color {
+        let entry =
+            |name: &str, variant: &str| store.enum_value(device, plane_id, name, variant).ok();
+        let color = ColorProps {
+            encoding: writable("COLOR_ENCODING").map(|id| {
+                (
+                    id,
+                    ColorEncodingValues {
+                        bt601: entry("COLOR_ENCODING", "ITU-R BT.601 YCbCr"),
+                        bt709: entry("COLOR_ENCODING", "ITU-R BT.709 YCbCr"),
+                        bt2020: entry("COLOR_ENCODING", "ITU-R BT.2020 YCbCr"),
+                    },
+                )
+            }),
+            range: writable("COLOR_RANGE").map(|id| {
+                (
+                    id,
+                    ColorRangeValues {
+                        limited: entry("COLOR_RANGE", "YCbCr limited range"),
+                        full: entry("COLOR_RANGE", "YCbCr full range"),
+                    },
+                )
+            }),
+        };
+        if color.encoding.is_some() || color.range.is_some() {
             self.color.insert(plane_id, color);
         }
 
@@ -178,13 +227,17 @@ impl PlanePropertyMap {
         Ok(())
     }
 
-    /// Record that a real commit carried `plane_id`'s colorimetry.
+    /// Record that a real commit carried a plan entry's colorimetry.
     ///
-    /// Call only after the kernel accepted the commit. A `TEST_ONLY` applies
-    /// nothing, so noting one would suppress the write on the commit that
-    /// actually matters and leave the plane on the previous client's settings.
-    pub fn note_color_committed(&mut self, plane_id: u32) {
-        self.color_committed.insert(plane_id);
+    /// Call for every entry of a frame the kernel accepted. A `TEST_ONLY`
+    /// applies nothing, so noting one would suppress the write on the commit
+    /// that actually matters and leave the plane on the previous client's
+    /// settings. An entry that asks for nothing -- the composition canvas --
+    /// leaves the record as it was.
+    pub fn note_color_committed(&mut self, plane_id: u32, color: Option<crate::Ycbcr>) {
+        if let (Some(want), Some(props)) = (color, self.color.get(&plane_id)) {
+            self.color_committed.insert(plane_id, props.resolve(want));
+        }
     }
 
     /// The DRM property id for a tag on a plane, if it is writable there.
@@ -762,7 +815,13 @@ pub fn emit_frame_damaged<'a>(
         let layer = emit_layer(request, map, entry.plane_id, &bag, entry.baseline.as_ref())?;
         written += layer.properties;
         fbs += layer.framebuffers;
-        written += emit_color_props(request, map, entry.plane_id)?;
+        written += emit_color_props(
+            request,
+            map,
+            entry.plane_id,
+            entry.color,
+            build.restates_sticky(),
+        )?;
 
         if let Some(device) = device
             && let Some(blob) = emit_damage(request, map, device, entry.plane_id, &entry.damage)?
@@ -835,29 +894,46 @@ fn emit_damage<'a>(
     Ok(Some(blob))
 }
 
-/// Emit a plane's colorimetry, if it has any.
+/// Emit the colorimetry a plan entry asks of its plane, where the plane has it.
 ///
-/// Written on every frame, exempt from the diff that governs everything else
-/// in [`emit_layer`]. These properties are sticky across clients: whatever the
-/// last compositor left is what this one inherits, and inheriting the wrong
-/// YCbCr matrix or range tints every YUV layer -- cyan or magenta, depending
-/// which is wrong. Restating them costs two writes per programmed plane and
-/// removes a dependency on what ran before.
-///
+/// Exempt from the diff that governs everything else in [`emit_layer`]. These
+/// properties are sticky across clients: whatever the last compositor left is
+/// what this one inherits, and inheriting the wrong YCbCr matrix or range
+/// tints every YUV layer -- cyan or magenta, depending which is wrong. So each
+/// is written whenever it differs from what this plane's last real commit
+/// carried, and always when `restate` says the scene does not know what the
+/// kernel holds. `want` is `None` for the composition canvas, which writes
+/// neither (see [`PlanePlan::color`](crate::PlanePlan::color)).
 fn emit_color_props(
     request: &mut drmkit_core::AtomicRequest,
     map: &PlanePropertyMap,
     plane_id: u32,
+    want: Option<crate::Ycbcr>,
+    restate: bool,
 ) -> Result<usize, CoreError> {
-    let Some(color) = map.color.get(&plane_id) else {
+    let (Some(want), Some(props)) = (want, map.color.get(&plane_id)) else {
         return Ok(0);
     };
-    if map.color_committed.contains(&plane_id) {
-        return Ok(0);
+    let resolved = props.resolve(want);
+    let committed = map
+        .color_committed
+        .get(&plane_id)
+        .filter(|_| !restate)
+        .copied()
+        .unwrap_or_default();
+    let mut written = 0;
+    for (now, before) in [
+        (resolved.encoding, committed.encoding),
+        (resolved.range, committed.range),
+    ] {
+        if let Some((property_id, value)) = now
+            && now != before
+        {
+            request.add_property(plane_id, property_id, value)?;
+            written += 1;
+        }
     }
-    request.add_property(plane_id, color.encoding_id, color.encoding_value)?;
-    request.add_property(plane_id, color.range_id, color.range_value)?;
-    Ok(2)
+    Ok(written)
 }
 
 /// What to do with a layer's acquire fence, given what its plane can take.

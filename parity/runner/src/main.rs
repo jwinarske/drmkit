@@ -378,7 +378,11 @@ impl<'a> Runner<'a> {
             flags |= AtomicCommitFlags::ALLOW_MODESET;
         }
 
-        let programmed: Vec<u32> = build.plan().iter().map(|entry| entry.plane_id).collect();
+        let programmed: Vec<_> = build
+            .plan()
+            .iter()
+            .map(|entry| (entry.plane_id, entry.color))
+            .collect();
         // `mint` asks the kernel for a fence that signals when this frame has
         // landed. Requested only when asked for, so every other scenario's
         // trace is exactly what it was.
@@ -406,8 +410,8 @@ impl<'a> Runner<'a> {
         };
         self.first_commit = false;
         // Only now: a commit the kernel refused carried nothing.
-        for plane_id in programmed {
-            self.map.note_color_committed(plane_id);
+        for (plane_id, color) in programmed {
+            self.map.note_color_committed(plane_id, color);
         }
 
         // finalize_frame is what arms the flip, so it has to run before the

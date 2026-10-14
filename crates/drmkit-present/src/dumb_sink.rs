@@ -402,7 +402,11 @@ impl DumbScanoutSink {
         )?;
         arm_acquire_fences(&mut build, &mut request, &self.map, true)?;
 
-        let programmed: Vec<u32> = build.plan().iter().map(|entry| entry.plane_id).collect();
+        let programmed: Vec<_> = build
+            .plan()
+            .iter()
+            .map(|entry| (entry.plane_id, entry.color))
+            .collect();
         let result = match request.commit(device, flags) {
             Ok(()) => KernelResult::Ok,
             Err(error) => {
@@ -412,8 +416,8 @@ impl DumbScanoutSink {
                 return Err(PresentError::Commit(error));
             }
         };
-        for plane_id in programmed {
-            self.map.note_color_committed(plane_id);
+        for (plane_id, color) in programmed {
+            self.map.note_color_committed(plane_id, color);
         }
         self.needs_modeset = false;
         self.armed_flip_seq = crate::armed_flip::armed_sequence(device, self.crtc_id, arms_flip);

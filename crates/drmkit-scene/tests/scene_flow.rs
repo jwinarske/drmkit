@@ -16,8 +16,8 @@ use drmkit_planes::{
     LayerRef, PlaneCapabilities, PlaneRegistry, PlaneType, TestCommitter, TestFailure,
 };
 use drmkit_scene::{
-    AcquiredBuffer, CommitKind, DisplayParams, KernelResult, LayerBufferSource, LayerScene, Rect,
-    SceneError, SourceError, SourceFormat,
+    AcquiredBuffer, ColorEncoding, ColorRange, CommitKind, DisplayParams, KernelResult,
+    LayerBufferSource, LayerScene, Rect, SceneError, SourceError, SourceFormat, Ycbcr,
 };
 
 // --- fixtures ----------------------------------------------------------------
@@ -1159,4 +1159,115 @@ fn an_accepted_pin_is_tested_once() {
         assert_eq!(report.pin_requests_unhonored, 0, "{report:?}");
     }
     assert_eq!(committer.calls, 1, "one test, for the pin");
+}
+
+// --- colorimetry -------------------------------------------------------------
+
+/// A layer's `COLOR_ENCODING` and `COLOR_RANGE` ride its plan entry, with the
+/// defaults filled in where it asked for nothing.
+///
+/// The emitter reads them off the entry; a layer whose request did not reach
+/// it would be shown through BT.709 limited whatever it set, which is P-52.
+#[test]
+fn a_layers_ycbcr_rides_its_plan_entry() {
+    let log = Rc::new(RefCell::new(SourceLog::default()));
+    let mut scene = LayerScene::new(1);
+    let video = scene.add_layer(Box::new(TestSource::new(&log)));
+    scene
+        .layer_mut(video)
+        .expect("layer")
+        .set_display(DisplayParams {
+            color_encoding: Some(ColorEncoding::Bt601),
+            color_range: Some(ColorRange::Full),
+            zpos: Some(0),
+            ..full_screen()
+        });
+    let plain = scene.add_layer(Box::new(TestSource::new(&log)));
+    scene
+        .layer_mut(plain)
+        .expect("layer")
+        .set_display(DisplayParams {
+            zpos: Some(1),
+            ..full_screen()
+        });
+
+    let registry = registry();
+    let mut committer = Accepting::default();
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("build");
+    let color_of = |handle: drmkit_scene::LayerHandle| {
+        build
+            .plan()
+            .iter()
+            .find(|entry| entry.layer_id == handle.layer_id())
+            .map(|entry| entry.color)
+    };
+    assert_eq!(
+        color_of(video),
+        Some(Some(Ycbcr {
+            encoding: ColorEncoding::Bt601,
+            range: ColorRange::Full,
+        })),
+        "the override reaches the plan"
+    );
+    assert_eq!(
+        color_of(plain),
+        Some(Some(Ycbcr {
+            encoding: ColorEncoding::Bt709,
+            range: ColorRange::Limited,
+        })),
+        "no override is BT.709 limited, upstream's default"
+    );
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+    scene.drain();
+}
+
+/// Sticky properties are restated until the scene knows what the kernel
+/// holds: on the first frame, and on the first after a resume.
+///
+/// In between they are diffed against what the last real commit carried.
+/// Upstream clears its cache of them on resume and rebind for the same
+/// reason: whoever held the planes meanwhile may have left their own.
+#[test]
+fn sticky_properties_are_restated_until_the_kernel_is_known() {
+    let log = Rc::new(RefCell::new(SourceLog::default()));
+    let mut scene = LayerScene::new(1);
+    let handle = scene.add_layer(Box::new(TestSource::new(&log)));
+    scene
+        .layer_mut(handle)
+        .expect("layer")
+        .set_display(full_screen());
+    let registry = registry();
+    let mut committer = Accepting::default();
+
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("build");
+    assert!(build.restates_sticky(), "the first frame restates");
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("build");
+    assert!(
+        !build.restates_sticky(),
+        "once a frame has landed, what the kernel holds is known"
+    );
+    scene.finalize_frame(build, KernelResult::NotMaster);
+    assert!(scene.is_suspended());
+
+    scene.resume();
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("resumed");
+    assert!(
+        build.restates_sticky(),
+        "after a resume another client may have changed them"
+    );
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+    scene.drain();
 }

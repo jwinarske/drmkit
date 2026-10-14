@@ -27,9 +27,9 @@ use drmkit_fmt::fourcc;
 use drmkit_planes::{PlaneCapabilities, PlaneRegistry, PlaneType};
 use drmkit_scene::DamageRect;
 use drmkit_scene::{
-    AcquiredBuffer, CommitKind, DeviceCommitter, DisplayParams, KernelResult, LayerBufferSource,
-    LayerScene, PlanePropertyMap, Rect, SourceError, SourceFormat, arm_acquire_fences, emit_frame,
-    emit_frame_damaged,
+    AcquiredBuffer, ColorEncoding, ColorRange, CommitKind, DeviceCommitter, DisplayParams,
+    KernelResult, LayerBufferSource, LayerScene, PlanePropertyMap, Rect, SourceError, SourceFormat,
+    arm_acquire_fences, emit_frame, emit_frame_damaged,
 };
 use drmkit_sync::SyncFence;
 
@@ -269,7 +269,7 @@ fn frame(fx: &mut Fixture) -> AtomicRequest {
     emit_frame(&mut request, &fx.map, &mut build, None).expect("emit");
 
     for entry in build.plan() {
-        fx.map.note_color_committed(entry.plane_id);
+        fx.map.note_color_committed(entry.plane_id, entry.color);
     }
     fx.scene.finalize_frame(build, KernelResult::Ok);
     request
@@ -384,6 +384,115 @@ fn colorimetry_is_written_once_not_every_frame_vkms() {
     fx.scene.drain();
 }
 
+/// A layer's `COLOR_ENCODING` and `COLOR_RANGE` reach its plane as the
+/// driver's own values, change when the layer asks for something else, and
+/// are restated after a resume.
+///
+/// P-52: until this the port wrote BT.709 limited to every plane, so a BT.601
+/// or full-range YUV layer was shown through the wrong matrix or range with
+/// no way to say otherwise.
+#[test]
+#[ignore = "needs a DRM device"]
+fn a_layers_ycbcr_reaches_its_plane_and_is_rewritten_only_on_change_vkms() {
+    let _guard = card_guard();
+    let Some(mut fx) = fixture() else { return };
+
+    let ask = |fx: &mut Fixture, encoding, range| {
+        let layer = fx.scene.layer_mut(fx.handle).expect("layer");
+        let display = DisplayParams {
+            color_encoding: Some(encoding),
+            color_range: Some(range),
+            ..*layer.display()
+        };
+        layer.set_display(display);
+    };
+    ask(&mut fx, ColorEncoding::Bt601, ColorRange::Full);
+
+    let first = frame(&mut fx);
+    // The plane handed a framebuffer. Not simply the first plane written: on
+    // the first frame the scene also turns off what other clients left lit.
+    let mut store = PropertyStore::new();
+    for plane in fx.registry.all() {
+        store
+            .cache_properties(&fx.device, plane.id, ObjectType::Plane)
+            .expect("plane properties");
+    }
+    let plane_id = first
+        .writes()
+        .iter()
+        .find(|w| {
+            w.value != 0
+                && store
+                    .property_id(w.object_id, "FB_ID")
+                    .is_ok_and(|id| id == w.property_id)
+        })
+        .map(|w| w.object_id)
+        .expect("the frame programs the layer's plane");
+    let value = |name: &str, entry: &str| store.enum_value(&fx.device, plane_id, name, entry).ok();
+    let (Some(bt601), Some(bt709), Some(full)) = (
+        value("COLOR_ENCODING", "ITU-R BT.601 YCbCr"),
+        value("COLOR_ENCODING", "ITU-R BT.709 YCbCr"),
+        value("COLOR_RANGE", "YCbCr full range"),
+    ) else {
+        eprintln!(
+            "skipped: the layer's plane lists no BT.601, BT.709 and full range to choose from"
+        );
+        fx.scene.drain();
+        return;
+    };
+    let written = |request: &AtomicRequest, name: &str| -> Vec<u64> {
+        let id = store.property_id(plane_id, name).expect("the plane has it");
+        request
+            .writes()
+            .iter()
+            .filter(|w| w.object_id == plane_id && w.property_id == id)
+            .map(|w| w.value)
+            .collect()
+    };
+
+    assert_eq!(
+        written(&first, "COLOR_ENCODING"),
+        [bt601],
+        "BT.601, as asked"
+    );
+    assert_eq!(
+        written(&first, "COLOR_RANGE"),
+        [full],
+        "full range, as asked"
+    );
+
+    let steady = frame(&mut fx);
+    assert!(
+        written(&steady, "COLOR_ENCODING").is_empty() && written(&steady, "COLOR_RANGE").is_empty(),
+        "unchanged, so the kernel already has them"
+    );
+
+    ask(&mut fx, ColorEncoding::Bt709, ColorRange::Full);
+    let changed = frame(&mut fx);
+    assert_eq!(
+        written(&changed, "COLOR_ENCODING"),
+        [bt709],
+        "a changed encoding is written"
+    );
+    assert!(
+        written(&changed, "COLOR_RANGE").is_empty(),
+        "and only it: the range did not change"
+    );
+
+    fx.scene.resume();
+    let resumed = frame(&mut fx);
+    assert_eq!(
+        (
+            written(&resumed, "COLOR_ENCODING"),
+            written(&resumed, "COLOR_RANGE")
+        ),
+        (vec![bt709], vec![full]),
+        "after a resume both are restated: another client may have changed them"
+    );
+
+    fx.scene.drain();
+}
+
 /// A fenced buffer arrives at its plane with its fence, and the report says so.
 ///
 /// The fence here is a stand-in descriptor, not a `sync_file` the kernel would
@@ -441,7 +550,7 @@ fn a_fenced_buffer_arms_its_plane_vkms() {
 
     let report = build.report().clone();
     for entry in build.plan() {
-        fx.map.note_color_committed(entry.plane_id);
+        fx.map.note_color_committed(entry.plane_id, entry.color);
     }
     fx.scene.finalize_frame(build, KernelResult::Ok);
 
@@ -481,7 +590,7 @@ fn run(
                 emit_frame_damaged(&mut request, &fx.map, &mut build, None, Some(&fx.device))
                     .expect("emit");
             for entry in build.plan() {
-                fx.map.note_color_committed(entry.plane_id);
+                fx.map.note_color_committed(entry.plane_id, entry.color);
             }
             fx.scene.finalize_frame(build, KernelResult::Ok)
         })

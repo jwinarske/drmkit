@@ -291,7 +291,11 @@ impl Fixture {
         arm_acquire_fences(&mut build, &mut request, &self.map, true)
             .map_err(|error| format!("fences: {error}"))?;
 
-        let programmed: Vec<u32> = build.plan().iter().map(|entry| entry.plane_id).collect();
+        let programmed: Vec<_> = build
+            .plan()
+            .iter()
+            .map(|entry| (entry.plane_id, entry.color))
+            .collect();
         if let Some(limit) = limit {
             let armed = self.armed_after(&request);
             if armed > limit {
@@ -306,8 +310,8 @@ impl Fixture {
                 // Colorimetry is restated until the kernel has taken it once.
                 // Without this it re-emits every frame and the minimal write
                 // count is two higher than the diff decided.
-                for plane_id in programmed {
-                    self.map.note_color_committed(plane_id);
+                for (plane_id, color) in programmed {
+                    self.map.note_color_committed(plane_id, color);
                 }
                 self.needs_modeset = false;
                 Ok((self.scene.finalize_frame(build, KernelResult::Ok), refused))

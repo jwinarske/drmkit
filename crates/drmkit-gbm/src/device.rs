@@ -147,7 +147,9 @@ impl GbmDevice {
         let mut ptr = std::ptr::null_mut();
         if !modifiers.is_empty() {
             // v2 where the library has it, for the usage flags; v1 otherwise,
-            // which is all the SA8155P's libgbm offers.
+            // which is all the SA8155P's libgbm offers. v1 takes no usage, and
+            // Mesa's asks for SCANOUT alone: see
+            // `GbmBuffer::create_with_modifiers`.
             if let Some(create) = gbm.surface_create_with_modifiers2 {
                 // SAFETY: `device` is live; `modifiers` is `count` long and is
                 // only read for the duration of the call.

@@ -16,7 +16,7 @@ use drmkit_planes::{
     LayerRef, PlaneCapabilities, PlaneRegistry, PlaneType, TestCommitter, TestFailure,
 };
 use drmkit_scene::{
-    AcquiredBuffer, ColorEncoding, ColorRange, CommitKind, DisplayParams, KernelResult,
+    AcquiredBuffer, ColorEncoding, ColorRange, CommitKind, DamageRect, DisplayParams, KernelResult,
     LayerBufferSource, LayerScene, Rect, SceneError, SourceError, SourceFormat, Ycbcr,
 };
 
@@ -65,6 +65,8 @@ struct TestSource {
     /// produces. A layer that starves *after* putting a frame up is a
     /// different case, and the interesting one: it has something to hold.
     toggle: Rc<Cell<bool>>,
+    /// Damage reported with every buffer.
+    damage: Vec<DamageRect>,
 }
 
 impl TestSource {
@@ -75,6 +77,7 @@ impl TestSource {
             starved: false,
             fails: false,
             toggle: Rc::new(Cell::new(false)),
+            damage: Vec::new(),
         }
     }
 
@@ -97,6 +100,7 @@ impl LayerBufferSource for TestSource {
         self.next_fb += 1;
         Ok(AcquiredBuffer {
             fb_id,
+            damage: self.damage.clone(),
             ..AcquiredBuffer::default()
         })
     }
@@ -192,6 +196,82 @@ fn a_layer_is_acquired_lowered_placed_and_released() {
         "invariant 1: released two commits deep, in order"
     );
 
+    scene.drain();
+}
+
+/// What a source says changed reaches the plan bounded to its buffer.
+///
+/// The emission builds its `FB_DAMAGE_CLIPS` blob from the plan, so the plan
+/// is where a rectangle off the 1920x1080 buffer must already be cut back --
+/// and where seventeen rectangles must already have become a whole frame.
+#[test]
+fn a_sources_damage_reaches_the_plan_clipped_to_its_buffer() {
+    let log = Rc::new(RefCell::new(SourceLog::default()));
+    let registry = registry();
+    let mut committer = Accepting::default();
+
+    let mut source = TestSource::new(&log);
+    source.damage = vec![
+        DamageRect {
+            x: 1900,
+            y: -10,
+            w: 40,
+            h: 30,
+        },
+        DamageRect {
+            x: 2000,
+            y: 0,
+            w: 8,
+            h: 8,
+        },
+    ];
+    let mut scene = LayerScene::new(1);
+    let handle = scene.add_layer(Box::new(source));
+    scene
+        .layer_mut(handle)
+        .expect("layer")
+        .set_display(full_screen());
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("build");
+    assert_eq!(
+        build.plan()[0].damage,
+        [DamageRect {
+            x: 1900,
+            y: 0,
+            w: 20,
+            h: 20
+        }],
+        "clipped to the buffer, and the rectangle wholly off it dropped"
+    );
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
+    scene.drain();
+
+    let mut source = TestSource::new(&log);
+    source.damage = (0..17)
+        .map(|i| DamageRect {
+            x: i * 10,
+            y: 0,
+            w: 4,
+            h: 4,
+        })
+        .collect();
+    let mut scene = LayerScene::new(1);
+    let handle = scene.add_layer(Box::new(source));
+    scene
+        .layer_mut(handle)
+        .expect("layer")
+        .set_display(full_screen());
+    let build = scene
+        .build_frame(&registry, 0, real(), &mut committer)
+        .expect("build");
+    assert!(
+        build.plan()[0].damage.is_empty(),
+        "seventeen rectangles is a whole-frame repaint"
+    );
+    scene.finalize_frame(build, KernelResult::Ok);
+    scene.flip_landed();
     scene.drain();
 }
 

@@ -840,6 +840,49 @@ pub fn emit_frame_damaged<'a>(
     Ok((written, blobs))
 }
 
+/// The most damage rectangles one layer may report before its frame is
+/// treated as whole. Upstream's `k_max_damage_rects`: past this, a damage blob
+/// buys the driver little over a full repaint, and the per-commit union stays
+/// small.
+pub(crate) const MAX_DAMAGE_RECTS: usize = 16;
+
+/// Bound a source's damage to what the kernel will take, as upstream's
+/// `arm_layer_damage_clips` does before it builds a blob.
+///
+/// More than [`MAX_DAMAGE_RECTS`] rectangles is whole-frame. Each rectangle is
+/// clipped to the `width` by `height` buffer, and one with nothing left is
+/// dropped. A source is not trusted to stay inside its own buffer, and a
+/// clip that strays outside it can make the driver refuse the whole commit
+/// rather than the one rectangle. An empty result is whole-frame too, which
+/// is what an empty list already means.
+pub(crate) fn clip_damage(
+    damage: &[crate::DamageRect],
+    width: u32,
+    height: u32,
+) -> Vec<crate::DamageRect> {
+    if damage.len() > MAX_DAMAGE_RECTS {
+        return Vec::new();
+    }
+    damage
+        .iter()
+        .filter_map(|rect| {
+            let x1 = i64::from(rect.x).max(0);
+            let y1 = i64::from(rect.y).max(0);
+            let x2 = (i64::from(rect.x) + i64::from(rect.w)).min(i64::from(width));
+            let y2 = (i64::from(rect.y) + i64::from(rect.h)).min(i64::from(height));
+            if x2 <= x1 || y2 <= y1 {
+                return None;
+            }
+            Some(crate::DamageRect {
+                x: i32::try_from(x1).ok()?,
+                y: i32::try_from(y1).ok()?,
+                w: u32::try_from(x2 - x1).ok()?,
+                h: u32::try_from(y2 - y1).ok()?,
+            })
+        })
+        .collect()
+}
+
 /// Convert damage rectangles into the `struct drm_mode_rect` array the kernel
 /// reads out of an `FB_DAMAGE_CLIPS` blob.
 ///

@@ -1891,10 +1891,10 @@ fn every_damage_rectangle_is_converted_in_order() {
 
 /// A negative origin converts unchanged.
 ///
-/// `DamageRect` is signed because a layer can be positioned partly off-screen,
-/// and the driver clips. Coercing a negative origin to zero here would move
-/// the damage rather than clip it, repainting a region the producer did not
-/// touch and leaving the one it did.
+/// Clipping is [`clip_damage`](crate::commit::clip_damage)'s job, which runs
+/// first and moves both corners. Coercing the origin to zero here, with the
+/// far corner computed from it, would move the damage rather than clip it,
+/// repainting a region the producer did not touch and leaving the one it did.
 #[test]
 fn a_negative_origin_is_carried_through_rather_than_clamped() {
     let rects = crate::commit::damage_rects(&[DamageRect {
@@ -1937,6 +1937,66 @@ fn a_far_corner_past_i32_saturates_rather_than_wrapping() {
 #[test]
 fn no_damage_converts_to_no_rectangles() {
     assert!(crate::commit::damage_rects(&[]).is_empty());
+}
+
+fn rect(x: i32, y: i32, w: u32, h: u32) -> DamageRect {
+    DamageRect { x, y, w, h }
+}
+
+/// Damage inside the buffer passes through untouched.
+#[test]
+fn damage_inside_the_buffer_is_unchanged() {
+    let damage = [rect(0, 0, 8, 8), rect(100, 50, 20, 10)];
+    assert_eq!(crate::commit::clip_damage(&damage, 640, 480), damage);
+}
+
+/// A rectangle straying off the buffer is cut back to it, at both corners.
+///
+/// Upstream clamps every clip to the buffer extent before building the blob: a
+/// clip outside the framebuffer is the producer's mistake, and the kernel is
+/// entitled to refuse the commit over it -- every layer with it.
+#[test]
+fn damage_past_the_buffer_is_clipped_to_it() {
+    let clipped =
+        crate::commit::clip_damage(&[rect(-4, -8, 16, 16), rect(630, 470, 20, 20)], 640, 480);
+    assert_eq!(clipped, [rect(0, 0, 12, 8), rect(630, 470, 10, 10)]);
+}
+
+/// A rectangle with nothing left inside the buffer is dropped, and so is one
+/// with no area to begin with.
+#[test]
+fn damage_with_nothing_inside_the_buffer_is_dropped() {
+    let clipped = crate::commit::clip_damage(
+        &[
+            rect(700, 0, 8, 8),
+            rect(-20, 0, 10, 8),
+            rect(10, 10, 0, 8),
+            rect(4, 4, 2, 2),
+        ],
+        640,
+        480,
+    );
+    assert_eq!(clipped, [rect(4, 4, 2, 2)]);
+}
+
+/// When every rectangle is dropped the frame is whole, which an empty list
+/// already says -- not an empty blob, which says nothing changed.
+#[test]
+fn damage_entirely_off_the_buffer_becomes_whole_frame() {
+    assert!(crate::commit::clip_damage(&[rect(640, 0, 8, 8)], 640, 480).is_empty());
+}
+
+/// Sixteen rectangles is the bound; seventeen is a whole-frame repaint.
+#[test]
+fn more_than_sixteen_damage_rectangles_is_whole_frame() {
+    let sixteen: Vec<DamageRect> = (0..16).map(|i| rect(i * 10, 0, 4, 4)).collect();
+    assert_eq!(crate::commit::clip_damage(&sixteen, 640, 480).len(), 16);
+
+    let seventeen: Vec<DamageRect> = (0..17).map(|i| rect(i * 10, 0, 4, 4)).collect();
+    assert!(
+        crate::commit::clip_damage(&seventeen, 640, 480).is_empty(),
+        "over upstream's bound the frame repaints whole"
+    );
 }
 
 /// A plane with an 8-bit alpha range, as `emit_layer` sees it.

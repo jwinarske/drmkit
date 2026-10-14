@@ -325,7 +325,9 @@ pub struct PlanePlan {
     /// frame is finalized, so reading it afterwards would diff this frame
     /// against itself and suppress every property.
     pub baseline: Option<drmkit_planes::PropertySnapshot>,
-    /// What this frame's source said changed, in destination pixels.
+    /// What this frame's source said changed, in buffer pixels: clipped to the
+    /// buffer, and empty when it reported more than upstream's bound of 16
+    /// rectangles.
     ///
     /// Empty means whole-frame, which is what an absent `FB_DAMAGE_CLIPS`
     /// already says -- so an empty list writes nothing rather than an empty
@@ -867,9 +869,12 @@ impl LayerScene {
             plane_layers.push((layer_id, plane_layer));
             // Taken before the acquisition owns it: the damage describes this
             // frame and is consumed at emission, whereas the acquisition
-            // outlives the commit by two generations.
-            if !acquired.damage.is_empty() {
-                frame_damage.insert(layer_id, acquired.damage.clone());
+            // outlives the commit by two generations. Bounded to the buffer
+            // here, so what rides the plan is what the kernel will be sent.
+            let format = layer.source.format();
+            let damage = crate::commit::clip_damage(&acquired.damage, format.width, format.height);
+            if !damage.is_empty() {
+                frame_damage.insert(layer_id, damage);
             }
             acquisitions.push(Acquisition::new(layer_id, acquired));
         }

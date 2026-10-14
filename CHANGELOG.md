@@ -42,6 +42,10 @@ minor version may break the API and a patch version does not.
 - `drmkit-cursor`: `Renderer::set_rotation` refuses a rotation on the legacy
   path with `Unsupported`, as `create` does and as the reference does, rather
   than pre-rotating the pixels in software (P-59).
+- `drmkit-sync`: converting a `SyncError` to `io::Error` gives the
+  reference's errno -- `EBADF` for an empty fence or an empty merge,
+  `ETIMEDOUT` for a timeout -- where it gave errno-less kinds. An empty
+  fence's `ErrorKind` is no longer `InvalidInput` (P-60).
 
 ## [0.1.1] - 2026-10-14
 

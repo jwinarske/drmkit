@@ -138,6 +138,17 @@ impl GbmBuffer {
     /// its usage flags, and `gbm_bo_create_with_modifiers` where it does not
     /// -- the SA8155P's libgbm has only the latter (P-39).
     ///
+    /// **The usage is not the same on the two.** v2 is asked for
+    /// `SCANOUT | RENDERING`. v1 takes no usage at all, and Mesa's v1 does
+    /// not mean "none": it calls v2 with `SCANOUT` alone, preserving the
+    /// requirement older callers relied on, so `RENDERING` is dropped. A
+    /// vendor libgbm's v1 means whatever it means. Usage moves the layouts a
+    /// driver honors -- v3d refuses every non-linear one once `SCANOUT` is in
+    /// it (P-13) -- so a set of honored modifiers measured through v1 answers
+    /// a different request from one measured through v2, and the per-board
+    /// floors are only comparable between boards on the same entry point.
+    /// The SA8155P's are v1; every Mesa board here is v2.
+    ///
     /// # Errors
     ///
     /// [`GbmError::Allocation`] if the driver refuses the format or the size.
@@ -232,8 +243,13 @@ impl GbmBuffer {
         u32::try_from(count).unwrap_or(0)
     }
 
-    /// The buffer's GEM handle on the device's descriptor, which is what a
+    /// Plane 0's GEM handle on the device's descriptor, which is what a
     /// framebuffer is registered over.
+    ///
+    /// Plane 0 only: `gbm_bo_get_handle` has no plane argument, and the
+    /// per-plane entry points are not bound. For a layout with more than one
+    /// [`plane_count`](Self::plane_count) this is part of the answer, not all
+    /// of it.
     #[must_use]
     pub fn handle(&self) -> u32 {
         // SAFETY: the buffer is live.
@@ -245,8 +261,14 @@ impl GbmBuffer {
 
     /// Export a dma-buf descriptor for the buffer.
     ///
-    /// The caller owns it. This is how a GBM buffer reaches anything outside
-    /// this process, or reaches KMS through the external-source path.
+    /// The caller owns it, and each call makes a new one. This is how a GBM
+    /// buffer reaches anything outside this process, or reaches KMS through
+    /// the external-source path.
+    ///
+    /// Plane 0's, as [`handle`](Self::handle) is: on a multi-plane layout the
+    /// other planes usually share the descriptor at their own offsets, but
+    /// this does not say where, so check [`plane_count`](Self::plane_count)
+    /// first.
     ///
     /// # Errors
     ///

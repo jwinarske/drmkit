@@ -6,7 +6,7 @@ this file covers all of them. The format follows
 [Semantic Versioning](https://semver.org/) as Cargo reads it: before 1.0, a
 minor version may break the API and a patch version does not.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-10-14
 
 The first release: a behavioral-parity port of
 [drm-cxx](https://github.com/jwinarske/drm-cxx) v5.0.0 (`2b260d0`), as

@@ -21,6 +21,33 @@ use crate::{CaptureError, Image, unpremultiply};
 /// The quality range a JPEG encoder accepts.
 const QUALITY_RANGE: std::ops::RangeInclusive<u8> = 1..=100;
 
+/// The largest width or height libjpeg writes (`JPEG_MAX_DIMENSION`). The
+/// format's own field is 16 bits; the reference refuses past this, as libjpeg
+/// does, rather than writing a frame the field cannot describe.
+const MAX_DIMENSION: u32 = 65_500;
+
+/// Both dimensions as the encoder takes them, or the reference's refusal.
+fn dimensions(width: u32, height: u32) -> Result<(u16, u16), CaptureError> {
+    let fits = |value: u32| u16::try_from(value).ok().filter(|_| value <= MAX_DIMENSION);
+    fits(width).zip(fits(height)).ok_or_else(|| {
+        CaptureError::Io(std::io::Error::other(format!(
+            "{width}x{height} is past JPEG's {MAX_DIMENSION} pixel limit"
+        )))
+    })
+}
+
+/// An encoder writing 4:2:0, as the reference's libjpeg does at every quality.
+///
+/// `jpeg-encoder` keeps chroma at full resolution from quality 90 up, and 90
+/// is the quality the reference's callers ask for, so left to its default the
+/// common case would write a different and larger file than the reference.
+fn encoder(file: std::fs::File, quality: u8) -> jpeg_encoder::Encoder<BufWriter<std::fs::File>> {
+    let quality = quality.clamp(*QUALITY_RANGE.start(), *QUALITY_RANGE.end());
+    let mut encoder = jpeg_encoder::Encoder::new(BufWriter::new(file), quality);
+    encoder.set_sampling_factor(jpeg_encoder::SamplingFactor::F_2_2);
+    encoder
+}
+
 /// Write `image` as a baseline JPEG.
 ///
 /// `quality` is clamped into `1..=100` rather than refused. It is a knob a
@@ -42,11 +69,13 @@ const QUALITY_RANGE: std::ops::RangeInclusive<u8> = 1..=100;
 /// # Errors
 ///
 /// [`CaptureError::EmptyImage`] for an image with no pixels, and
-/// [`CaptureError::Io`] if the file cannot be written.
+/// [`CaptureError::Io`] if a dimension is past 65,500 pixels or the file
+/// cannot be written.
 pub fn write_jpg(image: &Image, path: impl AsRef<Path>, quality: u8) -> Result<(), CaptureError> {
     if image.is_empty() {
         return Err(CaptureError::EmptyImage);
     }
+    let (width, height) = dimensions(image.width(), image.height())?;
 
     // Three channels, not four: JPEG has no alpha, so the fourth is dropped
     // here rather than encoded and ignored.
@@ -57,15 +86,8 @@ pub fn write_jpg(image: &Image, path: impl AsRef<Path>, quality: u8) -> Result<(
     }
 
     let file = std::fs::File::create(path).map_err(CaptureError::Io)?;
-    let quality = quality.clamp(*QUALITY_RANGE.start(), *QUALITY_RANGE.end());
-    let encoder = jpeg_encoder::Encoder::new(BufWriter::new(file), quality);
-    encoder
-        .encode(
-            &rgb,
-            u16::try_from(image.width()).unwrap_or(u16::MAX),
-            u16::try_from(image.height()).unwrap_or(u16::MAX),
-            jpeg_encoder::ColorType::Rgb,
-        )
+    encoder(file, quality)
+        .encode(&rgb, width, height, jpeg_encoder::ColorType::Rgb)
         .map_err(|error| CaptureError::Io(std::io::Error::other(error)))
 }
 
@@ -105,7 +127,7 @@ pub struct Nv12Frame<'a> {
 ///
 /// [`CaptureError::EmptyImage`] for zero dimensions, strides narrower than a
 /// row, or planes too short for the dimensions given, and [`CaptureError::Io`]
-/// if the file cannot be written.
+/// if a dimension is past 65,500 pixels or the file cannot be written.
 pub fn write_jpg_nv12(
     frame: &Nv12Frame<'_>,
     path: impl AsRef<Path>,
@@ -122,6 +144,7 @@ pub fn write_jpg_nv12(
     if width == 0 || height == 0 {
         return Err(CaptureError::EmptyImage);
     }
+    let (encoded_width, encoded_height) = dimensions(width, height)?;
     let (w, h) = (width as usize, height as usize);
     // Chroma is subsampled by two in both directions, and an odd dimension
     // rounds *up* -- a 33-pixel-wide frame has 17 chroma columns, not 16, and
@@ -150,13 +173,11 @@ pub fn write_jpg_nv12(
     }
 
     let file = std::fs::File::create(path).map_err(CaptureError::Io)?;
-    let quality = quality.clamp(*QUALITY_RANGE.start(), *QUALITY_RANGE.end());
-    let encoder = jpeg_encoder::Encoder::new(BufWriter::new(file), quality);
-    encoder
+    encoder(file, quality)
         .encode(
             &interleave_nv12(&packed_luma, &packed_chroma, w, h),
-            u16::try_from(width).unwrap_or(u16::MAX),
-            u16::try_from(height).unwrap_or(u16::MAX),
+            encoded_width,
+            encoded_height,
             jpeg_encoder::ColorType::Ycbcr,
         )
         .map_err(|error| CaptureError::Io(std::io::Error::other(error)))

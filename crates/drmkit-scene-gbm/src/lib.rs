@@ -250,6 +250,13 @@ impl GbmSurfaceSource {
         self.pending_fence = Some(fence);
     }
 
+    /// The fence for this acquire, which is the producer's for one frame only:
+    /// handed over and cleared, as the reference does, so a frame the
+    /// producer did not fence is not held to the last one's render.
+    fn take_acquire_fence(&mut self) -> Option<SyncFence> {
+        self.pending_fence.take()
+    }
+
     /// The producer has created its window surface on
     /// [`native_surface`](Self::native_surface).
     ///
@@ -314,6 +321,16 @@ impl GbmSurfaceSource {
             })?;
         self.framebuffers.insert(handle, fb);
         Ok(fb)
+    }
+}
+
+/// A framebuffer failure as the scene sees it: the kernel's errno where it
+/// gave one, as the reference reports it, and `EINVAL` for a format that was
+/// never the kernel's to refuse.
+fn acquire_error(error: &SurfaceError) -> SourceError {
+    match error {
+        SurfaceError::Framebuffer(errno) => SourceError::Failed(*errno),
+        _ => SourceError::Failed(rustix::io::Errno::INVAL),
     }
 }
 
@@ -410,7 +427,7 @@ impl LayerBufferSource for GbmSurfaceSource {
         let device = RawDevice { fd: borrowed };
         let fb = self
             .framebuffer_for(&device, &buffer)
-            .map_err(|_| SourceError::Failed(rustix::io::Errno::INVAL))?;
+            .map_err(|error| acquire_error(&error))?;
 
         // The layout is whatever the driver chose, which is only knowable once
         // a buffer exists. A caller that negotiated one still has to read this
@@ -424,11 +441,7 @@ impl LayerBufferSource for GbmSurfaceSource {
         Ok(AcquiredBuffer {
             fb_id: u32::from(fb),
             token,
-            acquire_fence: self
-                .pending_fence
-                .as_ref()
-                .and_then(SyncFence::as_fd)
-                .and_then(|fd| SyncFence::import(fd).ok()),
+            acquire_fence: self.take_acquire_fence(),
             damage: Vec::new(),
         })
     }

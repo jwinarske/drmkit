@@ -76,6 +76,16 @@ minor version may break the API and a patch version does not.
   does and as `ScanoutProducer` documented. It passed an empty set, which a
   producer reads as no constraint, so a tiled or compressed buffer no plane
   takes could reach the first commit (P-66).
+- `drmkit-scene-gbm`: the producer's acquire fence covers one frame, as the
+  reference hands it over: the acquire that takes it clears it. Every later
+  frame got a copy, so the display engine waited on a render long finished,
+  and a frame the producer had not fenced was never told apart. A
+  framebuffer the kernel refuses reports the kernel's errno rather than
+  `EINVAL` (P-67).
+- `drmkit-present`: `FrameEconomy::default()` is the same as `new()`; its
+  first decision commits in full. The derived default started as though a
+  frame had gone out already, so an unchanged first frame was skipped
+  (P-67).
 - `drmkit-scene-set`: a mirrored layer's plane binding reaches its source,
   as the reference forwards it, and a removed layer's slot is reused, so a
   set whose layers come and go no longer grows by one slot each time

@@ -271,3 +271,45 @@ fn require_bind_gates_acquire_until_bound() {
          new one"
     );
 }
+
+/// The producer's fence covers one frame: the acquire that takes it clears
+/// it, as the reference's `std::exchange` does, rather than handing a copy of
+/// the same fence to every frame after.
+#[test]
+fn the_acquire_fence_is_handed_out_once() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let mut source = match GbmSurfaceSource::create(&device, &good_config()) {
+        Ok(source) => source,
+        Err(error) => {
+            drmkit_testkit::skipped(&format!("no GBM surface here ({error})"));
+            return;
+        }
+    };
+
+    let fd = std::fs::File::open("/dev/null").expect("open /dev/null");
+    source.set_acquire_fence(drmkit_sync::SyncFence::from_owned(fd.into()));
+    assert!(
+        source.take_acquire_fence().is_some(),
+        "the fence is handed out"
+    );
+    assert!(
+        source.take_acquire_fence().is_none(),
+        "and only once: the next frame has no fence of its own"
+    );
+}
+
+/// A refused framebuffer reports the kernel's errno, not `EINVAL` whatever
+/// the kernel said.
+#[test]
+fn a_refused_framebuffer_keeps_its_errno() {
+    use rustix::io::Errno;
+    assert!(matches!(
+        crate::acquire_error(&SurfaceError::Framebuffer(Errno::NOSPC)),
+        SourceError::Failed(Errno::NOSPC)
+    ));
+    assert!(matches!(
+        crate::acquire_error(&SurfaceError::UnsupportedFormat { fourcc: 0 }),
+        SourceError::Failed(Errno::INVAL)
+    ));
+}

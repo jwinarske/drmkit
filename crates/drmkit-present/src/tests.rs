@@ -331,6 +331,15 @@ mod frame_economy {
         assert_eq!(economy.skipped(), 0);
     }
 
+    /// A default economy is a fresh one: its first frame commits full too.
+    /// A derived default started it as though a frame had already gone out,
+    /// so the first frame of an unchanged scene was skipped.
+    #[test]
+    fn a_default_economy_commits_its_first_frame_full() {
+        let mut economy = FrameEconomy::default();
+        assert_eq!(economy.decide(false, false), FrameAction::CommitFull);
+    }
+
     /// An unchanged frame after the first is skipped: no commit at all.
     #[test]
     fn an_idle_frame_costs_nothing() {

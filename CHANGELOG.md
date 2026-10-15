@@ -130,6 +130,11 @@ minor version may break the API and a patch version does not.
 - `drmkit-present`: `DumbRingSource::new` refuses a zero width, height or
   slot count as the new `PaintError::Zero`, as the reference refuses it with
   `EINVAL`, rather than failing at the first paint (P-72).
+- `drmkit-scene-sources`: a dma-buf import tears down on the device file it
+  was made on, through a descriptor of its own, rather than through the
+  caller's descriptor number. After a session loss the next open can take
+  that number, and clearing a `DmaBufSourceCache` -- documented for session
+  loss -- removed the new file's framebuffer (P-73).
 
 ## [0.1.1] - 2026-10-14
 

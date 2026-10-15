@@ -79,8 +79,16 @@ pub(crate) struct ImportedFramebuffer {
     /// buffer until the device descriptor closes, however long after the
     /// producer freed it.
     handles: Vec<drm::buffer::Handle>,
-    /// The descriptor the framebuffer was registered on, for teardown.
-    device_fd: std::os::fd::RawFd,
+    /// The device file the framebuffer was registered on, held for teardown.
+    ///
+    /// A duplicate rather than the number: after a session loss the caller's
+    /// descriptor closes and the next open may take its number, and the kernel
+    /// may hand out the freed framebuffer id again. A teardown through the
+    /// number would then remove the new file's framebuffer. Through this, it
+    /// reaches the file these objects belong to, whatever became of the
+    /// number. `None` once forgotten or taken, when there is nothing to tear
+    /// down.
+    device: Option<OwnedFd>,
 }
 
 impl ImportedFramebuffer {
@@ -120,14 +128,17 @@ impl ImportedFramebuffer {
     pub(crate) fn forget(&mut self) {
         self.fb = None;
         self.handles.clear();
+        // The objects belong to the old file, which reclaims them when its
+        // last descriptor closes; this one is not needed to tear them down.
+        self.device = None;
     }
 
     /// Import the kept descriptors again on `device`, after a session resume.
     ///
-    /// The old framebuffer and handles went with the old descriptor, so they
-    /// are forgotten rather than torn down -- an ioctl on that descriptor
-    /// would at best fail and at worst land on whatever reused its number.
-    /// The buffer itself is unchanged; only its import is new. On failure
+    /// The old framebuffer and handles belong to the old file, which reclaims
+    /// them when its last descriptor closes, so they are forgotten rather than
+    /// torn down on a file the session has revoked. The buffer itself is
+    /// unchanged; only its import is new. On failure
     /// nothing is left imported, and `fb_id` reports `None`.
     ///
     /// # Errors
@@ -148,6 +159,7 @@ impl ImportedFramebuffer {
                 reason: "format is not a recognized DRM FourCC",
             }
         })?;
+        let device_duplicate = duplicate(device.as_fd())?;
         let (fb, handles) = import_planes(
             device,
             format,
@@ -158,17 +170,25 @@ impl ImportedFramebuffer {
         )?;
         self.fb = Some(fb);
         self.handles = handles;
-        self.device_fd = device.raw_fd();
+        self.device = Some(device_duplicate);
         Ok(())
     }
 
     /// Tear the import down on its own descriptor, as a drop would, keeping
     /// the descriptors for another try.
     pub(crate) fn release(&mut self) {
-        // SAFETY: as in `Drop`: the descriptor these were made on, borrowed
-        // only for these ioctls.
-        let borrowed = unsafe { BorrowedFd::borrow_raw(self.device_fd) };
-        let device = RawDevice { fd: borrowed };
+        self.tear_down();
+    }
+
+    /// Remove the framebuffer, then close the handles, on the file they were
+    /// made on, as the reference's `teardown_slot` does.
+    fn tear_down(&mut self) {
+        let Some(file) = self.device.take() else {
+            self.fb = None;
+            self.handles.clear();
+            return;
+        };
+        let device = RawDevice { fd: file.as_fd() };
         if let Some(fb) = self.fb.take() {
             let _ = device.destroy_framebuffer(fb);
         }
@@ -178,20 +198,17 @@ impl ImportedFramebuffer {
 
 impl Drop for ImportedFramebuffer {
     fn drop(&mut self) {
-        if self.fb.is_none() && self.handles.is_empty() {
-            return;
-        }
-        // SAFETY: `device_fd` is the descriptor this framebuffer was
-        // registered on, borrowed only for these ioctls.
-        let borrowed = unsafe { BorrowedFd::borrow_raw(self.device_fd) };
-        let device = RawDevice { fd: borrowed };
-        // The framebuffer first, then the handles, as the reference's
-        // `teardown_slot` does.
-        if let Some(fb) = self.fb.take() {
-            let _ = device.destroy_framebuffer(fb);
-        }
-        close_handles(&device, &mut self.handles);
+        self.tear_down();
     }
+}
+
+/// A descriptor of our own on `fd`'s file.
+fn duplicate(fd: BorrowedFd<'_>) -> Result<OwnedFd, ExternalError> {
+    fd.try_clone_to_owned().map_err(|error| {
+        ExternalError::Io(
+            rustix::io::Errno::from_io_error(&error).unwrap_or(rustix::io::Errno::MFILE),
+        )
+    })
 }
 
 /// Close each distinct GEM handle in `handles`, leaving it empty.
@@ -371,6 +388,7 @@ impl ExternalDmaBufSource {
             })?);
         }
 
+        let device_duplicate = duplicate(device.as_fd())?;
         let offsets: Vec<u32> = planes.iter().map(|plane| plane.offset).collect();
         let pitches: Vec<u32> = planes.iter().map(|plane| plane.pitch).collect();
         let (fb, imported) = import_planes(device, format, fourcc, &duped, &offsets, &pitches)?;
@@ -382,7 +400,7 @@ impl ExternalDmaBufSource {
                 pitches,
                 fb: Some(fb),
                 handles: imported,
-                device_fd: device.raw_fd(),
+                device: Some(device_duplicate),
             },
             format,
             pending_fence: None,
@@ -429,7 +447,7 @@ impl ExternalDmaBufSource {
                 pitches: Vec::new(),
                 fb: None,
                 handles: Vec::new(),
-                device_fd: -1,
+                device: None,
             },
         )
     }

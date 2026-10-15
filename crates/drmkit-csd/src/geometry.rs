@@ -60,13 +60,13 @@ pub fn decoration_geometry(theme: &Theme, deco_w: u32, deco_h: u32) -> Decoratio
     // reproduce faithfully.
     let extent = theme.shadow_extent.max(0);
 
-    let panel_w = (i64::from(deco_w) - i64::from(2 * extent)).max(0);
-    let panel_h = (i64::from(deco_h) - i64::from(2 * extent)).max(0);
+    let panel_w = (i64::from(deco_w) - 2 * i64::from(extent)).max(0);
+    let panel_h = (i64::from(deco_h) - 2 * i64::from(extent)).max(0);
     let panel_w = i32::try_from(panel_w).unwrap_or(i32::MAX);
     let panel_h = i32::try_from(panel_h).unwrap_or(i32::MAX);
 
     let title_bar_height = theme.title_bar.height.max(0);
-    let button_cy = extent + (title_bar_height / 2);
+    let button_cy = extent.saturating_add(title_bar_height / 2);
 
     // Right to left: close is outermost, because it is the one a user reaches
     // for by feel and the one that must not move when the others are absent.

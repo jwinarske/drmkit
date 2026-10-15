@@ -58,7 +58,8 @@ pub fn theme_id(theme: &Theme) -> u64 {
         *hash = hash.wrapping_mul(PRIME);
     };
     let u32_field = |value: u32, hash: &mut u64| {
-        for shift in [0, 8, 16, 24] {
+        // Most significant byte first, as the reference hashes it.
+        for shift in [24, 16, 8, 0] {
             byte(u8::try_from((value >> shift) & 0xFF).unwrap_or(0), hash);
         }
     };
@@ -192,7 +193,12 @@ impl ShadowCache {
         self.order.clear();
     }
 
-    /// Blit this shadow into `dst`, rendering it first if it is not cached.
+    /// Composite this shadow onto `dst`, rendering it first if it is not
+    /// cached.
+    ///
+    /// Source-over, in premultiplied alpha, as the reference composites it:
+    /// what is already in `dst` shows through where the shadow is not opaque.
+    /// On a cleared buffer that is the same as a copy.
     ///
     /// Returns whether anything was written. A zero-sized key or an
     /// undersized destination writes nothing rather than failing: a window
@@ -224,19 +230,25 @@ impl ShadowCache {
                 // the end of their buffer.
                 break;
             };
-            out.copy_from_slice(src);
+            src_over_row(src, out);
         }
         true
     }
 
-    /// Blit a blend of two shadows, `t` of the way from `a` to `b`.
+    /// Composite a blend of two shadows, `t` of the way from `a` to `b`, onto
+    /// `dst`.
     ///
     /// What a focus change animates through. Both patches are cached, so the
-    /// transition costs a per-pixel lerp rather than a blur per frame.
+    /// transition costs a per-pixel lerp rather than a blur per frame. The
+    /// blend is composited source-over, as [`blit_into`](Self::blit_into) is,
+    /// and the endpoints are exactly `blit_into` of one patch.
     ///
     /// `t` is clamped to `0..=1`: an animation that overshoots is a caller
     /// bug, and extrapolating a colour past its endpoints produces values
     /// that are not a shadow at all.
+    ///
+    /// The two keys must be the same size, as the reference requires; keys
+    /// that differ write nothing and return `false`.
     pub fn blit_cross_fade(
         &mut self,
         a: ShadowKey,
@@ -245,32 +257,45 @@ impl ShadowCache {
         dst: &mut ShadowDest<'_>,
         t: f32,
     ) -> bool {
-        if a.width == 0 || a.height == 0 || dst.width == 0 || dst.height == 0 {
+        if a.width == 0
+            || a.height == 0
+            || a.width != b.width
+            || a.height != b.height
+            || dst.width == 0
+            || dst.height == 0
+        {
             return false;
+        }
+        let t = t.clamp(0.0, 1.0);
+        if t <= 0.0 {
+            return self.blit_into(a, theme, dst);
+        }
+        if t >= 1.0 {
+            return self.blit_into(b, theme, dst);
         }
         self.ensure(a, theme);
         self.ensure(b, theme);
         let (Some(from), Some(to)) = (self.entries.get(&a), self.entries.get(&b)) else {
             return false;
         };
-        let t = t.clamp(0.0, 1.0);
 
-        let rows = a.height.min(b.height).min(dst.height) as usize;
-        let cols = a.width.min(b.width).min(dst.width) as usize;
+        let rows = a.height.min(dst.height) as usize;
+        let cols = a.width.min(dst.width) as usize;
+        let mut blended = vec![0u8; cols * 4];
         for y in 0..rows {
-            for x in 0..cols * 4 {
-                let src_index = y * a.width as usize * 4 + x;
-                let dst_index = y * dst.stride as usize + x;
-                let (Some(lhs), Some(rhs), Some(out)) = (
-                    from.get(src_index),
-                    to.get(y * b.width as usize * 4 + x),
-                    dst.pixels.get_mut(dst_index),
-                ) else {
-                    break;
-                };
-                let blended = f32::from(*lhs) + (f32::from(*rhs) - f32::from(*lhs)) * t;
-                *out = to_u8(blended);
+            let start = y * a.width as usize * 4;
+            let to_row = y * dst.stride as usize;
+            let (Some(lhs), Some(rhs), Some(out)) = (
+                from.get(start..start + cols * 4),
+                to.get(start..start + cols * 4),
+                dst.pixels.get_mut(to_row..to_row + cols * 4),
+            ) else {
+                break;
+            };
+            for ((mixed, l), r) in blended.iter_mut().zip(lhs).zip(rhs) {
+                *mixed = to_u8(f32::from(*l) + (f32::from(*r) - f32::from(*l)) * t);
             }
+            src_over_row(&blended, out);
         }
         true
     }
@@ -292,6 +317,19 @@ impl ShadowCache {
 
         self.entries.insert(key, render_shadow(key, theme));
         self.order.push(key);
+    }
+}
+
+/// Composite one row of premultiplied pixels source-over onto `dst`, as the
+/// reference's `src_over_row` does: each channel is the source plus the
+/// destination scaled by what the source leaves uncovered.
+fn src_over_row(src: &[u8], dst: &mut [u8]) {
+    for (s, d) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
+        let uncovered = 255 - u16::from(s[3]);
+        for (out, add) in d.iter_mut().zip(s) {
+            let kept = u16::from(*out) * uncovered / 255;
+            *out = u8::try_from(u16::from(*add) + kept).unwrap_or(u8::MAX);
+        }
     }
 }
 

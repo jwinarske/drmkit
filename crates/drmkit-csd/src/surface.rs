@@ -47,6 +47,11 @@ pub enum SurfaceError {
     /// allocation failure: nothing went wrong, there is simply nothing here.
     #[error("this surface holds no buffer")]
     Empty,
+
+    /// The kernel refused to export the buffer as a DMA-BUF. Carries its
+    /// errno, as the reference reports it.
+    #[error("exporting a decoration surface: {0}")]
+    Export(rustix::io::Errno),
 }
 
 /// The one format a decoration is ever drawn in.
@@ -167,10 +172,14 @@ impl Surface {
 
     /// Export the buffer as a DMA-BUF.
     ///
+    /// The descriptor is close-on-exec, as the reference exports it, so a
+    /// compositor that spawns a client does not hand it the decoration.
+    ///
     /// # Errors
     ///
-    /// [`SurfaceError::Empty`] when there is no buffer, and whatever the
-    /// export failed with otherwise.
+    /// [`SurfaceError::Empty`] when there is no buffer, and
+    /// [`SurfaceError::Export`] with the kernel's errno when the export is
+    /// refused.
     pub fn export(&self, device: &Device) -> Result<std::os::fd::OwnedFd, SurfaceError> {
         let buffer = self.buffer.as_ref().ok_or(SurfaceError::Empty)?;
         let handle = buffer
@@ -178,8 +187,12 @@ impl Surface {
             .and_then(drm::control::from_u32)
             .ok_or(SurfaceError::Empty)?;
         device
-            .buffer_to_prime_fd(handle, 0)
-            .map_err(|_| SurfaceError::Empty)
+            .buffer_to_prime_fd(handle, rustix::fs::OFlags::CLOEXEC.bits())
+            .map_err(|error| {
+                SurfaceError::Export(
+                    rustix::io::Errno::from_io_error(&error).unwrap_or(rustix::io::Errno::IO),
+                )
+            })
     }
 
     /// Drop the buffer without issuing ioctls against its descriptor.

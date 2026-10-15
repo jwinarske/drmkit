@@ -149,6 +149,11 @@ minor version may break the API and a patch version does not.
   forced there, is blended from the shared source, as the reference blends
   it. It was dropped from every frame, since a shared source could not be
   mapped (P-68).
+- `drmkit-dumb`, `drmkit-scene-gbm`: a dumb buffer, and a GBM surface
+  source's framebuffers, are torn down on the device file they were made on,
+  through a descriptor of their own, as dma-buf imports are since P-73. A
+  buffer dropped after a session loss destroyed the buffer of whatever file
+  reused its descriptor number (P-75).
 
 ## [0.1.1] - 2026-10-14
 

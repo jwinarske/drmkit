@@ -483,3 +483,46 @@ fn report_whether_any_plane_scans_out_p010_vkms() {
 
     println!("note: {takers} of {} planes advertise P010", handles.len());
 }
+
+/// Dropping a buffer after its device has closed touches nothing on the device
+/// that replaced it.
+///
+/// After a session loss the caller's descriptor closes and the next open of
+/// the card takes the same number. GEM handles are numbered per file, so the
+/// new file's first buffer has the handle the old one had. A teardown through
+/// the number would destroy the new file's buffer; through the buffer's own
+/// descriptor it reaches the old file.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn dropping_a_buffer_after_its_device_closed_spares_the_next_one_vkms() {
+    use std::os::fd::{AsFd as _, AsRawFd as _};
+
+    let _guard = card_guard();
+    let config = Config {
+        width: 16,
+        height: 16,
+        fourcc: fourcc::XRGB8888,
+        ..Config::default()
+    };
+    let before = open_card();
+    let number = before.as_fd().as_raw_fd();
+    let old = Buffer::create(&before, &config).expect("allocate on the old open");
+    drop(before);
+
+    let after = open_card();
+    if after.as_fd().as_raw_fd() != number {
+        println!("note: skipped -- the descriptor number was not reused");
+        return;
+    }
+    let new = Buffer::create(&after, &config).expect("allocate on the new open");
+    let handle = new.gem_handle().expect("a live buffer has a handle");
+    if Some(handle) != old.gem_handle() {
+        println!("note: the GEM handle was not reused");
+    }
+
+    drop(old);
+    assert!(
+        drm_ffi::mode::dumbbuffer::map(after.as_fd(), handle, 0, 0).is_ok(),
+        "dropping the old buffer destroyed GEM handle {handle} on the device that replaced its own"
+    );
+}

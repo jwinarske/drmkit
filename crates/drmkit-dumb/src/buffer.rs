@@ -5,7 +5,7 @@
 //!
 //! Port of `src/dumb/buffer.{hpp,cpp}`.
 
-use std::os::fd::{AsFd as _, BorrowedFd, RawFd};
+use std::os::fd::{AsFd as _, BorrowedFd, OwnedFd};
 use std::ptr::NonNull;
 
 use drm::buffer::DrmFourcc;
@@ -160,8 +160,15 @@ const fn planar_geometry(fourcc_code: u32) -> Option<PlanarGeometry> {
 /// held. See [`Mapping`] for why the cost contract matters.
 #[derive(Debug)]
 pub struct Buffer {
-    /// `None` once [`Buffer::forget`] has run or the buffer is empty.
-    fd: Option<RawFd>,
+    /// The device file the buffer was allocated on, held for teardown.
+    ///
+    /// A duplicate rather than the number: after a session loss the caller's
+    /// descriptor closes and the next open may take its number, and the kernel
+    /// hands out freed GEM handles and framebuffer ids again. A teardown
+    /// through the number would destroy the new file's objects. Through this,
+    /// it reaches the file these belong to. `None` once [`Buffer::forget`] has
+    /// run or the buffer is empty.
+    fd: Option<OwnedFd>,
     alloc: Option<Allocation>,
     fb: Option<framebuffer::Handle>,
     mapping: Option<Mmap>,
@@ -228,6 +235,8 @@ impl Buffer {
                 reason: "format is not a recognized DRM FourCC",
             })?;
 
+        // Before the allocation, so a failure here leaks nothing.
+        let file = duplicate(device)?;
         let created = drm_ffi::mode::dumbbuffer::create(
             device.as_fd(),
             config.width,
@@ -240,7 +249,7 @@ impl Buffer {
         // Anything failing past this point must release the GEM allocation, or
         // the buffer leaks until the descriptor closes.
         let mut buffer = Self {
-            fd: Some(device.raw_fd()),
+            fd: Some(file),
             width: config.width,
             height: config.height,
             stride: created.pitch,
@@ -321,13 +330,15 @@ impl Buffer {
                 what: "total row count",
             })?;
 
+        // Before the allocation, so a failure here leaks nothing.
+        let file = duplicate(device)?;
         let created =
             drm_ffi::mode::dumbbuffer::create(device.as_fd(), width, total_rows, geometry.bpp, 0)
                 .map_err(|e| io_to_errno(&e))?;
 
         let stride = created.pitch;
         let mut buffer = Self {
-            fd: Some(device.raw_fd()),
+            fd: Some(file),
             // The image dimensions, not the over-allocated row count: a
             // consumer reading `height()` sees the visible image, matching how
             // the framebuffer is framed.
@@ -485,15 +496,14 @@ impl Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        let (Some(fd), Some(alloc)) = (self.fd, self.alloc.take()) else {
+        let (Some(file), Some(alloc)) = (self.fd.take(), self.alloc.take()) else {
             // Already forgotten, or never allocated. The mapping still drops.
             return;
         };
 
-        // SAFETY: `fd` is the descriptor this buffer allocated against. The
-        // borrow lives only for these two ioctls, and `forget` is the
-        // documented escape hatch for when the descriptor is known dead.
-        let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
+        // The file this buffer was allocated on, whatever became of the
+        // caller's descriptor number.
+        let borrowed = file.as_fd();
         let device = RawDevice { fd: borrowed };
 
         if let Some(fb) = self.fb.take() {
@@ -507,6 +517,14 @@ impl Drop for Buffer {
 
         let _ = drm_ffi::mode::dumbbuffer::destroy(borrowed, alloc.handle);
     }
+}
+
+/// A descriptor of our own on `device`'s file, for teardown.
+fn duplicate(device: &Device) -> Result<OwnedFd> {
+    device
+        .as_fd()
+        .try_clone_to_owned()
+        .map_err(|e| io_to_errno(&e))
 }
 
 /// Minimal device adapter for the two teardown ioctls, so `Drop` need not hold

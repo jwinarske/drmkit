@@ -140,8 +140,12 @@ pub struct GbmSurfaceSource {
     next_token: u64,
     /// The producer's render-done fence, if it set one.
     pending_fence: Option<SyncFence>,
-    /// The descriptor the framebuffers were registered on, for teardown.
-    device_fd: std::os::fd::RawFd,
+    /// The device file the framebuffers are registered on, held for their
+    /// registration and teardown.
+    ///
+    /// A duplicate rather than the number, so a teardown after the caller's
+    /// descriptor closed reaches this file and not whatever reused the number.
+    device_fd: std::os::fd::OwnedFd,
     /// Set by `on_session_paused`: the descriptor is gone, so the framebuffer
     /// ids must not be committed and must not be destroyed through it either.
     paused: bool,
@@ -212,7 +216,7 @@ impl GbmSurfaceSource {
             locked: HashMap::new(),
             next_token: 1,
             pending_fence: None,
-            device_fd: device.raw_fd(),
+            device_fd: duplicate(device).map_err(drmkit_gbm::GbmError::Io)?,
             paused: false,
             bound: false,
             gbm,
@@ -329,6 +333,15 @@ impl GbmSurfaceSource {
     }
 }
 
+/// A descriptor of our own on `device`'s file.
+fn duplicate(device: &Device) -> Result<std::os::fd::OwnedFd, rustix::io::Errno> {
+    std::os::fd::AsFd::as_fd(device)
+        .try_clone_to_owned()
+        .map_err(|error| {
+            rustix::io::Errno::from_io_error(&error).unwrap_or(rustix::io::Errno::MFILE)
+        })
+}
+
 /// A framebuffer failure as the scene sees it: the kernel's errno where it
 /// gave one, as the reference reports it, and `EINVAL` for a format that was
 /// never the kernel's to refuse.
@@ -427,9 +440,12 @@ impl LayerBufferSource for GbmSurfaceSource {
         // surface is live and this source is the only thing that locks it.
         let buffer = unsafe { self.surface.lock_front_buffer() }.ok_or(SourceError::WouldBlock)?;
 
-        // SAFETY: the descriptor belongs to the device this source was built
-        // against, which outlives it; the borrow lasts only for the ioctl.
-        let borrowed = unsafe { std::os::fd::BorrowedFd::borrow_raw(self.device_fd) };
+        // SAFETY: `device_fd` is this source's own descriptor, which stays open
+        // for the whole call -- nothing below replaces it. Borrowed by number
+        // only because `framebuffer_for` needs `self` mutably beside it.
+        let borrowed = unsafe {
+            std::os::fd::BorrowedFd::borrow_raw(std::os::fd::AsRawFd::as_raw_fd(&self.device_fd))
+        };
         let device = RawDevice { fd: borrowed };
         let fb = self
             .framebuffer_for(&device, &buffer)
@@ -504,7 +520,7 @@ impl LayerBufferSource for GbmSurfaceSource {
         self.surface = surface;
         self.gbm = gbm;
         self.framebuffers.clear();
-        self.device_fd = device.raw_fd();
+        self.device_fd = duplicate(device).map_err(SourceError::Failed)?;
         self.paused = false;
         // A new surface: the producer must bind it again.
         self.bound = false;
@@ -517,10 +533,9 @@ impl Drop for GbmSurfaceSource {
         if self.paused || self.framebuffers.is_empty() {
             return;
         }
-        // SAFETY: as in `acquire` -- the device outlives this source, and the
-        // borrow lasts only for these ioctls.
-        let borrowed = unsafe { std::os::fd::BorrowedFd::borrow_raw(self.device_fd) };
-        let device = RawDevice { fd: borrowed };
+        let device = RawDevice {
+            fd: std::os::fd::AsFd::as_fd(&self.device_fd),
+        };
         for fb in self.framebuffers.values() {
             // Unactionable in a destructor, and the kernel reclaims them when
             // the descriptor closes either way.

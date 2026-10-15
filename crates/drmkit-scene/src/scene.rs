@@ -673,6 +673,85 @@ impl LayerScene {
         self.pin_verdicts.clear();
     }
 
+    /// The session is losing DRM master: hand every held buffer back to its
+    /// source, then tell each source and the canvas to stop using the device.
+    ///
+    /// Port of the reference's `LayerScene::on_session_paused`. The held
+    /// buffers go back first, while their sources are still in a state to
+    /// accept a release; each source then forgets or tears down what is bound
+    /// to the descriptor, and the canvas forgets its buffers without an ioctl.
+    /// A flip still armed is counted as landed: its event belongs to a
+    /// descriptor that is being revoked and will never be dispatched.
+    ///
+    /// Call [`on_session_resumed`](Self::on_session_resumed) with the new
+    /// device when the session comes back.
+    pub fn on_session_paused(&mut self) {
+        self.drain();
+        for handle in self.handles().collect::<Vec<_>>() {
+            if let Some(layer) = self.layer_mut(handle) {
+                layer.source.on_session_paused();
+            }
+        }
+        if let Some(canvas) = self.canvas.as_mut() {
+            canvas.forget();
+        }
+        self.lifecycle.flip_landed();
+    }
+
+    /// The session is back, on `device`: rebuild everything that belonged to
+    /// the old descriptor, and lift any suspension.
+    ///
+    /// Port of the reference's `LayerScene::on_session_resumed`. The
+    /// allocator forgets the previous output -- its assignment, committed
+    /// baseline and failure cache describe kernel state the old descriptor
+    /// took with it -- so the next frame is searched and emitted in full, and
+    /// is never skipped as unchanged. Each source re-allocates or re-imports
+    /// against `device`. The canvas is made again at its size and format; if
+    /// that fails composition is off until
+    /// [`enable_composition`](Self::enable_composition) is called again, as
+    /// the reference drops its canvas then.
+    ///
+    /// The plane registry is the caller's, passed to each
+    /// [`build_frame`](Self::build_frame): probe it again on `device` too.
+    ///
+    /// # Errors
+    ///
+    /// [`SceneError::Source`] with the first source that cannot resume, as
+    /// the reference stops at it. The sources after it have not been resumed,
+    /// and the scene stays suspended if it was; calling this again retries.
+    pub fn on_session_resumed(&mut self, device: &Device) -> Result<(), SceneError> {
+        self.allocator.forget_output();
+        self.topology_dirty = true;
+        self.committed_once = false;
+        for handle in self.handles().collect::<Vec<_>>() {
+            if let Some(layer) = self.layer_mut(handle) {
+                layer.hints_dirty = true;
+                layer.display_dirty = true;
+                layer.last_fb_id = None;
+                layer.source.on_session_resumed(device)?;
+            }
+        }
+        if let Some(mut canvas) = self.canvas.take() {
+            // Already forgotten on pause; again here in case it was not, so
+            // the old buffers drop without an ioctl on the old descriptor.
+            canvas.forget();
+            match CompositeCanvas::create_in(
+                device,
+                canvas.width(),
+                canvas.height(),
+                canvas.fourcc(),
+            ) {
+                Ok(fresh) => self.canvas = Some(fresh),
+                Err(error) => drmkit_log::log_warn!(
+                    "scene: the composition canvas could not be made again after a resume ({error}); \
+                     composition is off until it is enabled again"
+                ),
+            }
+        }
+        self.resume();
+        Ok(())
+    }
+
     /// Add a layer backed by `source`.
     pub fn add_layer(&mut self, source: Box<dyn LayerBufferSource>) -> LayerHandle {
         self.topology_dirty = true;

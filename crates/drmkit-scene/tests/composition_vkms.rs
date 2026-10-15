@@ -72,6 +72,14 @@ impl LayerBufferSource for MappableSource {
     ) -> Result<drmkit_dumb::Mapping<'_>, SourceError> {
         self.inner.map(access)
     }
+
+    fn on_session_paused(&mut self) {
+        self.inner.on_session_paused();
+    }
+
+    fn on_session_resumed(&mut self, device: &Device) -> Result<(), SourceError> {
+        self.inner.on_session_resumed(device)
+    }
 }
 
 /// A source whose pixels the CPU cannot read.
@@ -1198,4 +1206,145 @@ fn canvas_avoids_the_virtual_plane(mut fx: Fixture, overflow: bool) -> bool {
     );
     fx.scene.drain();
     true
+}
+
+/// Build, emit and kernel-test one frame, and settle it as committed.
+fn commit_one(fx: &mut Fixture) -> Result<(), std::io::Error> {
+    let mut build = build(fx);
+    let mut request = AtomicRequest::with_capacity(96);
+    emit_frame(&mut request, &fx.map, &mut build, None).expect("emit");
+    let verdict = request.test(&fx.device, AtomicCommitFlags::empty());
+    fx.scene.finalize_frame(build, KernelResult::Ok);
+    verdict.map_err(std::io::Error::from)
+}
+
+/// A scene comes back from a session loss whole: pausing hands every held
+/// buffer back, and resuming on a fresh open of the card rebuilds what the old
+/// one took with it -- the sources' buffers and the canvas -- so the first
+/// frame after is one the kernel takes.
+///
+/// Port of the reference's `LayerScene::on_session_paused` and
+/// `on_session_resumed`. Without them every caller had to walk the layers
+/// itself, and one that did not committed framebuffer ids the new descriptor
+/// had never seen.
+#[test]
+#[ignore = "needs a DRM device"]
+fn a_scene_survives_a_session_loss_vkms() {
+    let _guard = card_guard();
+    let Some(mut fx) = fixture() else { return };
+    if common::skip_if_primary_only(
+        &fx.registry,
+        fx.crtc_index,
+        "a canvas on a plane of its own, to resume with the layers",
+    ) {
+        return;
+    }
+    let outstanding = std::rc::Rc::new(std::cell::Cell::new(0_i64));
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    for i in 0..fx.planes + 2 {
+        let inner =
+            drmkit_scene_sources::DumbBufferSource::create(&fx.device, 32, 32, fourcc::ARGB8888)
+                .expect("dumb source");
+        let handle = fx.scene.add_layer(Box::new(Counted {
+            inner: MappableSource { inner },
+            outstanding: std::rc::Rc::clone(&outstanding),
+            seen: std::rc::Rc::clone(&seen),
+        }));
+        fx.scene
+            .layer_mut(handle)
+            .expect("layer")
+            .set_display(DisplayParams {
+                dst_rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 32,
+                    h: 32,
+                },
+                zpos: Some(i as u64),
+                ..DisplayParams::default()
+            });
+    }
+    // One frame, kernel-tested and settled as committed: its buffers stay
+    // held until later commits retire them.
+    commit_one(&mut fx).expect("the frame before the pause");
+    assert!(outstanding.get() > 0, "a committed frame holds its buffers");
+    let before: Vec<u32> = seen.borrow_mut().drain(..).collect();
+
+    fx.scene.on_session_paused();
+    assert_eq!(outstanding.get(), 0, "a pause hands every held buffer back");
+    assert!(!fx.scene.has_pending_flip());
+
+    // The session is lost, as a VT switch loses it: the old descriptor drops
+    // master and closes, and the card is opened again -- the new open takes
+    // master, which a descriptor opened beside a master could not later.
+    fx.device.drop_master().expect("drop master");
+    let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
+    let lost = std::mem::replace(&mut fx.device, Device::open(&path).expect("reopen"));
+    drop(lost);
+    fx.device
+        .enable_universal_planes()
+        .expect("universal planes");
+    fx.device.enable_atomic().expect("atomic");
+
+    fx.scene
+        .on_session_resumed(&fx.device)
+        .expect("every source re-allocates");
+    assert!(
+        fx.scene.canvas_fourcc().is_some(),
+        "the canvas is made again"
+    );
+    commit_one(&mut fx).expect("the first frame after the resume is one the kernel takes");
+    // Every source re-allocated on the new descriptor: nothing it hands out
+    // is a framebuffer from before the loss.
+    let after = seen.borrow();
+    assert!(
+        !after.is_empty(),
+        "the frame after the resume acquired its layers"
+    );
+    assert!(
+        after.iter().all(|fb| !before.contains(fb)),
+        "a source still hands out a framebuffer from the lost descriptor: before {before:?}, after {after:?}"
+    );
+    fx.scene.drain();
+}
+
+/// A source that counts the buffers the scene holds of it.
+struct Counted {
+    inner: MappableSource,
+    outstanding: std::rc::Rc<std::cell::Cell<i64>>,
+    /// Every framebuffer id handed to the scene.
+    seen: std::rc::Rc<std::cell::RefCell<Vec<u32>>>,
+}
+
+impl LayerBufferSource for Counted {
+    fn acquire(&mut self) -> Result<AcquiredBuffer, SourceError> {
+        let acquired = self.inner.acquire()?;
+        self.outstanding.set(self.outstanding.get() + 1);
+        self.seen.borrow_mut().push(acquired.fb_id);
+        Ok(acquired)
+    }
+
+    fn release(&mut self, acquired: AcquiredBuffer) {
+        self.outstanding.set(self.outstanding.get() - 1);
+        self.inner.release(acquired);
+    }
+
+    fn format(&self) -> SourceFormat {
+        self.inner.format()
+    }
+
+    fn map(
+        &mut self,
+        access: drmkit_dumb::MapAccess,
+    ) -> Result<drmkit_dumb::Mapping<'_>, SourceError> {
+        self.inner.map(access)
+    }
+
+    fn on_session_paused(&mut self) {
+        self.inner.on_session_paused();
+    }
+
+    fn on_session_resumed(&mut self, device: &Device) -> Result<(), SourceError> {
+        self.inner.on_session_resumed(device)
+    }
 }

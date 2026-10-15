@@ -51,7 +51,7 @@ struct StarvableSource {
 impl LayerBufferSource for StarvableSource {
     /// A fresh import of the fence on every acquire, never the fence itself.
     ///
-    /// This is the behaviour the scenario exists to compare. The scene
+    /// This is the behavior the scenario exists to compare. The scene
     /// acquires each source **twice** per frame -- once for the `TEST_ONLY`
     /// commit and once for the real one -- so a source that handed over an
     /// owned fence would have nothing left the second time, and the commit
@@ -80,7 +80,7 @@ impl LayerBufferSource for StarvableSource {
     ///
     /// Without it a layer the allocator cannot place has no route into the
     /// canvas and simply stays off the screen -- which is a legitimate
-    /// behaviour, but not the one a composition scenario is trying to compare.
+    /// behavior, but not the one a composition scenario is trying to compare.
     fn map(
         &mut self,
         access: drmkit_dumb::MapAccess,
@@ -110,11 +110,11 @@ struct Runner<'a> {
     /// Each layer's acquire-fence slot, so `fence` can fill one after the
     /// layer was added.
     fence_slots: HashMap<String, Rc<RefCell<Option<OwnedFd>>>>,
-    /// A signalled fence kept from an earlier frame's out-fence.
+    /// A signaled fence kept from an earlier frame's out-fence.
     ///
-    /// It has to be *signalled*: an acquire fence goes to the kernel as
-    /// `IN_FENCE_FD` and scanout is held until it fires, so an unsignalled one
-    /// would simply hang the flip. A previous frame's out-fence is signalled
+    /// It has to be *signaled*: an acquire fence goes to the kernel as
+    /// `IN_FENCE_FD` and scanout is held until it fires, so an unsignaled one
+    /// would simply hang the flip. A previous frame's out-fence is signaled
     /// by the time that frame has landed, which makes it the honest thing to
     /// reuse -- it is what a compositor doing explicit sync actually has.
     minted: Option<OwnedFd>,
@@ -330,7 +330,7 @@ impl<'a> Runner<'a> {
         self.run_frame(false)
     }
 
-    /// A frame that also asks the kernel for a fence signalling its landing.
+    /// A frame that also asks the kernel for a fence signaling its landing.
     fn mint(&mut self) -> Result<(), String> {
         self.run_frame(true)
     }
@@ -423,7 +423,7 @@ impl<'a> Runner<'a> {
             .map_err(|e| format!("dispatch: {e}"))?;
         self.scene.flip_landed();
 
-        // Taken after the flip has landed, which is what makes it signalled
+        // Taken after the flip has landed, which is what makes it signaled
         // and therefore safe to arm as an IN_FENCE_FD later.
         if let Some(fence) = out_fence {
             self.minted = Some(fence);

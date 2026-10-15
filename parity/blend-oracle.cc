@@ -5,7 +5,7 @@
 // Runs drm-cxx's own CompositeCanvas::blend_into over a spread of inputs and
 // prints what comes back, so crates/drmkit-scene/tests/canvas_oracle.rs can be
 // written against the reference's answers rather than against hand-derived
-// ones. Rounding, the premultiplied convention and the nearest-neighbour
+// ones. Rounding, the premultiplied convention and the nearest-neighbor
 // mapping each have several plausible readings, and a wrong reading usually
 // produces a wrong expectation and a matching wrong implementation.
 //
@@ -66,7 +66,7 @@ int main() {
   run("transparent_over_opaque", 2,1,0xFF0000FF, 2,1,0x00000000, ARGB,0xFFFF,{0,0,2,1},{0,0,2,1});
   run("half_alpha_over_opaque",  2,1,0xFF0000FF, 2,1,0x80800000, ARGB,0xFFFF,{0,0,2,1},{0,0,2,1});
   run("alpha_33_over_opaque",    2,1,0xFF0000FF, 2,1,0x33330000, ARGB,0xFFFF,{0,0,2,1},{0,0,2,1});
-  run("alpha_cc_over_grey",      2,1,0xFF808080, 2,1,0xCC00CC00, ARGB,0xFFFF,{0,0,2,1},{0,0,2,1});
+  run("alpha_cc_over_gray",      2,1,0xFF808080, 2,1,0xCC00CC00, ARGB,0xFFFF,{0,0,2,1},{0,0,2,1});
   run("xrgb_padding_ignored",    2,1,0xFF0000FF, 2,1,0x00FF0000, XRGB,0xFFFF,{0,0,2,1},{0,0,2,1});
   run("plane_alpha_8000",        2,1,0x00000000, 2,1,0xFFFFFFFF, ARGB,0x8000,{0,0,2,1},{0,0,2,1});
   run("plane_alpha_ffff",        2,1,0x00000000, 2,1,0xFFABCDEF, ARGB,0xFFFF,{0,0,2,1},{0,0,2,1});

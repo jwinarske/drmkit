@@ -92,7 +92,7 @@ them in step.
 | `move NAME X Y` | Move it, which defeats the FB-only fast path. |
 | `zpos NAME Z` | Restack it. |
 | `starve NAME` / `unstarve NAME` | Make `acquire` return `WouldBlock`, and stop. |
-| `mint` | A `frame` whose out-fence is kept — already signalled once it lands. |
+| `mint` | A `frame` whose out-fence is kept — already signaled once it lands. |
 | `fence NAME` / `unfence NAME` | Give a layer's buffer that fence as its acquire fence, or take it away. |
 
 Write down what the reference actually does in a comment at the top of the
@@ -107,7 +107,7 @@ property writes, an oracle runs one *pure* function from drm-cxx and prints
 what it returns, so a Rust test can be written against the reference's own
 answers instead of against a reading of the specification.
 
-They exist for the functions where a paper derivation is worth little: colour
+They exist for the functions where a paper derivation is worth little: color
 maths (`tonemap-oracle.cc`), blending (`blend-oracle.cc`), EDID interpretation
 (`edid-oracle.cc`), and the HDR metadata wire format (`hdr-oracle.cc`), where
 CTA-861.3's green/blue/red primary ordering and the struct's tail padding are
@@ -159,6 +159,6 @@ that came out of defects found on hardware.
 | `zorder-reorder` | A restack, and the upstream bug it found. |
 
 A scenario that cannot fail is worth nothing, so each is checked by breaking
-the behaviour it describes and confirming the diff catches it. For the fence
+the behavior it describes and confirming the diff catches it. For the fence
 one that means handing over the fence instead of an import of it: the second
 fenced frame then arms nothing, and the trace loses a line.

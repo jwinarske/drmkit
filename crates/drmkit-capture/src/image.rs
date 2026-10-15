@@ -6,7 +6,7 @@
 /// A premultiplied ARGB8888 image, one `u32` per pixel, rows contiguous.
 ///
 /// Premultiplied because that is what KMS scans out: a plane's `ARGB8888`
-/// pixels already have their colour scaled by their coverage, and compositing
+/// pixels already have their color scaled by their coverage, and compositing
 /// them any other way would double-apply it. The layout is `0xAARRGGBB` in a
 /// native-endian `u32`, which is what a little-endian host sees in a
 /// `DRM_FORMAT_ARGB8888` buffer.
@@ -110,7 +110,7 @@ pub const fn src_over(dst: u32, src: u32) -> u32 {
 /// PNG stores straight alpha, so this runs on the way out. Fully opaque and
 /// fully transparent are exact; everything between divides by the alpha it was
 /// multiplied by, rounding to nearest, and cannot recover precision that the
-/// premultiply threw away. A pixel at alpha 1 has one bit of colour left,
+/// premultiply threw away. A pixel at alpha 1 has one bit of color left,
 /// and no amount of care here puts them back.
 ///
 /// Returns `[r, g, b, a]`, the order PNG wants.
@@ -119,11 +119,11 @@ pub fn unpremultiply(px: u32) -> [u8; 4] {
     let (a, r, g, b) = channels(px);
     if a == 0 {
         // Nothing was multiplied in, so there is nothing to recover, and the
-        // colour channels of a fully transparent premultiplied pixel are zero
+        // color channels of a fully transparent premultiplied pixel are zero
         // by construction anyway.
         return [0, 0, 0, 0];
     }
-    // Clamped because a buffer can hold a pixel whose colour exceeds its
+    // Clamped because a buffer can hold a pixel whose color exceeds its
     // alpha -- nothing stops a producer writing one, and the division would
     // then land above 255.
     let straight = |c: u32| u8::try_from((((c * 255) + (a / 2)) / a).min(255)).unwrap_or(u8::MAX);

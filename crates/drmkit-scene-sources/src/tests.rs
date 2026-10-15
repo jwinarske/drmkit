@@ -669,7 +669,7 @@ fn a_failed_create_does_not_fire_the_release_callback_vkms() {
 /// exactly one per source per frame, including the frame that searches. The
 /// test commit is built by `DeviceCommitter` from the allocator's `Layer`
 /// property bags, which never carry a fence, so `IN_FENCE_FD` reaches the
-/// apply only — and drm-cxx agrees byte for byte, so it is settled behaviour
+/// apply only — and drm-cxx agrees byte for byte, so it is settled behavior
 /// rather than a divergence.
 ///
 /// The requirement is unchanged; only the reason is. One fence has to arm
@@ -1894,20 +1894,20 @@ fn deadline_ring_of(
     Some((ring, fds))
 }
 
-/// A pipe standing in for a fence, signalled or not.
+/// A pipe standing in for a fence, signaled or not.
 ///
 /// A `sync_file` is waited on with `poll`, and so is a pipe: the read end is
-/// unreadable until something is written, which is exactly an unsignalled
+/// unreadable until something is written, which is exactly an unsignaled
 /// fence, and writing a byte signals it. Upstream uses the same trick, because
-/// producing a genuinely unsignalled GPU fence needs a GPU.
+/// producing a genuinely unsignaled GPU fence needs a GPU.
 ///
-/// The writer comes back so the caller can signal a fence it made unsignalled
+/// The writer comes back so the caller can signal a fence it made unsignaled
 /// -- and because dropping it would close the pipe, which `poll` reports as
-/// readable and the wait would read as "signalled".
+/// readable and the wait would read as "signaled".
 #[cfg(test)]
-fn pipe_fence(signalled: bool) -> Option<(SyncFence, std::io::PipeWriter)> {
+fn pipe_fence(signaled: bool) -> Option<(SyncFence, std::io::PipeWriter)> {
     let (read, write) = std::io::pipe().ok()?;
-    if signalled {
+    if signaled {
         std::io::Write::write_all(&mut { &write }, b"x").ok()?;
     }
     let fence = SyncFence::import(std::os::fd::AsFd::as_fd(&read)).ok()?;
@@ -2090,7 +2090,7 @@ fn damage_rides_with_its_own_frame_and_no_other_vkms() {
 ///
 /// The deadline turns the producer's fence into a CPU pre-wait. A ring that
 /// also passed it on as `IN_FENCE_FD` would make the kernel wait a second time
-/// on a fence already known to have signalled.
+/// on a fence already known to have signaled.
 #[test]
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
 fn a_deadline_ring_advances_on_a_frame_with_no_fence_vkms() {
@@ -2122,7 +2122,7 @@ fn a_deadline_ring_advances_on_a_frame_with_no_fence_vkms() {
 }
 
 /// A fence that misses its deadline holds the last good frame, and the ring
-/// recovers when a signalled one arrives.
+/// recovers when a signaled one arrives.
 ///
 /// Holding is the point: advancing to a slot whose producer has not finished
 /// writing puts a half-rendered frame on screen. Missing the deadline is a
@@ -2144,11 +2144,11 @@ fn a_missed_fence_deadline_holds_the_last_frame_then_recovers_vkms() {
     let fb0 = first.fb_id;
     assert_ne!(fb0, 0);
 
-    let Some((unsignalled, _writer)) = pipe_fence(false) else {
+    let Some((unsignaled, _writer)) = pipe_fence(false) else {
         println!("note: skipped -- no pipe to stand in for a fence");
         return;
     };
-    ring.submit(1, Some(unsignalled), &[]);
+    ring.submit(1, Some(unsignaled), &[]);
 
     let held = ring.acquire().expect("a deadline miss is not an error");
     assert_eq!(
@@ -2162,14 +2162,14 @@ fn a_missed_fence_deadline_holds_the_last_frame_then_recovers_vkms() {
     );
     ring.release(held);
 
-    // Resubmit the same slot behind a fence that has already signalled.
-    let (signalled, _writer) = pipe_fence(true).expect("a signalled fence");
-    ring.submit(1, Some(signalled), &[]);
+    // Resubmit the same slot behind a fence that has already signaled.
+    let (signaled, _writer) = pipe_fence(true).expect("a signaled fence");
+    ring.submit(1, Some(signaled), &[]);
 
     let recovered = ring.acquire().expect("recover");
     assert_ne!(
         recovered.fb_id, fb0,
-        "with the fence signalled the ring advances to the frame it held back"
+        "with the fence signaled the ring advances to the frame it held back"
     );
     ring.release(first);
     ring.release(recovered);
@@ -2211,11 +2211,11 @@ fn a_dropped_frames_damage_is_carried_into_the_next_one_only_vkms() {
             h: 4,
         },
     ];
-    let Some((unsignalled, _writer)) = pipe_fence(false) else {
+    let Some((unsignaled, _writer)) = pipe_fence(false) else {
         println!("note: skipped -- no pipe to stand in for a fence");
         return;
     };
-    ring.submit(1, Some(unsignalled), &dropped);
+    ring.submit(1, Some(unsignaled), &dropped);
 
     let held = ring.acquire().expect("the deadline miss holds");
     assert!(
@@ -2230,8 +2230,8 @@ fn a_dropped_frames_damage_is_carried_into_the_next_one_only_vkms() {
         w: 6,
         h: 6,
     }];
-    let (signalled, _writer) = pipe_fence(true).expect("a signalled fence");
-    ring.submit(1, Some(signalled), &arriving);
+    let (signaled, _writer) = pipe_fence(true).expect("a signaled fence");
+    ring.submit(1, Some(signaled), &arriving);
 
     let advanced = ring.acquire().expect("advance");
     assert_eq!(
@@ -2276,19 +2276,19 @@ fn a_dropped_whole_frame_forces_the_next_to_whole_frame_vkms() {
     let first = ring.acquire().expect("slot 0");
 
     // Whole-frame, and dropped.
-    let Some((unsignalled, _writer)) = pipe_fence(false) else {
+    let Some((unsignaled, _writer)) = pipe_fence(false) else {
         println!("note: skipped -- no pipe to stand in for a fence");
         return;
     };
-    ring.submit(1, Some(unsignalled), &[]);
+    ring.submit(1, Some(unsignaled), &[]);
     let held = ring.acquire().expect("the deadline miss holds");
     ring.release(held);
 
     // The next frame declares a small region; the drop must override it.
-    let (signalled, _writer) = pipe_fence(true).expect("a signalled fence");
+    let (signaled, _writer) = pipe_fence(true).expect("a signaled fence");
     ring.submit(
         1,
-        Some(signalled),
+        Some(signaled),
         &[DamageRect {
             x: 5,
             y: 5,

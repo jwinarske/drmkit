@@ -12,8 +12,8 @@
 //!
 //! A `u64` holding four `u16` channels, little-endian: R in bits 0..16, G in
 //! 16..32, B in 32..48, A in 48..64. Alpha passes through untouched — tone
-//! mapping is a colour operation and has no opinion about coverage. Callers on
-//! 8-bit surfaces expand by 257 first and re-quantise after.
+//! mapping is a color operation and has no opinion about coverage. Callers on
+//! 8-bit surfaces expand by 257 first and re-quantize after.
 //!
 //! # Why there are lookup tables
 //!
@@ -110,7 +110,7 @@ fn hable_curve(x: f64) -> f64 {
 }
 
 fn hable(x: f64) -> f64 {
-    // The curve is normalised against its own value at the reference white
+    // The curve is normalized against its own value at the reference white
     // point, so that white maps to 1.0 rather than to wherever the raw curve
     // happens to land.
     const WHITE: f64 = 11.2;
@@ -296,7 +296,7 @@ impl ToneMapper {
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        reason = "the quantiser clamps to 0.0..=1.0 before scaling by 65535, \
+        reason = "the quantizer clamps to 0.0..=1.0 before scaling by 65535, \
                   so the rounded result is a whole number in 0..=65535 and \
                   both the truncation and the sign are ruled out by the clamp"
     )]

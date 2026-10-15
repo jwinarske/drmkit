@@ -1600,10 +1600,10 @@ mod acquire_fence {
     use crate::AcquiredBuffer;
 
     /// An eventfd with a count already written: readable, so `poll` reports it
-    /// immediately. The same stand-in for a signalled `sync_file` that
+    /// immediately. The same stand-in for a signaled `sync_file` that
     /// `drmkit-sync` uses, and cheaper than a pipe -- one descriptor rather
     /// than two.
-    fn signalled() -> OwnedFd {
+    fn signaled() -> OwnedFd {
         rustix::event::eventfd(1, rustix::event::EventfdFlags::CLOEXEC).expect("eventfd")
     }
 
@@ -1628,7 +1628,7 @@ mod acquire_fence {
         // half of this unrepresentable; the leak half is still reachable
         // through a `forget` or a descriptor stashed somewhere and never
         // dropped, which is what this measures.
-        let source = signalled();
+        let source = signaled();
 
         let churn = |times: usize| {
             for _ in 0..times {
@@ -1662,7 +1662,7 @@ mod acquire_fence {
     fn a_fence_carried_through_a_move_is_still_waitable() {
         // The move must carry the descriptor rather than a copy of a number
         // that something else has since closed.
-        let source = signalled();
+        let source = signaled();
         let acquired = AcquiredBuffer {
             fb_id: 1,
             acquire_fence: Some(SyncFence::import(source.as_fd()).expect("import")),
@@ -1673,7 +1673,7 @@ mod acquire_fence {
         let fence = moved.acquire_fence.expect("the move kept it");
         fence
             .wait(std::time::Duration::from_millis(200))
-            .expect("an already-signalled fence waits successfully");
+            .expect("an already-signaled fence waits successfully");
     }
 }
 
@@ -1682,7 +1682,7 @@ mod acquire_fence {
 /// The file is forty-one cases against an API that differs in shape here --
 /// upstream has per-field `set_*_if_changed` setters where this has one
 /// `set_display`, and constructors that take a device where this takes a CRTC
-/// id. What follows is the behaviour that exists on both sides; the parity row
+/// id. What follows is the behavior that exists on both sides; the parity row
 /// names what does not and why.
 mod scene_surfaces {
     use std::collections::HashMap;

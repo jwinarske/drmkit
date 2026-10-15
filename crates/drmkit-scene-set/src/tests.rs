@@ -334,7 +334,7 @@ fn a_mirrored_layer_reaches_every_target_and_leaves_together() {
 
 /// A handle that names nothing is ignored.
 ///
-/// The default handle is what an uninitialised field carries, and it must not
+/// The default handle is what an uninitialized field carries, and it must not
 /// remove whatever happens to be first.
 #[test]
 fn removing_with_a_stale_or_default_handle_is_a_no_op() {
@@ -354,7 +354,7 @@ fn removing_with_a_stale_or_default_handle_is_a_no_op() {
     assert_eq!(
         set.scene(0).map(drmkit_scene::LayerScene::len),
         Some(1),
-        "a default handle is not a licence to remove layer one"
+        "a default handle is not a license to remove layer one"
     );
 
     set.remove_layer(handle);
@@ -456,7 +456,7 @@ fn plane_binding_reaches_the_shared_source() {
 /// Removing a scene leaves a hole, and the indices after it do not move.
 ///
 /// The index is the caller's handle to an output. Compacting would have every
-/// stored index silently start naming its neighbour.
+/// stored index silently start naming its neighbor.
 #[test]
 fn removing_a_scene_leaves_a_hole_rather_than_renumbering() {
     let mut set = SceneSet::new(vec![

@@ -34,7 +34,7 @@ pub enum ThemeError {
         expected: &'static str,
     },
 
-    /// A colour was not readable.
+    /// A color was not readable.
     #[error("{field}: {source}")]
     BadColor {
         /// Which field.
@@ -47,14 +47,14 @@ pub enum ThemeError {
 /// Load a theme from TOML text, filling anything absent from `base`.
 ///
 /// Inheritance is what makes a theme file worth hand-writing: a user who wants
-/// a different accent colour writes three lines, not forty. `base` is
+/// a different accent color writes three lines, not forty. `base` is
 /// typically [`glass_default`](crate::glass_default).
 ///
 /// # Errors
 ///
 /// [`ThemeError::Syntax`] if the text is not TOML, [`ThemeError::WrongType`]
 /// if a field holds the wrong kind of value, and [`ThemeError::BadColor`] if a
-/// colour is not `#RRGGBB` or `#RRGGBBAA` — each naming the field, since a
+/// color is not `#RRGGBB` or `#RRGGBBAA` — each naming the field, since a
 /// theme file has forty of them and a caller cannot bisect a hand-written one.
 pub fn load_theme_str(text: &str, base: Theme) -> Result<Theme, ThemeError> {
     // `from_str`, not `str::parse`: the `FromStr` impl on `Value` parses a
@@ -185,18 +185,18 @@ fn read_float(table: &toml::Value, field: &str, into: &mut f64) -> Result<(), Th
     Ok(())
 }
 
-/// Read one colour field, reporting it by its own name.
+/// Read one color field, reporting it by its own name.
 fn read_color(table: &toml::Value, field: &str, into: &mut Color) -> Result<(), ThemeError> {
     read_color_as(table, field, field, into)
 }
 
-/// Read the colour at `key`, reporting it as `label`.
+/// Read the color at `key`, reporting it as `label`.
 ///
-/// The two differ inside a nested table: a button's colour is keyed `fill`
+/// The two differ inside a nested table: a button's color is keyed `fill`
 /// but is worth reporting as `buttons.close.fill`, because that is what the
 /// author has to find in the file. Looking it up by the qualified name
 /// instead finds nothing — which is not an error, since an absent field
-/// inherits, so the colour silently stays at the base value.
+/// inherits, so the color silently stays at the base value.
 fn read_color_as(
     table: &toml::Value,
     key: &str,
@@ -217,7 +217,7 @@ fn read_color_as(
     Ok(())
 }
 
-/// Read one button's two colours.
+/// Read one button's two colors.
 fn read_button(table: &toml::Value, field: &str, into: &mut Button) -> Result<(), ThemeError> {
     let Some(button) = table.get(field) else {
         return Ok(());

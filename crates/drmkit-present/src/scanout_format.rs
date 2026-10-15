@@ -7,7 +7,7 @@ use drm::control::Device as _;
 use drmkit_core::Device;
 use drmkit_planes::{PlaneRegistry, PlaneType};
 
-/// The default preference order: most colour depth first, 16-bit last.
+/// The default preference order: most color depth first, 16-bit last.
 ///
 /// Packed formats only. A CPU producer that has just finished a frame has it
 /// in one buffer, and handing it a planar format would mean it had to split

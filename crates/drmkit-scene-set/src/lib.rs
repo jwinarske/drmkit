@@ -85,7 +85,7 @@ impl SetLayerHandle {
     /// Whether this handle ever named anything.
     ///
     /// A default handle does not. Checked rather than assumed because the
-    /// default is what a caller gets from an uninitialised field, and
+    /// default is what a caller gets from an uninitialized field, and
     /// removing with one must not remove whatever happens to be at index
     /// zero.
     #[must_use]

@@ -34,7 +34,7 @@ ssh = ""
 target = ""
 sysroot = ""
 cards = ["/dev/dri/card1"]
-notes = "The only device here with FB_DAMAGE_CLIPS, a full colour pipeline, and heterogeneous zpos ranges. A desktop compositor holds DRM master, so cases needing it are skipped."
+notes = "The only device here with FB_DAMAGE_CLIPS, a full color pipeline, and heterogeneous zpos ranges. A desktop compositor holds DRM master, so cases needing it are skipped."
 
 [[device]]
 id = "rpi5-vc4"
@@ -42,7 +42,7 @@ ssh = "joel@192.168.45.88"
 target = "aarch64-unknown-linux-gnu"
 sysroot = "~/.cache/pi-sysroot"
 cards = ["/dev/dri/card0", "/dev/dri/card1"]
-notes = "vc4: 56 planes, rotation without 90/270, no colour pipeline at all, a genuinely disconnected HDMI-A-2. card1 is rp1-dsi, a one-plane controller with no zpos, blend or alpha."
+notes = "vc4: 56 planes, rotation without 90/270, no color pipeline at all, a genuinely disconnected HDMI-A-2. card1 is rp1-dsi, a one-plane controller with no zpos, blend or alpha."
 
 [[device]]
 id = "radxa-zero3-rk3566"

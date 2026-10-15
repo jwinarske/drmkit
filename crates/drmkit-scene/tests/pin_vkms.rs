@@ -7,7 +7,7 @@
 //! drm-cxx @ `4a0b64a`.
 //!
 //! A pin is a *request*. The allocator skips a pinned layer entirely — the
-//! scene owns its plane from then on — so an unhonourable pin has to be caught
+//! scene owns its plane from then on — so an unhonorable pin has to be caught
 //! before that happens, or the layer would be skipped by the allocator and
 //! placed by nobody.
 
@@ -46,7 +46,7 @@ fn a_pinned_layer_lands_on_its_own_plane_vkms() {
 
     assert_eq!(
         report.pin_requests_unhonored, 0,
-        "the plane is on this CRTC and takes the format, so the pin is honourable"
+        "the plane is on this CRTC and takes the format, so the pin is honorable"
     );
     let placement = report
         .placements
@@ -87,12 +87,12 @@ fn a_pinned_layer_lands_on_its_own_plane_vkms() {
     fx.teardown();
 }
 
-/// A pin the hardware cannot honour falls back, and says so.
+/// A pin the hardware cannot honor falls back, and says so.
 ///
 /// The alternative is worse than it sounds. A pin to a plane that cannot take
 /// the layer would fail the `TEST_ONLY` and take the *whole frame* down —
 /// every correctly placed layer with it. Refusing the pin costs the caller
-/// determinism; honouring an impossible one costs everyone the frame.
+/// determinism; honoring an impossible one costs everyone the frame.
 #[test]
 #[ignore = "needs a DRM device and DRM master"]
 fn an_impossible_pin_falls_back_and_is_counted_vkms() {

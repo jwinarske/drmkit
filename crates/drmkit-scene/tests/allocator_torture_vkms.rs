@@ -4,7 +4,7 @@
 //! The allocator's test-commit economy, against a real device.
 //!
 //! Ports the assertions from drm-cxx's `allocator_torture` benchmark. They are
-//! thresholds on *behaviour*, not wall-clock — how many `TEST_ONLY` commits a
+//! thresholds on *behavior*, not wall-clock — how many `TEST_ONLY` commits a
 //! frame costs — which is why they belong in the test suite rather than a
 //! timing harness: they are deterministic, and a regression in them is a
 //! regression in the thing the allocator exists to do.

@@ -20,7 +20,7 @@ use drmkit_core::Device;
 ///
 /// Telemetry only, and deliberately not authoritative: PSR has no portable KMS
 /// property, so the best available signal is the connector type. Nothing gates
-/// behaviour on this — a frame-economy decision that skipped a commit because
+/// behavior on this — a frame-economy decision that skipped a commit because
 /// it guessed the panel would self-refresh, and guessed wrong, freezes the
 /// display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

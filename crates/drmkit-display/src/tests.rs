@@ -5,7 +5,7 @@
 //!
 //! Every expectation in `CASES` was produced by running the reference's
 //! `ToneMapper` over the same pixel and recording what came back — not derived
-//! by hand. Colour maths has too many plausible readings for a paper
+//! by hand. Color maths has too many plausible readings for a paper
 //! derivation to be worth much: which matrix, absolute or relative scaling,
 //! where in the chain the curve applies, how the tables interpolate. A wrong
 //! reading tends to produce a wrong expectation and an implementation that
@@ -41,7 +41,7 @@ const CASES: &[(&str, &str, u64, u64)] = &[
         0xFFFF_820C_820C_820C,
     ),
     (
-        "up_mid_grey",
+        "up_mid_gray",
         "up",
         px(0x8000, 0x8000, 0x8000, 0xFFFF),
         0xFFFF_5CA0_5CA0_5CA0,
@@ -59,7 +59,7 @@ const CASES: &[(&str, &str, u64, u64)] = &[
         0x1234_27B9_27B9_27B9,
     ),
     (
-        "up203_mid_grey",
+        "up203_mid_gray",
         "up203",
         px(0x8000, 0x8000, 0x8000, 0xFFFF),
         0xFFFF_6D2E_6D2E_6D2E,
@@ -139,9 +139,9 @@ fn the_tone_mapper_matches_drm_cxx() {
 
 /// Alpha is carried through untouched.
 ///
-/// Tone mapping is a colour operation and has no opinion about coverage.
+/// Tone mapping is a color operation and has no opinion about coverage.
 /// Running alpha through the transfer functions would make every translucent
-/// pixel change opacity as a side effect of a colour conversion.
+/// pixel change opacity as a side effect of a color conversion.
 #[test]
 fn alpha_passes_through_unchanged() {
     let mapper = ToneMapper::bt709_to_bt2020_pq(100.0);
@@ -150,7 +150,7 @@ fn alpha_passes_through_unchanged() {
         assert_eq!(
             (out >> 48) as u16,
             alpha,
-            "alpha {alpha:#06x} was altered by a colour transform"
+            "alpha {alpha:#06x} was altered by a color transform"
         );
     }
 }
@@ -209,7 +209,7 @@ fn a_ramp_stays_monotonic() {
 /// A brighter SDR white reference lands the same input higher.
 ///
 /// PQ is absolute — its 1.0 is 10,000 nits — so where SDR white sits is a real
-/// decision, not a normalisation. Ignoring it would light an SDR layer at a
+/// decision, not a normalization. Ignoring it would light an SDR layer at a
 /// hundred times its intent.
 #[test]
 fn a_higher_sdr_white_encodes_brighter() {
@@ -594,7 +594,7 @@ mod profile {
 
     /// Unknown is the default, and means "could not tell" rather than "no".
     ///
-    /// The distinction matters because nothing may gate behaviour on this: a
+    /// The distinction matters because nothing may gate behavior on this: a
     /// frame-economy decision that skipped a commit on a guess, and guessed
     /// wrong, freezes the display.
     #[test]

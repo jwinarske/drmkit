@@ -49,7 +49,7 @@ pub fn write_png(image: &Image, path: impl AsRef<Path>) -> Result<(), CaptureErr
 /// Reduce a `png::EncodingError` to the underlying I/O failure.
 ///
 /// Everything the encoder can complain about here that is *not* I/O -- a
-/// header that disagrees with the data, an unsupported colour type -- would be
+/// header that disagrees with the data, an unsupported color type -- would be
 /// this module miscalling it rather than anything the caller can act on, so
 /// those collapse into a generic write failure rather than a variant nobody
 /// can handle differently.

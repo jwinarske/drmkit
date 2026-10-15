@@ -71,7 +71,7 @@ impl GbmSurface {
     /// # Safety
     ///
     /// Exactly once per `eglSwapBuffers` (or Vulkan present), and never before
-    /// the first: anything else is undefined behaviour in GBM, not an error.
+    /// the first: anything else is undefined behavior in GBM, not an error.
     /// Before the surface is bound the call is a `SIGSEGV` on Mesa.
     #[must_use]
     pub unsafe fn lock_front_buffer(&self) -> Option<GbmBuffer> {

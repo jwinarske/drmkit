@@ -60,7 +60,7 @@ impl Track {
         self.elapsed = self.elapsed.saturating_add(dt);
         // The clamp is belt-and-braces: `ease_out_cubic` clamps too, and the
         // `t >= 1.0` settle below catches an overshoot regardless. Removing it
-        // changes no observable behaviour -- verified by injection -- and it
+        // changes no observable behavior -- verified by injection -- and it
         // stays because the value is compared as well as eased, and a reader
         // should not have to check both to know `t` is in range.
         let t = (self.elapsed.as_secs_f32() / duration.as_secs_f32()).clamp(0.0, 1.0);

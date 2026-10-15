@@ -232,7 +232,7 @@ fn under_plane_pressure_the_placed_layers_outrank_the_dropped_ones_vkms() {
         assert!(
             i32::from(worst_placed) > best_dropped,
             "a layer at priority {best_dropped} lost its plane to one at \
-             {worst_placed} or lower -- the caller's ordering was not honoured"
+             {worst_placed} or lower -- the caller's ordering was not honored"
         );
     }
 

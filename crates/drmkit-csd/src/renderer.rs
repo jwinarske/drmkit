@@ -241,7 +241,7 @@ fn draw_panel(theme: &Theme, canvas: &mut Canvas<'_>, geometry: &DecorationGeome
     }
 }
 
-/// Stroke the one-pixel rim, between the blurred and focused colours.
+/// Stroke the one-pixel rim, between the blurred and focused colors.
 fn draw_rim(theme: &Theme, canvas: &mut Canvas<'_>, geometry: &DecorationGeometry, focus: f32) {
     if geometry.panel_w <= 0 || geometry.panel_h <= 0 {
         return;
@@ -397,7 +397,7 @@ fn round_channel(value: f64) -> u8 {
     .unwrap_or(u8::MAX)
 }
 
-/// Mix two colours, `t` of the way from `a` to `b`.
+/// Mix two colors, `t` of the way from `a` to `b`.
 fn lerp_color(a: Color, b: Color, t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);
     let mix = |from: u8, to: u8| {
@@ -411,7 +411,7 @@ fn lerp_color(a: Color, b: Color, t: f32) -> Color {
     }
 }
 
-/// Nudge a colour by a coordinate-derived amount.
+/// Nudge a color by a coordinate-derived amount.
 ///
 /// The dither. Deterministic by construction: the offset is a hash of the
 /// pixel's position, so redrawing the same decoration produces the same
@@ -427,7 +427,7 @@ pub(crate) fn dither(color: Color, x: i32, y: i32, amplitude: f64) -> Color {
     let mixed =
         (x.unsigned_abs().wrapping_mul(1_664_525)) ^ (y.unsigned_abs().wrapping_mul(1_013_904_223));
     let noise = (mixed >> 16) & 0xFF;
-    // Centred on zero, so the dither does not brighten the panel overall.
+    // Centered on zero, so the dither does not brighten the panel overall.
     let offset = (f64::from(noise) - 127.5) / 127.5 * amplitude * 255.0;
     let nudge = |channel: u8| round_channel(f64::from(channel) + offset);
     Color {

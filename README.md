@@ -18,7 +18,7 @@ composition, and scanout.
 > All six [`INVARIANTS.md`](INVARIANTS.md) contracts are pinned against a real
 > device. A scene can build a frame, allocate planes,
 > commit it, composite what it cannot place, and hand buffers back on the right
-> vblank; EDID, colour management, the cursor and capture paths are in and
+> vblank; EDID, color management, the cursor and capture paths are in and
 > tested.
 >
 > The present spine, cross-output orchestration, GBM surface sources and
@@ -99,7 +99,7 @@ by quietly doing nothing.
 | Item | State |
 |---|---|
 | `drmkit-gbm` | done |
-| `drmkit-display`: tone mapper and colour curves | done — diffed pixel-for-pixel against the reference |
+| `drmkit-display`: tone mapper and color curves | done — diffed pixel-for-pixel against the reference |
 | `drmkit-display`: EDID via libdisplay-info | done — behind the `edid` feature |
 | Fuzz target for EDID | done — seeded, closing phase 1's carry-over |
 | `allocator_torture` thresholds asserted on vkms | done, and measured: three of the six pin a caching mechanism and between them cover both; one is about placement rather than caching; one skips here; `rapid_churn` pins nothing at all ([P-14](docs/parity-findings.md)) |
@@ -111,7 +111,7 @@ by quietly doing nothing.
 | `drmkit-session` | done — sequencing over a `Backend` trait, libseat behind a feature |
 | `drmkit-input` | done — xkb keyboard, auto-repeat, libinput seat with its log routed into drmkit's |
 | `drmkit-display`: connector and CRTC capabilities | done — measured on vkms and amdgpu |
-| `drmkit-display`: mode lists, hotplug watch, colour pipeline, scanout discovery | done |
+| `drmkit-display`: mode lists, hotplug watch, color pipeline, scanout discovery | done |
 | `drmkit-planes`: reading planes off a device | done — behind a feature, so the crate stays device-free without it |
 | `drmkit-scene-sources`: cursor as an ordinary layer | done — for hardware with no cursor plane |
 
@@ -147,14 +147,14 @@ that measurement did not support. See [`docs/parity-findings.md`](docs/parity-fi
 
 **Upstream first.** drm-cxx is the origin of authority: anything this port
 surfaces is [filed there](docs/upstream-findings.md) rather than fixed only
-here, and the default for a bug is to reproduce the C++ behaviour so the two
+here, and the default for a bug is to reproduce the C++ behavior so the two
 agree byte for byte. Thirty-six issues filed so far, plus three against
 third-party libraries.
 
 **Three drivers, then fifty.** Every device test runs on vkms in CI and is
 also run against amdgpu and vc4 (Raspberry Pi 5) by hand. They disagree in the
 places that matter: rotation masks of `0x3f`, `0xf` and `0x35` — vc4's planes
-do 0/180 and both reflects but *not* 90 or 270 — and colour pipelines of
+do 0/180 and both reflects but *not* 90 or 270 — and color pipelines of
 gamma-only, all three stages, and none at all. Several branches are reachable
 on exactly one of them; see [`docs/parity-findings.md`](docs/parity-findings.md).
 

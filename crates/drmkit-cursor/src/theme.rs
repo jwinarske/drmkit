@@ -61,7 +61,7 @@ struct CacheKey {
 /// afterwards are not noticed. Build a new one, which is cheap.
 ///
 /// Not `Sync`. The memo cache is a [`RefCell`], matching the reference, which
-/// documents `Theme` as unsynchronised. Sharing one across threads is a
+/// documents `Theme` as unsynchronized. Sharing one across threads is a
 /// compile error rather than a race.
 #[derive(Debug)]
 pub struct Theme {
@@ -205,7 +205,7 @@ impl Theme {
     ) -> Result<ThemeResolution, CursorError> {
         // The name is caller-controlled and gets joined onto a directory, so
         // `../../etc/passwd` would compose into a real path. A compositor
-        // should sanitise upstream; the cost of refusing an ambiguous name
+        // should sanitize upstream; the cost of refusing an ambiguous name
         // here is one comparison. `..` is the classic escape, and a separator
         // anywhere means the caller passed a path where an identifier belongs.
         //

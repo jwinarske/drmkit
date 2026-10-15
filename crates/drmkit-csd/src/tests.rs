@@ -32,15 +32,15 @@ fn open_card() -> Option<drmkit_core::Device> {
     }
 }
 
-// --- colour -------------------------------------------------------------------
+// --- color -------------------------------------------------------------------
 
-/// Six digits is a colour, and it is opaque.
+/// Six digits is a color, and it is opaque.
 ///
 /// The CSS convention, and the one a theme author expects. Defaulting to
-/// transparent would make every colour written the short way invisible — a
+/// transparent would make every color written the short way invisible — a
 /// theme that looks like it loaded and draws nothing.
 #[test]
-fn six_hex_digits_are_an_opaque_colour() {
+fn six_hex_digits_are_an_opaque_color() {
     assert_eq!(
         Color::from_hex("#123456"),
         Ok(Color::new(0x12, 0x34, 0x56, 0xFF))
@@ -65,7 +65,7 @@ fn hex_digits_are_case_insensitive() {
     assert_eq!(
         Color::from_hex("#aabbccdd"),
         Color::from_hex("#AABBCCDD"),
-        "the same colour written two ways is the same colour"
+        "the same color written two ways is the same color"
     );
     assert_eq!(
         Color::from_hex("#AaBbCcDd"),
@@ -75,7 +75,7 @@ fn hex_digits_are_case_insensitive() {
 
 /// Anything else is refused, and says what it was given.
 #[test]
-fn malformed_colours_are_refused_by_what_they_were() {
+fn malformed_colors_are_refused_by_what_they_were() {
     for bad in [
         "",           // nothing
         "123456",     // no hash
@@ -113,9 +113,9 @@ fn packing_is_alpha_red_green_blue() {
     );
 }
 
-/// Two colours are equal when every channel is.
+/// Two colors are equal when every channel is.
 #[test]
-fn colour_equality_is_every_channel() {
+fn color_equality_is_every_channel() {
     let base = Color::new(1, 2, 3, 4);
     assert_eq!(base, Color::new(1, 2, 3, 4));
     for other in [
@@ -124,7 +124,7 @@ fn colour_equality_is_every_channel() {
         Color::new(1, 2, 9, 4),
         Color::new(1, 2, 3, 9),
     ] {
-        assert_ne!(base, other, "a channel apart is a different colour");
+        assert_ne!(base, other, "a channel apart is a different color");
     }
 }
 
@@ -212,7 +212,7 @@ fn absent_fields_inherit_from_the_base() {
 
 /// A partial table inherits the rest of that table too.
 ///
-/// Not just the top level: overriding one colour must not clear the other six,
+/// Not just the top level: overriding one color must not clear the other six,
 /// or a one-line accent change costs the whole palette.
 #[test]
 fn a_partial_table_inherits_its_siblings() {
@@ -223,7 +223,7 @@ fn a_partial_table_inherits_its_siblings() {
     assert_eq!(theme.colors.panel_top, Color::new(1, 2, 3, 4));
     assert_eq!(
         theme.colors.shadow, base.colors.shadow,
-        "the siblings of an overridden colour are not collateral"
+        "the siblings of an overridden color are not collateral"
     );
     assert_eq!(theme.colors.title_text, base.colors.title_text);
 }
@@ -236,15 +236,15 @@ fn text_that_is_not_toml_is_a_syntax_error() {
     assert!(matches!(error, ThemeError::Syntax(_)), "got {error}");
 }
 
-/// A colour that will not parse names its own field.
+/// A color that will not parse names its own field.
 ///
 /// A theme has forty fields. "Invalid argument" leaves the author to bisect a
 /// file by hand; naming the field is the difference between a fixable error
 /// and a puzzle.
 #[test]
-fn a_bad_colour_names_the_field_it_was_in() {
-    let error = load_theme_str("[colors]\nshadow = \"not-a-colour\"\n", Theme::default())
-        .expect_err("that is not a colour");
+fn a_bad_color_names_the_field_it_was_in() {
+    let error = load_theme_str("[colors]\nshadow = \"not-a-color\"\n", Theme::default())
+        .expect_err("that is not a color");
 
     match error {
         ThemeError::BadColor { field, source } => {
@@ -252,7 +252,7 @@ fn a_bad_colour_names_the_field_it_was_in() {
             assert_eq!(
                 source,
                 ColorError::Malformed {
-                    got: "not-a-colour".to_owned()
+                    got: "not-a-color".to_owned()
                 }
             );
         }
@@ -260,11 +260,11 @@ fn a_bad_colour_names_the_field_it_was_in() {
     }
 }
 
-/// A colour field holding the wrong kind of value says so.
+/// A color field holding the wrong kind of value says so.
 #[test]
-fn a_colour_that_is_not_a_string_names_the_field() {
+fn a_color_that_is_not_a_string_names_the_field() {
     let error = load_theme_str("[colors]\nshadow = 42\n", Theme::default())
-        .expect_err("a number is not a colour");
+        .expect_err("a number is not a color");
 
     match error {
         ThemeError::WrongType { field, expected } => {
@@ -326,8 +326,8 @@ fn the_lite_theme_is_cheaper_than_the_default() {
 
 /// The minimal theme has no shadow and no animation.
 ///
-/// The shadow *colour* is cleared as well as the extent. Either alone stops it
-/// drawing, but leaving a visible colour behind a zero extent invites a caller
+/// The shadow *color* is cleared as well as the extent. Either alone stops it
+/// drawing, but leaving a visible color behind a zero extent invites a caller
 /// that raises the extent to inherit a shadow it never chose.
 #[test]
 fn the_minimal_theme_drops_the_shadow_and_the_animation() {
@@ -339,7 +339,7 @@ fn the_minimal_theme_drops_the_shadow_and_the_animation() {
     assert!((theme.noise_amplitude - 0.0).abs() < f64::EPSILON);
     assert_eq!(
         theme.colors.shadow.a, 0,
-        "the colour goes with the extent, or raising one brings back the other"
+        "the color goes with the extent, or raising one brings back the other"
     );
     assert!(
         theme.title_bar.height > 0,
@@ -347,15 +347,15 @@ fn the_minimal_theme_drops_the_shadow_and_the_animation() {
     );
 }
 
-/// A nested colour reports its qualified name but is looked up by its own.
+/// A nested color reports its qualified name but is looked up by its own.
 ///
 /// The two are different, and conflating them fails silently rather than
-/// loudly: a button colour keyed `fill` looked up as `buttons.close.fill`
+/// loudly: a button color keyed `fill` looked up as `buttons.close.fill`
 /// finds nothing, an absent field inherits by design, and the theme loads
-/// looking correct with the caller's button colours quietly ignored. Caught
+/// looking correct with the caller's button colors quietly ignored. Caught
 /// exactly that way when the round-trip case came back with a default red.
 #[test]
-fn a_nested_button_colour_is_read_and_reported_by_different_names() {
+fn a_nested_button_color_is_read_and_reported_by_different_names() {
     let theme = load_theme_str("[buttons.close]\nfill = \"#010203FF\"\n", glass_default())
         .expect("valid TOML");
 
@@ -374,7 +374,7 @@ fn a_nested_button_colour_is_read_and_reported_by_different_names() {
     // The label, though, is the qualified one -- an author reading
     // "fill: expected ..." would not know which of the six to look at.
     let error = load_theme_str("[buttons.close]\nfill = \"nope\"\n", glass_default())
-        .expect_err("that is not a colour");
+        .expect_err("that is not a color");
     match error {
         ThemeError::BadColor { field, .. } => assert_eq!(field, "buttons.close.fill"),
         other => panic!("got {other}"),
@@ -544,9 +544,9 @@ fn a_theme_id_is_stable_across_rebuilds() {
     assert_eq!(theme_id(&glass_minimal()), theme_id(&glass_minimal()));
 }
 
-/// A colour change is a different theme.
+/// A color change is a different theme.
 #[test]
-fn a_theme_id_changes_when_a_colour_does() {
+fn a_theme_id_changes_when_a_color_does() {
     let base = glass_default();
     let changed = Theme {
         colors: crate::Colors {
@@ -559,7 +559,7 @@ fn a_theme_id_changes_when_a_colour_does() {
     assert_ne!(
         theme_id(&base),
         theme_id(&changed),
-        "a cached shadow drawn in the old colour would outlive the change"
+        "a cached shadow drawn in the old color would outlive the change"
     );
 }
 
@@ -696,9 +696,9 @@ fn the_first_blit_renders_a_shadow_with_visible_alpha() {
     assert!(cache.blit_into(key(96, 96, Elevation::Focused, &theme), &theme, &mut target));
     assert_eq!(cache.len(), 1);
 
-    let centre = ((48 * 96) + 48) * 4;
+    let center = ((48 * 96) + 48) * 4;
     assert!(
-        pixels[centre + 3] > 0,
+        pixels[center + 3] > 0,
         "the middle of a shadow patch is where it is strongest; zero there \
          means nothing was drawn"
     );
@@ -756,9 +756,9 @@ fn focused_and_blurred_are_separate_entries() {
         "and they must actually differ, or the elevation says nothing"
     );
 
-    let centre = ((32 * 64) + 32) * 4 + 3;
+    let center = ((32 * 64) + 32) * 4 + 3;
     assert!(
-        focused_px[centre] > blurred_px[centre],
+        focused_px[center] > blurred_px[center],
         "the focused shadow is the stronger one"
     );
 }
@@ -847,7 +847,7 @@ fn a_theme_with_no_shadow_produces_nothing_visible() {
     assert!(cache.blit_into(key(64, 64, Elevation::Focused, &theme), &theme, &mut target));
     assert!(
         pixels.iter().all(|byte| *byte == 0),
-        "a zero-alpha shadow colour must write nothing visible, whatever the \
+        "a zero-alpha shadow color must write nothing visible, whatever the \
          extent says"
     );
 }
@@ -875,7 +875,7 @@ fn a_destination_smaller_than_the_patch_is_clipped() {
 /// A cross fade blends the two endpoints, and clamps outside them.
 ///
 /// `t` past the ends is a caller bug — an animation that overshoots —
-/// and extrapolating a colour past its endpoints produces values that are not
+/// and extrapolating a color past its endpoints produces values that are not
 /// a shadow at all.
 #[test]
 fn a_cross_fade_blends_between_its_endpoints() {
@@ -883,7 +883,7 @@ fn a_cross_fade_blends_between_its_endpoints() {
     let mut cache = ShadowCache::new(4);
     let focused = key(64, 64, Elevation::Focused, &theme);
     let blurred = key(64, 64, Elevation::Blurred, &theme);
-    let centre = ((32 * 64) + 32) * 4 + 3;
+    let center = ((32 * 64) + 32) * 4 + 3;
 
     let sample = |cache: &mut ShadowCache, t: f32| {
         let (mut pixels, stride) = dest(64, 64);
@@ -894,7 +894,7 @@ fn a_cross_fade_blends_between_its_endpoints() {
             height: 64,
         };
         assert!(cache.blit_cross_fade(focused, blurred, &theme, &mut target, t));
-        pixels[centre]
+        pixels[center]
     };
 
     let at_start = sample(&mut cache, 0.0);
@@ -1676,7 +1676,7 @@ fn the_middle_of_the_panel_is_painted() {
 
     assert!(
         alpha_at(&pixels, W / 2, H / 2) > 0,
-        "the centre of a decoration is inside its panel; zero alpha there \
+        "the center of a decoration is inside its panel; zero alpha there \
          means nothing was drawn at all"
     );
 }
@@ -1719,13 +1719,13 @@ fn drawing_is_deterministic() {
     assert_eq!(
         first, second,
         "two draws of one decoration must be byte-identical, or every \
-         redraw-skipping optimisation above this is unsound"
+         redraw-skipping optimization above this is unsound"
     );
 }
 
 /// Focused and blurred decorations differ.
 ///
-/// The rim colour is the cue that tells a user where their keystrokes are
+/// The rim color is the cue that tells a user where their keystrokes are
 /// going. Two windows that looked identical would make it useless.
 #[test]
 fn a_focused_decoration_differs_from_a_blurred_one() {
@@ -1753,7 +1753,7 @@ fn a_focused_decoration_differs_from_a_blurred_one() {
     // buffers passes on the shadow alone, since focused and blurred use
     // different elevations. And sampling the rim under a shadowed theme still
     // passes, because the rim is composited *over* a shadow that itself
-    // differs -- so an identical rim colour still produces different bytes.
+    // differs -- so an identical rim color still produces different bytes.
     // Both verified by injecting a rim that ignores focus, which passed until
     // the shadow was taken out from under it.
     let unshadowed = glass_minimal();
@@ -2385,7 +2385,7 @@ fn sixteen_bpp_is_565() {
 /// A depth this cannot describe is refused.
 ///
 /// A caller handed a guess would write 32-bit pixels into a 24-bit buffer, and
-/// the result is not a wrong colour but a sheared image — every row lands at
+/// the result is not a wrong color but a sheared image — every row lands at
 /// the wrong offset.
 #[test]
 fn a_depth_that_cannot_be_described_is_refused() {

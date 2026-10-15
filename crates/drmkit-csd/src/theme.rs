@@ -17,7 +17,7 @@ pub struct TitleBar {
     pub font_size: i32,
 }
 
-/// Every colour a decoration uses.
+/// Every color a decoration uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[allow(
     clippy::exhaustive_structs,
@@ -82,7 +82,7 @@ pub struct Theme {
     pub corner_radius: i32,
     /// The title bar.
     pub title_bar: TitleBar,
-    /// Colours.
+    /// Colors.
     pub colors: Colors,
     /// Buttons.
     pub buttons: Buttons,
@@ -175,8 +175,8 @@ pub fn glass_lite() -> Theme {
 
 /// No shadow, no animation, no noise.
 ///
-/// The shadow colour is cleared as well as the extent. Either alone would
-/// stop it drawing, but leaving a visible colour behind a zero extent invites
+/// The shadow color is cleared as well as the extent. Either alone would
+/// stop it drawing, but leaving a visible color behind a zero extent invites
 /// a caller that raises the extent to inherit a shadow it never chose.
 #[must_use]
 pub fn glass_minimal() -> Theme {

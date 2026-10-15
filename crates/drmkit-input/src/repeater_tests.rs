@@ -107,7 +107,7 @@ fn a_released_key_stops_the_timer() {
 }
 
 #[test]
-fn cancelling_stops_the_timer() {
+fn canceling_stops_the_timer() {
     let mut repeater = KeyRepeater::new(quick()).expect("timer");
     repeater.on_key(&press(KEY_A), true);
     repeater.cancel();
@@ -130,7 +130,7 @@ fn dispatching_an_unfired_timer_is_quiet() {
 #[test]
 fn a_cancel_after_the_timer_fired_emits_nothing() {
     // The expirations the kernel already counted do not go away when the
-    // repeat is cancelled, and a key the user has let go of should not arrive
+    // repeat is canceled, and a key the user has let go of should not arrive
     // afterwards.
     let mut repeater = KeyRepeater::new(quick()).expect("timer");
     repeater.on_key(&press(KEY_A), true);

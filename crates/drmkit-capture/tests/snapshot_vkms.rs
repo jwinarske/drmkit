@@ -13,7 +13,7 @@ use drm::control::Device as _;
 use drmkit_capture::{CaptureError, snapshot, write_png};
 use drmkit_core::Device;
 
-/// Serialises the tests that take DRM master.
+/// Serializes the tests that take DRM master.
 ///
 /// The lane runs each test binary in turn but lets the tests inside one run in
 /// parallel, so two of these racing for master means one of them fails with
@@ -43,7 +43,7 @@ fn card() -> Option<Device> {
     }
 }
 
-/// The four quadrant colours, premultiplied and opaque, so encoding them
+/// The four quadrant colors, premultiplied and opaque, so encoding them
 /// involves no scaling and any difference on the way back is a real one.
 const RED: u32 = 0xffff_0000;
 const GREEN: u32 = 0xff00_ff00;
@@ -115,14 +115,14 @@ fn paint(device: &Device) -> Option<Output<'_>> {
         for y in 0..height {
             let row = mapping.row_mut(y).expect("row within the buffer");
             for x in 0..width {
-                let colour = match (x >= width / 2, y >= height / 2) {
+                let color = match (x >= width / 2, y >= height / 2) {
                     (false, false) => RED,
                     (true, false) => GREEN,
                     (false, true) => BLUE,
                     (true, true) => WHITE,
                 };
                 let at = (x * 4) as usize;
-                row[at..at + 4].copy_from_slice(&colour.to_ne_bytes());
+                row[at..at + 4].copy_from_slice(&color.to_ne_bytes());
             }
         }
     }
@@ -220,10 +220,10 @@ fn a_snapshot_writes_a_png_that_decodes_back_vkms() {
 fn a_known_pattern_survives_the_round_trip_vkms() {
     // The one test that says the whole path works rather than that each piece
     // does: paint four quadrants, put them on screen for real, read them back,
-    // and check the corners came back the colours they went out as. Plane
+    // and check the corners came back the colors they went out as. Plane
     // enumeration, the geometry properties, the dma-buf export, the stride,
     // the blend and the row order all have to be right for this to pass, and
-    // any one of them being wrong produces a different, recognisable failure.
+    // any one of them being wrong produces a different, recognizable failure.
     //
     // With one exception, worth knowing before trusting this to cover the
     // whole path: it cannot catch a stride bug. vkms hands back a tightly

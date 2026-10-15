@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: (c) 2026 Joel Winarske
 // SPDX-License-Identifier: MIT
 
-//! The CRTC colour pipeline against a real device.
+//! The CRTC color pipeline against a real device.
 //!
 //! `#[ignore]`d and run in the device lanes with `--include-ignored`. Blobs
 //! are created and destroyed but nothing is committed: a commit would need
@@ -40,7 +40,7 @@ fn open_card() -> Option<Device> {
     Some(device)
 }
 
-/// The first CRTC that has any colour pipeline at all.
+/// The first CRTC that has any color pipeline at all.
 ///
 /// `None` is a real answer, not a missing device: vc4 exposes no
 /// `DEGAMMA_LUT`, `CTM` or `GAMMA_LUT` on any of its four CRTCs. Callers use
@@ -59,7 +59,7 @@ fn any_pipeline(device: &Device) -> Option<u32> {
 /// Confirm every CRTC really has no pipeline, and say so.
 ///
 /// Returns true when the caller should stop. Not a bare skip: a card with no
-/// colour pipeline still has something to assert -- that every CRTC is
+/// color pipeline still has something to assert -- that every CRTC is
 /// classified as having none, rather than one of them failing to be read.
 fn no_pipeline_anywhere(device: &Device) -> bool {
     let resources = device.resource_handles().expect("resources");
@@ -72,7 +72,7 @@ fn no_pipeline_anywhere(device: &Device) -> bool {
         }
     }
     println!(
-        "note: no CRTC on this card has a colour pipeline, and every one of \
+        "note: no CRTC on this card has a color pipeline, and every one of \
          them says so"
     );
     true
@@ -85,7 +85,7 @@ fn a_stage_the_crtc_has_takes_a_blob() {
     let Some(device) = open_card() else { return };
     let Some(crtc_id) = any_pipeline(&device) else {
         assert!(no_pipeline_anywhere(&device));
-        drmkit_testkit::skipped("no CRTC on this device has a colour pipeline");
+        drmkit_testkit::skipped("no CRTC on this device has a color pipeline");
         return;
     };
 
@@ -127,7 +127,7 @@ fn a_stage_the_crtc_lacks_refuses_rather_than_committing_nothing() {
     let Some(device) = open_card() else { return };
     let Some(crtc_id) = any_pipeline(&device) else {
         assert!(no_pipeline_anywhere(&device));
-        drmkit_testkit::skipped("no CRTC on this device has a colour pipeline");
+        drmkit_testkit::skipped("no CRTC on this device has a color pipeline");
         return;
     };
 
@@ -167,7 +167,7 @@ fn a_lut_of_the_wrong_length_is_refused_before_the_kernel_sees_it() {
     let Some(device) = open_card() else { return };
     let Some(crtc_id) = any_pipeline(&device) else {
         assert!(no_pipeline_anywhere(&device));
-        drmkit_testkit::skipped("no CRTC on this device has a colour pipeline");
+        drmkit_testkit::skipped("no CRTC on this device has a color pipeline");
         return;
     };
 
@@ -209,7 +209,7 @@ fn restaging_a_stage_replaces_its_blob() {
     let Some(device) = open_card() else { return };
     let Some(crtc_id) = any_pipeline(&device) else {
         assert!(no_pipeline_anywhere(&device));
-        drmkit_testkit::skipped("no CRTC on this device has a colour pipeline");
+        drmkit_testkit::skipped("no CRTC on this device has a color pipeline");
         return;
     };
 
@@ -234,7 +234,7 @@ fn an_apply_writes_only_what_was_staged() {
     let Some(device) = open_card() else { return };
     let Some(crtc_id) = any_pipeline(&device) else {
         assert!(no_pipeline_anywhere(&device));
-        drmkit_testkit::skipped("no CRTC on this device has a colour pipeline");
+        drmkit_testkit::skipped("no CRTC on this device has a color pipeline");
         return;
     };
 

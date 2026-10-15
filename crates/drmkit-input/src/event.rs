@@ -123,7 +123,7 @@ pub struct PointerAbsolute {
     pub time_ms: u32,
     /// Position across the device's range, in `[0, 1)`.
     ///
-    /// Normalized here because the raw value is in millimetres, and scaling
+    /// Normalized here because the raw value is in millimeters, and scaling
     /// that to a render extent needs the digitizer's physical size -- which
     /// the consumer would have to go and ask for.
     pub x: f64,

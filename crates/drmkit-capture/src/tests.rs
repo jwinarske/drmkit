@@ -132,9 +132,9 @@ fn opaque_pixels_round_trip_exactly() {
 }
 
 #[test]
-fn a_fully_transparent_pixel_has_no_colour_to_recover() {
+fn a_fully_transparent_pixel_has_no_color_to_recover() {
     assert_eq!(unpremultiply(0), [0, 0, 0, 0]);
-    // Even if a producer left colour behind in a zero-alpha pixel, there is
+    // Even if a producer left color behind in a zero-alpha pixel, there is
     // nothing to divide by and nothing that pixel can mean.
     assert_eq!(unpremultiply(argb(0, 200, 100, 50)), [0, 0, 0, 0]);
 }
@@ -152,7 +152,7 @@ fn half_covered_white_comes_back_white() {
 
 #[test]
 fn a_channel_above_its_alpha_is_clamped_not_wrapped() {
-    // Nothing stops a producer writing a pixel whose colour exceeds its
+    // Nothing stops a producer writing a pixel whose color exceeds its
     // coverage. The division then lands above 255, and the answer has to be
     // "as bright as it goes" rather than a wrapped byte.
     let [r, g, b, a] = unpremultiply(argb(64, 200, 128, 65));
@@ -164,8 +164,8 @@ fn a_channel_above_its_alpha_is_clamped_not_wrapped() {
 
 #[test]
 fn un_premultiplying_is_monotonic() {
-    // More premultiplied colour at the same coverage can never mean less
-    // straight colour.
+    // More premultiplied color at the same coverage can never mean less
+    // straight color.
     for a in [1u8, 7, 64, 128, 254, 255] {
         let mut previous = 0u8;
         for c in 0..=a {
@@ -304,7 +304,7 @@ fn translucency_survives_the_round_trip_to_the_precision_it_can() {
 
 use crate::snapshot::{Blit, SourceFormat, blit};
 
-/// A framebuffer of one solid premultiplied colour.
+/// A framebuffer of one solid premultiplied color.
 fn solid(width: u32, height: u32, pixel: u32) -> Vec<u8> {
     let mut bytes = Vec::with_capacity((width * height * 4) as usize);
     for _ in 0..width * height {
@@ -414,7 +414,7 @@ fn xrgb_is_opaque_whatever_its_top_byte_says() {
 #[test]
 fn argb_with_a_zero_alpha_really_is_invisible() {
     // The converse of the above: on a plane that *does* have alpha, a zero
-    // top byte means transparent and must be honoured.
+    // top byte means transparent and must be honored.
     let bytes = solid(2, 2, 0x0000_00ff);
     let mut image = Image::new(2, 2);
     blit(&mut image, &at(&bytes, 2, 2, 0, 0));
@@ -524,18 +524,18 @@ fn a_truncated_buffer_is_survived_rather_than_indexed_past() {
 
 #[test]
 fn scaling_up_repeats_source_pixels() {
-    // Nearest-neighbour: a 2x2 scaled to 4x4 is each pixel doubled. This is
+    // Nearest-neighbor: a 2x2 scaled to 4x4 is each pixel doubled. This is
     // where the reference resamples and this does not, which is the one
     // documented divergence in the capture path.
     let mut bytes = Vec::new();
-    let colours = [
+    let colors = [
         argb(255, 255, 0, 0),
         argb(255, 0, 255, 0),
         argb(255, 0, 0, 255),
         argb(255, 255, 255, 255),
     ];
-    for colour in colours {
-        bytes.extend_from_slice(&colour.to_ne_bytes());
+    for color in colors {
+        bytes.extend_from_slice(&color.to_ne_bytes());
     }
 
     let mut image = Image::new(4, 4);
@@ -554,11 +554,11 @@ fn scaling_up_repeats_source_pixels() {
         },
     );
 
-    assert_eq!(pixel_at(&image, 0, 0), colours[0]);
-    assert_eq!(pixel_at(&image, 1, 1), colours[0], "top-left doubled");
-    assert_eq!(pixel_at(&image, 2, 0), colours[1]);
-    assert_eq!(pixel_at(&image, 0, 2), colours[2]);
-    assert_eq!(pixel_at(&image, 3, 3), colours[3]);
+    assert_eq!(pixel_at(&image, 0, 0), colors[0]);
+    assert_eq!(pixel_at(&image, 1, 1), colors[0], "top-left doubled");
+    assert_eq!(pixel_at(&image, 2, 0), colors[1]);
+    assert_eq!(pixel_at(&image, 0, 2), colors[2]);
+    assert_eq!(pixel_at(&image, 3, 3), colors[3]);
 }
 
 #[test]
@@ -796,14 +796,14 @@ mod jpeg {
         );
     }
 
-    /// An opaque colour survives the round trip.
+    /// An opaque color survives the round trip.
     ///
-    /// JPEG is lossy, so this is about the colour being recognisably itself
+    /// JPEG is lossy, so this is about the color being recognizably itself
     /// rather than exact. A channel order swapped somewhere in the pack would
-    /// show up as a wildly different colour, not a slightly wrong one.
+    /// show up as a wildly different color, not a slightly wrong one.
     #[test]
-    fn an_opaque_colour_round_trips() {
-        let scratch = Scratch::new("colour");
+    fn an_opaque_color_round_trips() {
+        let scratch = Scratch::new("color");
         // Opaque, so premultiplied and straight are the same value.
         write_jpg(&solid(32, 32, 0xFF80_4020), scratch.path(), 95).expect("encode");
 
@@ -822,14 +822,14 @@ mod jpeg {
         assert!(decoded[2].abs_diff(0x20) < 8, "blue");
     }
 
-    /// Premultiplied colour is undone before encoding.
+    /// Premultiplied color is undone before encoding.
     ///
-    /// JPEG has no alpha, so a half-covered pixel's colour has to be recovered
+    /// JPEG has no alpha, so a half-covered pixel's color has to be recovered
     /// before the alpha is dropped. Encoding the premultiplied value instead
     /// darkens every partly transparent pixel toward black — a translucent
     /// decoration comes out looking like a dark one rather than like itself.
     #[test]
-    fn premultiplied_colour_is_undone_before_encoding() {
+    fn premultiplied_color_is_undone_before_encoding() {
         let scratch = Scratch::new("premul");
         // Alpha 0x80 with channels already scaled by it: 0x40/0x80 -> ~0x7F.
         write_jpg(&solid(32, 32, 0x8040_2010), scratch.path(), 95).expect("encode");
@@ -906,8 +906,8 @@ mod jpeg {
     /// Chroma is subsampled by two and an odd dimension rounds **up**: a
     /// 17-row frame has 9 chroma rows, not 8. A guard that rounded down would
     /// accept a plane one row short, and the interleave would pad the last
-    /// row with neutral grey — a frame whose bottom rows quietly lose their
-    /// colour, which is much worse than being refused.
+    /// row with neutral gray — a frame whose bottom rows quietly lose their
+    /// color, which is much worse than being refused.
     #[test]
     fn an_odd_height_needs_its_extra_chroma_row() {
         let scratch = Scratch::new("nv12-odd");
@@ -952,7 +952,7 @@ mod jpeg {
     #[test]
     fn a_solid_nv12_frame_round_trips() {
         let scratch = Scratch::new("nv12");
-        // Mid-grey: luma 0x80, chroma neutral at 0x80.
+        // Mid-gray: luma 0x80, chroma neutral at 0x80.
         let luma = vec![0x80u8; 32 * 32];
         let chroma = vec![0x80u8; 32 * 16];
 
@@ -977,7 +977,7 @@ mod jpeg {
             .expect("decodable");
         assert!(
             decoded[0].abs_diff(0x80) < 12,
-            "neutral chroma over mid luma is grey, and came back as {:#04x}",
+            "neutral chroma over mid luma is gray, and came back as {:#04x}",
             decoded[0]
         );
     }

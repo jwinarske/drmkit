@@ -802,7 +802,7 @@ test a_second_case ... ok
     #[test]
     fn a_capability_skip_records_fine() {
         let observed = parse(
-            "test a_case ... ok\nDRMKIT-SKIP\ta_case\tno CRTC on this device has a colour pipeline\n",
+            "test a_case ... ok\nDRMKIT-SKIP\ta_case\tno CRTC on this device has a color pipeline\n",
         );
         super::environment_is_fit_to_record(&observed).expect("a real capability skip");
     }

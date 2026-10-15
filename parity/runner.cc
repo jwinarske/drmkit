@@ -92,7 +92,7 @@ class StarvableSource : public drm::scene::LayerBufferSource {
 
   // Forwarded so the composition fallback can read this layer's pixels. Without
   // it a layer the allocator cannot place has no route into the canvas and just
-  // stays off screen -- a legitimate behaviour, but not the one a composition
+  // stays off screen -- a legitimate behavior, but not the one a composition
   // scenario is trying to compare.
   [[nodiscard]] drm::expected<drm::BufferMapping, std::error_code> map(
       drm::MapAccess access) override {
@@ -197,7 +197,7 @@ int main(int argc, char** argv) {
 
   drm::PageFlip flip(dev);
   std::map<std::string, LayerHandle> handles;
-  // A signalled fence kept from an earlier frame's out-fence, for `fence`.
+  // A signaled fence kept from an earlier frame's out-fence, for `fence`.
   drm::sync::SyncFence minted;
 
   std::string line;
@@ -218,9 +218,9 @@ int main(int argc, char** argv) {
       continue;
     }
 
-    // A frame that also asks the kernel for a fence signalling its landing.
-    // Kept so a later `fence` can arm something already signalled: an
-    // unsignalled IN_FENCE_FD would just hang the flip.
+    // A frame that also asks the kernel for a fence signaling its landing.
+    // Kept so a later `fence` can arm something already signaled: an
+    // unsignaled IN_FENCE_FD would just hang the flip.
     if (cmd == "mint") {
       drm::sync::SyncFence out;
       auto r = scene.commit(DRM_MODE_PAGE_FLIP_EVENT, &flip, &out);

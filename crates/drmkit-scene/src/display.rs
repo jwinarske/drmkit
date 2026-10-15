@@ -13,7 +13,7 @@
 //! # Scope
 //!
 //! The geometry every commit needs, the container colorimetry and transfer
-//! function the connector's signalling is derived from, and the YCbCr
+//! function the connector's signaling is derived from, and the YCbCr
 //! encoding and range a plane converts with. The C++'s per-plane
 //! color-pipeline fields (`degamma_tf`, `hdr_mult`, the shaper and blend
 //! stages) are not ported.

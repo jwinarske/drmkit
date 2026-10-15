@@ -36,9 +36,9 @@ pub struct DecorationGeometry {
     pub title_bar_height: i32,
     /// Radius of each window button.
     pub button_radius: i32,
-    /// Vertical centre of every button.
+    /// Vertical center of every button.
     pub button_cy: i32,
-    /// Horizontal centre of the close button.
+    /// Horizontal center of the close button.
     pub close_cx: i32,
     /// Of the minimize button.
     pub minimize_cx: i32,

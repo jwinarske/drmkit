@@ -4,7 +4,7 @@
 //
 // Runs drm-cxx's own ToneMapper over a spread of pixels and prints what comes
 // back, so crates/drmkit-display/src/tests.rs can be written against the
-// reference's answers rather than against hand-derived ones. Colour maths has
+// reference's answers rather than against hand-derived ones. Color maths has
 // too many plausible readings — which matrix, absolute or relative scaling,
 // where the curve is applied, how the LUT interpolates — for an expectation
 // worked out on paper to be worth much.
@@ -44,10 +44,10 @@ int main() {
 
   run("up_black",        up,        px(0, 0, 0, 0xFFFF));
   run("up_white",        up,        px(0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF));
-  run("up_mid_grey",     up,        px(0x8000, 0x8000, 0x8000, 0xFFFF));
+  run("up_mid_gray",     up,        px(0x8000, 0x8000, 0x8000, 0xFFFF));
   run("up_red",          up,        px(0xFFFF, 0, 0, 0xFFFF));
   run("up_alpha_kept",   up,        px(0x4000, 0x4000, 0x4000, 0x1234));
-  run("up203_mid_grey",  up203,     px(0x8000, 0x8000, 0x8000, 0xFFFF));
+  run("up203_mid_gray",  up203,     px(0x8000, 0x8000, 0x8000, 0xFFFF));
 
   run("down_black",      down,      px(0, 0, 0, 0xFFFF));
   run("down_white",      down,      px(0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF));

@@ -25,7 +25,7 @@ enum Status {
     Partial,
     /// Not started. Every row starts here.
     Pending,
-    /// Deliberately not ported — the C++ construct has no Rust analogue
+    /// Deliberately not ported — the C++ construct has no Rust analog
     /// (e.g. the C++17-polyfill / dual-std machinery, plan DR-8).
     NotApplicable,
 }

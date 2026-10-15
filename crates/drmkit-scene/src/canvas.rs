@@ -24,7 +24,7 @@
 //! ```
 //!
 //! A straight-alpha source blended by this formula does not merely look
-//! slightly off — the colour channels saturate instead of mixing. Convert
+//! slightly off — the color channels saturate instead of mixing. Convert
 //! before calling.
 //!
 //! # Byte order
@@ -78,8 +78,8 @@ pub struct CompositeSrc<'a> {
 
 /// Whether this module can blend from `fourcc`.
 ///
-/// Deliberately narrow. A format that reaches the blend loop unrecognised
-/// would be reinterpreted as `ARGB8888` and produce colour noise, so an
+/// Deliberately narrow. A format that reaches the blend loop unrecognized
+/// would be reinterpreted as `ARGB8888` and produce color noise, so an
 /// unsupported source is refused rather than guessed at.
 #[must_use]
 pub const fn format_supported(drm_fourcc: u32) -> bool {
@@ -122,7 +122,7 @@ fn blend_pixel_over(src: u32, dst: u32) -> u32 {
 
 /// Scale every channel of a premultiplied pixel by `alpha8 / 255`.
 ///
-/// Applied whole-surface, from the layer's plane alpha. Scaling the colour
+/// Applied whole-surface, from the layer's plane alpha. Scaling the color
 /// channels as well as alpha is what keeps the pixel premultiplied — leaving
 /// `rgb > a` would break the assumption [`blend_pixel_over`] rests on and show
 /// up as haloing at the edges.
@@ -202,7 +202,7 @@ fn clip_axis(
     })
 }
 
-/// Map a destination index back to a source index, nearest-neighbour.
+/// Map a destination index back to a source index, nearest-neighbor.
 ///
 /// The same expression covers magnification and minification, so a scaled
 /// blit needs no separate path.
@@ -260,12 +260,12 @@ pub fn clear_into(
 /// Blend `src` over `dst`, premultiplied `SRC_OVER`.
 ///
 /// Both rectangles are clipped against their own buffer, and mismatched sizes
-/// scale nearest-neighbour. Refuses rather than guessing when the source
+/// scale nearest-neighbor. Refuses rather than guessing when the source
 /// format is unsupported or either buffer is smaller than its stated geometry.
 ///
 /// Unlike the C++, this needs no alignment guard. Upstream reinterpret-casts
 /// both buffers to `uint32_t*` and has to bail on an unaligned base to avoid
-/// undefined behaviour; reading through `chunks_exact` has no such
+/// undefined behavior; reading through `chunks_exact` has no such
 /// requirement, so a caller cannot hand in a pointer that makes this unsound.
 pub fn blend_into(
     dst: &mut [u8],
@@ -816,9 +816,9 @@ mod tests {
         assert_eq!(px(&dst, 8, 0, 0), 0xFFFF_0000);
     }
 
-    /// Plane alpha scales colour as well as alpha.
+    /// Plane alpha scales color as well as alpha.
     ///
-    /// Leaving the colour channels alone would produce `rgb > a`, which is not
+    /// Leaving the color channels alone would produce `rgb > a`, which is not
     /// a valid premultiplied pixel; `blend_pixel_over` assumes it never sees
     /// one, and the visible result is a bright halo at the layer's edges.
     #[test]
@@ -947,7 +947,7 @@ mod tests {
         assert_eq!(dst, before);
     }
 
-    /// Magnifying picks nearest-neighbour source pixels.
+    /// Magnifying picks nearest-neighbor source pixels.
     #[test]
     fn a_smaller_source_scales_up() {
         let mut dst = canvas(4, 1);

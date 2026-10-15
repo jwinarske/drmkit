@@ -244,7 +244,7 @@ impl ShadowCache {
     /// and the endpoints are exactly `blit_into` of one patch.
     ///
     /// `t` is clamped to `0..=1`: an animation that overshoots is a caller
-    /// bug, and extrapolating a colour past its endpoints produces values
+    /// bug, and extrapolating a color past its endpoints produces values
     /// that are not a shadow at all.
     ///
     /// The two keys must be the same size, as the reference requires; keys
@@ -355,7 +355,7 @@ fn to_u8(value: f32) -> u8 {
 }
 
 /// Render one shadow patch: a rounded rectangle, blurred, in the theme's
-/// shadow colour.
+/// shadow color.
 fn render_shadow(key: ShadowKey, theme: &Theme) -> Vec<u8> {
     let w = key.width as usize;
     let h = key.height as usize;

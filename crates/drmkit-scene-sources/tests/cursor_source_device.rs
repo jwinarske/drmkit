@@ -38,7 +38,7 @@ const W: u32 = 16;
 const H: u32 = 16;
 
 /// A distinct opaque value per pixel, so a stride or offset mistake shows up
-/// as the wrong colour rather than as a plausible one.
+/// as the wrong color rather than as a plausible one.
 fn pattern() -> Vec<u32> {
     (0..W * H)
         .map(|i| 0xFF00_0000 | (i * 0x0001_0203))
@@ -70,7 +70,7 @@ fn open_card() -> Option<Device> {
     Some(device)
 }
 
-/// Read the buffer back as packed `0xAARRGGBB`, honouring the stride.
+/// Read the buffer back as packed `0xAARRGGBB`, honoring the stride.
 fn read_back(source: &mut CursorSource) -> Vec<u32> {
     let (width, height) = source.size();
     let mapping = source.map(MapAccess::Read).expect("map");
@@ -88,9 +88,9 @@ fn read_back(source: &mut CursorSource) -> Vec<u32> {
 }
 
 /// One solid frame.
-fn frame(width: u32, height: u32, colour: u32, delay: Duration) -> Frame {
+fn frame(width: u32, height: u32, color: u32, delay: Duration) -> Frame {
     Frame {
-        pixels: vec![colour; (width * height) as usize],
+        pixels: vec![color; (width * height) as usize],
         width,
         height,
         xhot: 0,
@@ -103,11 +103,11 @@ fn frame(width: u32, height: u32, colour: u32, delay: Duration) -> Frame {
 ///
 /// Polling rather than sleeping a fixed time: the clock starts at the first
 /// acquire, so how many rounds this takes depends on the machine.
-fn advance_to_second_frame(source: &mut CursorSource, colour: u32) -> bool {
+fn advance_to_second_frame(source: &mut CursorSource, color: u32) -> bool {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while std::time::Instant::now() < deadline {
         source.acquire().expect("acquire");
-        if read_back(source)[0] == colour {
+        if read_back(source)[0] == color {
             return true;
         }
         std::thread::sleep(Duration::from_millis(5));

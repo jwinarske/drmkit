@@ -288,7 +288,7 @@ impl<B: Backend> Session<B> {
         );
         self.pending.push_back(SessionEvent::Paused);
         // Acknowledged immediately. The queued event is what the caller acts
-        // on, and holding the acknowledgement until they have would stall the
+        // on, and holding the acknowledgment until they have would stall the
         // switch on a display that has already stopped being ours.
         self.backend.acknowledge_pause()
     }

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: (c) 2026 Joel Winarske
 // SPDX-License-Identifier: MIT
 
-//! The CRTC's colour pipeline: degamma, matrix, gamma.
+//! The CRTC's color pipeline: degamma, matrix, gamma.
 //!
 //! Three blob properties in a fixed order. Content arrives encoded, degamma
 //! takes it to linear light, the matrix moves it between primaries -- which is
@@ -45,7 +45,7 @@ impl Stage {
 pub enum PipelineError {
     /// The CRTC exposes none of the three stages, so there is nothing to
     /// program. Older and simpler display controllers.
-    #[error("this CRTC has no colour pipeline at all")]
+    #[error("this CRTC has no color pipeline at all")]
     NoPipeline,
 
     /// A LUT was asked for on the matrix stage, which does not take one.
@@ -81,7 +81,7 @@ pub enum PipelineError {
     },
 }
 
-/// The colour pipeline of one CRTC.
+/// The color pipeline of one CRTC.
 ///
 /// Holds the blobs it creates and destroys them on drop, and borrows the
 /// device so a blob cannot outlive the descriptor that has to free it.
@@ -110,7 +110,7 @@ struct StageProperties {
 }
 
 impl<'a> CrtcColorPipeline<'a> {
-    /// Read a CRTC's colour capabilities and prepare to program them.
+    /// Read a CRTC's color capabilities and prepare to program them.
     ///
     /// A driver exposing only part of the pipeline -- vkms has gamma and
     /// nothing else -- succeeds; the stages it lacks refuse.

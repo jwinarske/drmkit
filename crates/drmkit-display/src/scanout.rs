@@ -278,7 +278,7 @@ impl ScanoutTarget {
 
         let kinds: Vec<Interface> = eligible.iter().map(connector::Info::interface).collect();
         // Falling back to the first eligible one, which is what the kernel
-        // enumerated first -- the behaviour a caller would have got with no
+        // enumerated first -- the behavior a caller would have got with no
         // ranking at all.
         let chosen = rank_pick(&kinds, ranks).unwrap_or(0);
         let connector = &eligible[chosen];

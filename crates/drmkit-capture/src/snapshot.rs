@@ -143,7 +143,7 @@ impl Drop for Mapping {
 ///
 /// Planes are composited bottom-up by `zpos`, `SRC_OVER`, as the display
 /// controller would for planes that are neither cropped nor scaled: the whole
-/// framebuffer is sampled, ignoring `SRC_*`, and scaling is nearest-neighbour,
+/// framebuffer is sampled, ignoring `SRC_*`, and scaling is nearest-neighbor,
 /// as in the reference.
 ///
 /// **The atomic client cap must be enabled on `device` first.** Plane
@@ -412,7 +412,7 @@ fn compose(image: &mut Image, frame: &PlaneFrame) {
 
 /// Blend one plane's pixels into the output.
 ///
-/// Scaling is nearest-neighbour. The C++ reference resamples through `Blend2D`,
+/// Scaling is nearest-neighbor. The C++ reference resamples through `Blend2D`,
 /// so a *scaled* plane will not match it pixel for pixel; an unscaled one --
 /// which is what a screenshot of an ordinary desktop is made of -- matches
 /// exactly. Pinning a readback path to one particular resampler is not worth

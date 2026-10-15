@@ -4,7 +4,7 @@
 //! What a connected display says about itself.
 //!
 //! EDID is a blob the display hands over on connect, describing its make,
-//! physical size, colour primaries, and what HDR it can accept. It is also
+//! physical size, color primaries, and what HDR it can accept. It is also
 //! notoriously malformed in the field — truncated, mis-checksummed, carrying
 //! extension blocks that disagree with the base block — so parsing it is
 //! delegated to [`libdisplay-info`], which exists precisely because everyone
@@ -116,11 +116,11 @@ pub struct ConnectorInfo {
     pub model: String,
     /// Per-unit serial number, where the display gives one.
     pub serial: Option<String>,
-    /// Physical width in millimetres.
+    /// Physical width in millimeters.
     pub width_mm: i32,
-    /// Physical height in millimetres.
+    /// Physical height in millimeters.
     pub height_mm: i32,
-    /// Colour primaries, where present.
+    /// Color primaries, where present.
     pub colorimetry: Option<ColorimetryInfo>,
     /// HDR static metadata, where the display advertises any.
     pub hdr: Option<HdrStaticMetadata>,
@@ -165,8 +165,8 @@ pub fn parse_edid(blob: &[u8]) -> Result<ConnectorInfo, EdidError> {
     let (mut width_mm, mut height_mm) = (0, 0);
     if let Some(edid) = info.edid() {
         let size = edid.screen_size();
-        // EDID records whole centimetres; everything downstream works in
-        // millimetres, so convert here rather than leaving two units in play.
+        // EDID records whole centimeters; everything downstream works in
+        // millimeters, so convert here rather than leaving two units in play.
         width_mm = size.width_cm.unwrap_or(0) * 10;
         height_mm = size.height_cm.unwrap_or(0) * 10;
     }

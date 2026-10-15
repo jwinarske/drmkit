@@ -77,7 +77,7 @@ Per-subsystem LOC at `dc2915b`, with crate disposition:
 | `vulkan/` (VK_KHR_display enum) | 332 | `drmkit-vulkan` | ⬜ |
 | top-level (`log.hpp` sink, `buffer_mapping.hpp`) | ~200 | `drmkit-log` (facade over `log`/`tracing`) | ✅ |
 
-**Build-system note that changes the Rust mapping:** the C++ tree dropped its C++23 floor to a **C++17 default with vendored polyfills** (tl-expected, tcb-span, fmt) and a dual-std CI lane. Every polyfill dependency evaporates in Rust: `tl::expected` → `Result`, `tcb::span` → slices, `fmt` → `core::fmt`. The dual-std lane has no Rust analogue and is simply deleted from the CI matrix — one of the few places the port is *less* work than the original.
+**Build-system note that changes the Rust mapping:** the C++ tree dropped its C++23 floor to a **C++17 default with vendored polyfills** (tl-expected, tcb-span, fmt) and a dual-std CI lane. Every polyfill dependency evaporates in Rust: `tl::expected` → `Result`, `tcb::span` → slices, `fmt` → `core::fmt`. The dual-std lane has no Rust analog and is simply deleted from the CI matrix — one of the few places the port is *less* work than the original.
 
 ---
 
@@ -271,7 +271,7 @@ Phase gates are merge-blocking; each phase ends with its tests in CI green, incl
 - **DR-5 (new):** EGL via `libloading` + hand-rolled entry points mirroring `egl_runtime`, not khronos-egl. Exact resolution-order and never-link discipline outweigh binding reuse here.
 - **DR-6 (new):** `SourceError::WouldBlock` as a typed variant is the EAGAIN contract; never `io::ErrorKind::WouldBlock` in the public scene API.
 - **DR-7 (new):** ToneMapper SIMD is aarch64 NEON fp16 only (1.94 stable), runtime-detected; no x86 SIMD lane (target matrix doesn't justify it).
-- **DR-8 (new):** the C++17-polyfill/dual-std machinery is explicitly out of scope — no Rust analogue exists or is needed.
+- **DR-8 (new):** the C++17-polyfill/dual-std machinery is explicitly out of scope — no Rust analog exists or is needed.
 - **DR-9 (2026-08-22, phase 0 spike B-1):** `AtomicRequest` exposes its accumulated `(object, property, value)` writes through a safe ordered iterator; `drmkit-scene-streams` replays them into a libdrm `drmModeAtomicReq` for the `EGL_DRM_ATOMIC_REQUEST_NV` handoff. Supersedes DR-4's `unsafe fn native_handle() -> *mut drmModeAtomicReq`, which cannot be built on `drm-ffi` (it materializes no libdrm request object). Keeps libdrm out of `drmkit-core` and out of GPU-less builds; the same view feeds T7's property-write trace differ, so it ships live in v0.1.0-minimal rather than dormant.
 
 ---

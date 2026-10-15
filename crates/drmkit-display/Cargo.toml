@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Display characterisation and colour handling for drmkit"
+description = "Display characterization and color handling for drmkit"
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
@@ -19,7 +19,7 @@ workspace = true
 # EDID parsing, off by default because libdisplay-info-sys links against a
 # system library. Keeping it optional is what lets the cross lanes build this
 # crate at all: they have no sysroot for it, and drmkit-display carries the
-# tone mapper and colour curves that everything downstream wants.
+# tone mapper and color curves that everything downstream wants.
 default = []
 edid = ["dep:libdisplay-info"]
 hotplug = ["dep:udev"]
@@ -40,7 +40,7 @@ drmkit-fmt = { workspace = true }
 rustix = { workspace = true, features = ["std"] }
 # The hotplug watch. Optional because libudev-sys runs pkg-config in its build
 # script, so a target with no sysroot for it cannot even type-check this --
-# and the rest of the crate, the tone mapper and colour curves included, is
+# and the rest of the crate, the tone mapper and color curves included, is
 # what the cross lanes are there to cover.
 udev = { workspace = true, optional = true }
 

@@ -66,10 +66,10 @@ week. So it records *how many* planes carry a rotation mask, not which.
   boolean, because capabilities are not all-or-nothing: amdgpu attaches damage
   clips to six of its ten planes. Plus histograms of rotation mask and zpos
   range, which is what makes a plane pool heterogeneous or not.
-- **crtcs** — colour-pipeline shapes and gamma LUT sizes.
+- **crtcs** — color-pipeline shapes and gamma LUT sizes.
 - **connectors** — by name, not id: `HDMI-A-1` is stable across boots and
   matches sysfs. Connection state, mode count, colorspace entries, `max bpc`,
-  whether HDR can be signalled.
+  whether HDR can be signaled.
 
 ## Adding a device
 
@@ -120,7 +120,7 @@ A survey is a distribution, printed and never gated -- but printed *whole*.
 An early version truncated each survey at fourteen rows, and the two planes
 that closed [P-6](parity-findings.md) were in the tail: every visible row
 agreed, so the histogram read as unanimous when it was not. A survey now
-summarises what it dropped.
+summarizes what it dropped.
 
 P-6 is what this is for. A guard upstream carries, that no board here could
 reproduce, sitting open for want of hardware. The corpus has it: two Allwinner
@@ -139,7 +139,7 @@ so on any board an unknown fraction of a passing run asserted nothing.
 
 `drmkit_testkit::skipped` prints a line naming the case and the reason, taking
 the case's name from the harness's own thread so it cannot drift out of sync
-with the function it labels. Pointing the colour-pipeline suite at a card that
+with the function it labels. Pointing the color-pipeline suite at a card that
 does not exist shows what the count was hiding:
 
 ```
@@ -172,7 +172,7 @@ a device differs — locally, over ssh to a board, inside the vkms lane — and
 none of that changes what a coverage regression means.
 
 The vc4 baseline is the worked example: **97 cases, 6 of them skipping**. Five
-are the colour-pipeline cases, which vc4 cannot run because it has no
+are the color-pipeline cases, which vc4 cannot run because it has no
 `DEGAMMA_LUT`, `CTM` or `GAMMA_LUT` on any CRTC ([P-21](parity-findings.md)).
 The sixth wants `HOTSPOT_X`, which only a virtualized guest driver has.
 
@@ -218,7 +218,7 @@ coverage --audit` reads every recorded baseline and answers it:
 Asserted on one device and skipped on the others -- lose it and these stop running:
   a_layer_past_the_budget_is_composited_and_says_so_vkms   only on rpi5-vc4
   a_stage_the_crtc_has_takes_a_blob                        only on ci-vkms
-  ... and the other four colour-pipeline cases
+  ... and the other four color-pipeline cases
 
 error: assertions that run on no device in the pool
 
@@ -228,7 +228,7 @@ error: assertions that run on no device in the pool
 ```
 
 Two useful answers. The six single-device cases are the split doing its job:
-vc4 has 17 planes against a budget of 16 and no colour pipeline at all, vkms
+vc4 has 17 planes against a budget of 16 and no color pipeline at all, vkms
 has 9 planes and a gamma stage. Each covers what the other cannot, and a green
 run on either alone looks complete.
 
@@ -267,7 +267,7 @@ Each was tested by breaking what it guards and confirming it goes red.
 | `cargo-deny` | Teeth. A wildcard dependency fails `bans` and exits 2. |
 | lane-health checks | **Asserted a card, not which card.** All three passed on amdgpu, while the file's own header said the point was telling vkms apart. `DRMKIT_EXPECT_DRIVER` now does. |
 | rustdoc | **Was not run at all.** `RUSTFLAGS` carries `-Dwarnings`; `RUSTDOCFLAGS` is separate and was unset, so six broken intra-doc links and an unclosed HTML tag sat unnoticed. Fixed, and now a lane. |
-| tsan lane | Teeth. A deliberate unsynchronised static is caught as `data race` with the line named, and the process exits 66 — so a race fails the lane rather than printing a warning under a green tick. |
+| tsan lane | Teeth. A deliberate unsynchronized static is caught as `data race` with the line named, and the process exits 66 — so a race fails the lane rather than printing a warning under a green tick. |
 | asan lane | Teeth. A one-past-the-end read is caught as `heap-buffer-overflow` with the frame named. 389 cases, ~9s. `drmkit-input` runs with leak detection off — `input` leaks its boxed `libinput_interface` per context ([Smithay/input.rs#99](https://github.com/Smithay/input.rs/issues/99)) — and overflow detection was confirmed still live under that setting. |
 | allocator torture thresholds | Three pin a mechanism; `rapid_churn` pins none — see [P-14](parity-findings.md). |
 

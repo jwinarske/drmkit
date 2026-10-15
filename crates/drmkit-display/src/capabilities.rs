@@ -149,7 +149,7 @@ pub struct MaxBpc {
     pub current: u64,
 }
 
-/// What one connector's colour properties can be set to.
+/// What one connector's color properties can be set to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorCapabilities {
     /// The connector this describes.
@@ -214,7 +214,7 @@ impl ConnectorCapabilities {
         self
     }
 
-    /// Read a connector's colour properties.
+    /// Read a connector's color properties.
     ///
     /// A property the connector does not have is simply absent. The only
     /// error is not being able to read the property set at all.
@@ -307,7 +307,7 @@ impl ConnectorCapabilities {
     }
 }
 
-/// What one CRTC's colour pipeline can be asked to do.
+/// What one CRTC's color pipeline can be asked to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct CrtcCapabilities {
@@ -326,7 +326,7 @@ pub struct CrtcCapabilities {
 }
 
 impl CrtcCapabilities {
-    /// Read a CRTC's colour-pipeline properties.
+    /// Read a CRTC's color-pipeline properties.
     ///
     /// # Errors
     ///
@@ -498,7 +498,7 @@ mod tests {
     }
 
     #[test]
-    fn a_partial_colour_pipeline_is_not_a_full_one() {
+    fn a_partial_color_pipeline_is_not_a_full_one() {
         // vkms exposes GAMMA_LUT and nothing else. The stage is usable; the
         // pipeline is not, and a caller programming a CTM into it gets EINVAL
         // on the whole commit.

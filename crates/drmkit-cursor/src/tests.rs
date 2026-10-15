@@ -187,7 +187,7 @@ fn alias_order_is_the_tables_not_the_requests() {
     // A theme shipping two members of one class answers with whichever comes
     // first in the table, even when the caller named the other. Worth pinning
     // because it looks like a bug until you know it is the reference's
-    // behaviour, and changing it silently changes which file a theme resolves
+    // behavior, and changing it silently changes which file a theme resolves
     // to.
     let fixture = Fixture::new("alias-order");
     let dir = fixture.theme("Adwaita", &[]);
@@ -1119,7 +1119,7 @@ fn coded_frame(width: u32, height: u32, xhot: u32, yhot: u32) -> Frame {
     }
 }
 
-/// A solid frame of one colour.
+/// A solid frame of one color.
 fn solid_frame(width: u32, height: u32, pixel: u32) -> Frame {
     Frame {
         pixels: vec![pixel; (width * height) as usize],
@@ -1143,7 +1143,7 @@ fn at(buffer: &[u32], stride: u32, x: u32, y: u32) -> u32 {
 }
 
 #[test]
-fn an_unrotated_sprite_is_copied_and_centred() {
+fn an_unrotated_sprite_is_copied_and_centered() {
     let frame = coded_frame(2, 2, 0, 0);
     let (buffer, placement) = composed(&frame, Rotation::None, 4, 4);
 
@@ -1151,7 +1151,7 @@ fn an_unrotated_sprite_is_copied_and_centred() {
     assert_eq!(
         (placement.x, placement.y),
         (1, 1),
-        "centred in a 4x4 buffer"
+        "centered in a 4x4 buffer"
     );
     assert_eq!(at(&buffer, 4, 1, 1), 0xff00_0000, "source (0,0)");
     assert_eq!(at(&buffer, 4, 2, 1), 0xff00_0100, "source (1,0)");
@@ -1184,7 +1184,7 @@ fn each_rotation_moves_pixels_where_it_should() {
     let frame = coded_frame(3, 2, 0, 0);
     let code = |x: u32, y: u32| 0xff00_0000 | (x << 8) | y;
 
-    // Buffer exactly the rotated size, so nothing is centred or scaled and
+    // Buffer exactly the rotated size, so nothing is centered or scaled and
     // the mapping is the only thing under test.
     let (upright, p0) = composed(&frame, Rotation::None, 3, 2);
     assert_eq!((p0.width, p0.height), (3, 2));
@@ -1285,10 +1285,10 @@ fn an_oversize_sprite_is_shrunk_to_fit() {
         "72 -> 64 must land on 64, not 63: truncating leaves a black border"
     );
     assert_eq!((placement.x, placement.y), (0, 0));
-    // A solid source downscales to the same solid colour.
+    // A solid source downscales to the same solid color.
     assert!(
         buffer.iter().all(|p| *p == 0xff40_8060),
-        "a flat colour must survive the box filter unchanged"
+        "a flat color must survive the box filter unchanged"
     );
 }
 
@@ -1299,7 +1299,7 @@ fn shrinking_keeps_the_aspect_ratio() {
     let frame = solid_frame(128, 32, 0xffff_ffff);
     let (_, placement) = composed(&frame, Rotation::None, 64, 64);
     assert_eq!((placement.width, placement.height), (64, 16));
-    assert_eq!((placement.x, placement.y), (0, 24), "and stays centred");
+    assert_eq!((placement.x, placement.y), (0, 24), "and stays centered");
 }
 
 #[test]
@@ -1340,10 +1340,10 @@ fn the_box_filter_conserves_energy() {
     // Plan §9 T1: the downscale is area-weighted, so the average of the output
     // has to match the average of the input to within rounding. A sampler that
     // dropped or double-counted source pixels would still look plausible on a
-    // flat colour and fail here.
+    // flat color and fail here.
     let mut frame = solid_frame(96, 96, 0);
     for (index, pixel) in frame.pixels.iter_mut().enumerate() {
-        // A gradient, so every source pixel differs from its neighbours.
+        // A gradient, so every source pixel differs from its neighbors.
         let value = u32::try_from(index % 256).expect("small");
         *pixel = 0xff00_0000 | (value << 16) | (value << 8) | value;
     }
@@ -1918,7 +1918,7 @@ fn a_size_between_ladder_steps_probes_the_step_below() {
 #[test]
 fn a_size_below_the_floor_still_gets_a_buffer() {
     // Nothing on the ladder is at or below 32, so nothing is probed, and the
-    // answer is the 64 floor. A 32-pixel cursor is drawn centred inside it
+    // answer is the 64 floor. A 32-pixel cursor is drawn centered inside it
     // rather than not at all.
     let mut asked = Vec::new();
     let size = probe_size(32, |candidate| {

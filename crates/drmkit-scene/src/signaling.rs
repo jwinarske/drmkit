@@ -91,7 +91,7 @@ impl ColorPrimaries {
         match self {
             // Not `Bt709Ycc`: that would force YCC encoding, which is wrong
             // for an RGB source. `Default` lets the driver use its standard
-            // SDR signalling, which is what an sRGB desktop wants.
+            // SDR signaling, which is what an sRGB desktop wants.
             Self::Bt709 => Colorspace::Default,
             // The RGB variant, for the desktop and signage path. YCC content
             // says so through the plane's `COLOR_ENCODING` instead.
@@ -102,17 +102,22 @@ impl ColorPrimaries {
     }
 }
 
+/// The 0.1.0 name of [`OutputSignaling`], kept so code written against it
+/// still builds.
+#[deprecated(since = "0.1.2", note = "renamed to `OutputSignaling`")]
+pub type OutputSignalling = OutputSignaling;
+
 /// What the scene wants declared on the connector for one frame.
 #[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
-pub struct OutputSignalling {
+pub struct OutputSignaling {
     /// The `Colorspace` to write, or `None` to leave the property alone.
     ///
     /// `None` when no layer said what it was in. Writing a guess would
     /// override whatever the last client left, which on a connector is
     /// sticky.
     pub colorspace: Option<Colorspace>,
-    /// The metadata to publish, or `None` for no HDR signalling.
+    /// The metadata to publish, or `None` for no HDR signaling.
     pub hdr_metadata: Option<HdrSourceMetadata>,
     /// Whether HDR was called for and could not be carried.
     ///
@@ -137,7 +142,7 @@ pub fn widest_gamut<'a>(
         .max()
 }
 
-/// Whether a transfer function is one that needs HDR signalling.
+/// Whether a transfer function is one that needs HDR signaling.
 ///
 /// `TraditionalGammaHdr` is not: it is HDR content over a BT.1886 path, and
 /// publishing PQ metadata for it would tell the sink to apply a curve the
@@ -165,10 +170,10 @@ const fn is_hdr(eotf: TransferFunction) -> bool {
 /// `capabilities` gates the HDR half. Passing `None` skips the check, for a
 /// caller that already gated up front.
 #[must_use]
-pub fn derive_output_signalling(
+pub fn derive_output_signaling(
     layers: &[DisplayParams],
     capabilities: Option<&ConnectorCapabilities>,
-) -> OutputSignalling {
+) -> OutputSignaling {
     let gamut = widest_gamut(layers);
 
     let eotf = layers
@@ -182,7 +187,7 @@ pub fn derive_output_signalling(
             _ => 1,
         });
 
-    let mut signalling = OutputSignalling {
+    let mut signaling = OutputSignaling {
         colorspace: gamut.map(ColorPrimaries::colorspace),
         hdr_metadata: eotf.map(|eotf| HdrSourceMetadata {
             eotf,
@@ -195,25 +200,35 @@ pub fn derive_output_signalling(
         hdr_downgraded: false,
     };
 
-    if signalling.hdr_metadata.is_some() && capabilities.is_some_and(|caps| !caps.can_signal_hdr())
-    {
+    if signaling.hdr_metadata.is_some() && capabilities.is_some_and(|caps| !caps.can_signal_hdr()) {
         // Eight bits per component with a PQ flag is a sink that accepts the
-        // metadata and shows banded SDR. Dropping the signalling is the
+        // metadata and shows banded SDR. Dropping the signaling is the
         // honest answer, and the flag is how the caller learns it happened.
-        signalling.hdr_metadata = None;
-        signalling.hdr_downgraded = true;
+        signaling.hdr_metadata = None;
+        signaling.hdr_downgraded = true;
     }
 
-    signalling
+    signaling
+}
+
+/// The 0.1.0 name of [`derive_output_signaling`], kept so code written against
+/// it still builds.
+#[deprecated(since = "0.1.2", note = "renamed to `derive_output_signaling`")]
+#[must_use]
+pub fn derive_output_signalling(
+    layers: &[DisplayParams],
+    capabilities: Option<&ConnectorCapabilities>,
+) -> OutputSignaling {
+    derive_output_signaling(layers, capabilities)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ColorPrimaries, derive_output_signalling, widest_gamut};
+    use super::{ColorPrimaries, derive_output_signaling, widest_gamut};
     use crate::display::DisplayParams;
     use drmkit_display::{Colorspace, ConnectorCapabilities, MaxBpc, TransferFunction};
 
-    /// A layer that says nothing about colour.
+    /// A layer that says nothing about color.
     fn plain() -> DisplayParams {
         DisplayParams::default()
     }
@@ -262,7 +277,7 @@ mod tests {
         let c = ColorPrimaries::DciP3.colorimetry();
         assert!((c.red.x - 0.680).abs() < 1e-6);
         assert!((c.green.x - 0.265).abs() < 1e-6);
-        // D65, not the DCI theatre white -- this is the consumer variant.
+        // D65, not the DCI theater white -- this is the consumer variant.
         assert!((c.white.x - 0.3127).abs() < 1e-6);
     }
 
@@ -338,7 +353,7 @@ mod tests {
     #[test]
     fn bt709_maps_to_default_rather_than_bt709_ycc() {
         // BT709_YCC would force YCC encoding on an RGB source. `Default` lets
-        // the driver use its standard SDR signalling, which is what an sRGB
+        // the driver use its standard SDR signaling, which is what an sRGB
         // desktop wants.
         assert_eq!(ColorPrimaries::Bt709.colorspace(), Colorspace::Default);
     }
@@ -354,36 +369,36 @@ mod tests {
 
     #[test]
     fn no_layers_signal_nothing() {
-        let signalling = derive_output_signalling(&[], None);
-        assert_eq!(signalling.colorspace, None);
-        assert_eq!(signalling.hdr_metadata, None);
-        assert!(!signalling.hdr_downgraded);
+        let signaling = derive_output_signaling(&[], None);
+        assert_eq!(signaling.colorspace, None);
+        assert_eq!(signaling.hdr_metadata, None);
+        assert!(!signaling.hdr_downgraded);
     }
 
     #[test]
     fn an_all_sdr_frame_that_names_nothing_leaves_the_connector_alone() {
-        let signalling = derive_output_signalling(&[plain(), plain()], None);
-        assert_eq!(signalling.colorspace, None);
-        assert_eq!(signalling.hdr_metadata, None);
+        let signaling = derive_output_signaling(&[plain(), plain()], None);
+        assert_eq!(signaling.colorspace, None);
+        assert_eq!(signaling.hdr_metadata, None);
     }
 
     #[test]
     fn an_sdr_bt709_layer_asks_for_default_and_no_hdr() {
         let layers = [layer(Some(ColorPrimaries::Bt709), None)];
-        let signalling = derive_output_signalling(&layers, None);
-        assert_eq!(signalling.colorspace, Some(Colorspace::Default));
-        assert_eq!(signalling.hdr_metadata, None);
+        let signaling = derive_output_signaling(&layers, None);
+        assert_eq!(signaling.colorspace, Some(Colorspace::Default));
+        assert_eq!(signaling.hdr_metadata, None);
     }
 
     #[test]
-    fn a_bt2020_pq_layer_produces_hdr_signalling() {
+    fn a_bt2020_pq_layer_produces_hdr_signaling() {
         let layers = [layer(
             Some(ColorPrimaries::Bt2020),
             Some(TransferFunction::SmpteSt2084Pq),
         )];
-        let signalling = derive_output_signalling(&layers, None);
-        assert_eq!(signalling.colorspace, Some(Colorspace::Bt2020Rgb));
-        let hdr = signalling.hdr_metadata.expect("hdr");
+        let signaling = derive_output_signaling(&layers, None);
+        assert_eq!(signaling.colorspace, Some(Colorspace::Bt2020Rgb));
+        let hdr = signaling.hdr_metadata.expect("hdr");
         assert_eq!(hdr.eotf, TransferFunction::SmpteSt2084Pq);
         assert_eq!(
             hdr.display_primaries,
@@ -405,14 +420,14 @@ mod tests {
                 Some(TransferFunction::SmpteSt2084Pq),
             ),
         ];
-        let signalling = derive_output_signalling(&layers, None);
-        assert_eq!(signalling.colorspace, Some(Colorspace::Bt2020Rgb));
-        assert!(signalling.hdr_metadata.is_some());
+        let signaling = derive_output_signaling(&layers, None);
+        assert_eq!(signaling.colorspace, Some(Colorspace::Bt2020Rgb));
+        assert!(signaling.hdr_metadata.is_some());
     }
 
     #[test]
     fn pq_wins_when_both_hdr_curves_are_present() {
-        // HDR10 is the common path, and the two cannot both be signalled.
+        // HDR10 is the common path, and the two cannot both be signaled.
         for order in [[0, 1], [1, 0]] {
             let both = [
                 layer(
@@ -425,7 +440,7 @@ mod tests {
                 ),
             ];
             let layers = [both[order[0]], both[order[1]]];
-            let hdr = derive_output_signalling(&layers, None)
+            let hdr = derive_output_signaling(&layers, None)
                 .hdr_metadata
                 .expect("hdr");
             assert_eq!(hdr.eotf, TransferFunction::SmpteSt2084Pq);
@@ -438,7 +453,7 @@ mod tests {
             Some(ColorPrimaries::Bt2020),
             Some(TransferFunction::Bt2100Hlg),
         )];
-        let hdr = derive_output_signalling(&layers, None)
+        let hdr = derive_output_signaling(&layers, None)
             .hdr_metadata
             .expect("hdr");
         assert_eq!(hdr.eotf, TransferFunction::Bt2100Hlg);
@@ -450,24 +465,24 @@ mod tests {
         // not say is far more likely to be BT.2020, and telling the sink
         // BT.709 shrinks the gamut it renders into.
         let layers = [layer(None, Some(TransferFunction::SmpteSt2084Pq))];
-        let signalling = derive_output_signalling(&layers, None);
-        assert_eq!(signalling.colorspace, None, "no layer named a gamut");
-        let hdr = signalling.hdr_metadata.expect("hdr");
+        let signaling = derive_output_signaling(&layers, None);
+        assert_eq!(signaling.colorspace, None, "no layer named a gamut");
+        let hdr = signaling.hdr_metadata.expect("hdr");
         assert_eq!(hdr.display_primaries, ColorPrimaries::Bt2020.colorimetry());
     }
 
     #[test]
-    fn traditional_gamma_hdr_is_not_hdr_signalling() {
+    fn traditional_gamma_hdr_is_not_hdr_signaling() {
         // HDR content over a BT.1886 path. Publishing PQ metadata for it would
         // tell the sink to apply a curve the content is not in.
         let layers = [layer(
             Some(ColorPrimaries::Bt2020),
             Some(TransferFunction::TraditionalGammaHdr),
         )];
-        let signalling = derive_output_signalling(&layers, None);
-        assert_eq!(signalling.hdr_metadata, None);
-        assert!(!signalling.hdr_downgraded, "nothing was dropped");
-        assert_eq!(signalling.colorspace, Some(Colorspace::Bt2020Rgb));
+        let signaling = derive_output_signaling(&layers, None);
+        assert_eq!(signaling.hdr_metadata, None);
+        assert!(!signaling.hdr_downgraded, "nothing was dropped");
+        assert_eq!(signaling.colorspace, Some(Colorspace::Bt2020Rgb));
     }
 
     // ── Connector constraints ──────────────────────────────────────────
@@ -478,9 +493,9 @@ mod tests {
             Some(ColorPrimaries::Bt2020),
             Some(TransferFunction::SmpteSt2084Pq),
         )];
-        let signalling = derive_output_signalling(&layers, Some(&hdr_capable()));
-        assert!(signalling.hdr_metadata.is_some());
-        assert!(!signalling.hdr_downgraded);
+        let signaling = derive_output_signaling(&layers, Some(&hdr_capable()));
+        assert!(signaling.hdr_metadata.is_some());
+        assert!(!signaling.hdr_downgraded);
     }
 
     #[test]
@@ -494,11 +509,11 @@ mod tests {
             max: 12,
             current: 12,
         });
-        let signalling = derive_output_signalling(&layers, Some(&no_blob));
-        assert_eq!(signalling.hdr_metadata, None);
-        assert!(signalling.hdr_downgraded);
+        let signaling = derive_output_signaling(&layers, Some(&no_blob));
+        assert_eq!(signaling.hdr_metadata, None);
+        assert!(signaling.hdr_downgraded);
         // The gamut still goes out: that half is not gated on HDR.
-        assert_eq!(signalling.colorspace, Some(Colorspace::Bt2020Rgb));
+        assert_eq!(signaling.colorspace, Some(Colorspace::Bt2020Rgb));
     }
 
     #[test]
@@ -515,9 +530,9 @@ mod tests {
                 max: 8,
                 current: 8,
             });
-        let signalling = derive_output_signalling(&layers, Some(&eight_bit));
-        assert_eq!(signalling.hdr_metadata, None);
-        assert!(signalling.hdr_downgraded);
+        let signaling = derive_output_signaling(&layers, Some(&eight_bit));
+        assert_eq!(signaling.hdr_metadata, None);
+        assert!(signaling.hdr_downgraded);
     }
 
     #[test]
@@ -528,7 +543,7 @@ mod tests {
             Some(TransferFunction::SmpteSt2084Pq),
         )];
         assert!(
-            derive_output_signalling(&layers, Some(&hdr_capable()))
+            derive_output_signaling(&layers, Some(&hdr_capable()))
                 .hdr_metadata
                 .is_some()
         );
@@ -544,9 +559,9 @@ mod tests {
             max: 8,
             current: 8,
         });
-        let signalling = derive_output_signalling(&layers, Some(&eight_bit));
-        assert!(!signalling.hdr_downgraded);
-        assert_eq!(signalling.colorspace, Some(Colorspace::Default));
+        let signaling = derive_output_signaling(&layers, Some(&eight_bit));
+        assert!(!signaling.hdr_downgraded);
+        assert_eq!(signaling.colorspace, Some(Colorspace::Default));
     }
 
     #[test]
@@ -557,9 +572,9 @@ mod tests {
             Some(ColorPrimaries::Bt2020),
             Some(TransferFunction::SmpteSt2084Pq),
         )];
-        let signalling = derive_output_signalling(&layers, None);
-        assert!(signalling.hdr_metadata.is_some());
-        assert!(!signalling.hdr_downgraded);
+        let signaling = derive_output_signaling(&layers, None);
+        assert!(signaling.hdr_metadata.is_some());
+        assert!(!signaling.hdr_downgraded);
     }
 
     #[test]

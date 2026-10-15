@@ -56,15 +56,15 @@ fn encoder(file: std::fs::File, quality: u8) -> jpeg_encoder::Encoder<BufWriter<
 /// "as good as possible" or "as small as possible" at the ends.
 ///
 /// The clamp is belt-and-braces: the encoder accepts `0` and `255` without
-/// complaint, so removing it changes no observable behaviour — verified by
+/// complaint, so removing it changes no observable behavior — verified by
 /// injection. It stays because that is the encoder's business rather than a
 /// promise, and a caller reading this signature should be able to trust the
 /// stated range without checking what the encoder does with the rest.
 ///
 /// The pixels are un-premultiplied first, exactly as the PNG path does.
-/// Encoding premultiplied colour without its alpha darkens every partly
+/// Encoding premultiplied color without its alpha darkens every partly
 /// transparent pixel toward black — a translucent decoration would come out
-/// looking like a dark one, rather than in its own colour at full opacity.
+/// looking like a dark one, rather than in its own color at full opacity.
 ///
 /// # Errors
 ///
@@ -121,7 +121,7 @@ pub struct Nv12Frame<'a> {
 ///
 /// The path a camera or a decoder takes. `NV12` is already YCbCr 4:2:0, which
 /// is what JPEG stores — so converting to RGB and back would lose a little
-/// colour to two rounding trips and cost both conversions, for nothing.
+/// color to two rounding trips and cost both conversions, for nothing.
 ///
 /// # Errors
 ///
@@ -188,7 +188,7 @@ pub fn write_jpg_nv12(
 /// The chroma planes are half-resolution, so each chroma sample is repeated
 /// across the two-by-two block of luma it covers. That is what 4:2:0 *means*;
 /// the encoder subsamples it again on the way out, arriving back where it
-/// started without a colour-space round trip through RGB.
+/// started without a color-space round trip through RGB.
 fn interleave_nv12(luma: &[u8], chroma: &[u8], width: usize, height: usize) -> Vec<u8> {
     let chroma_cols = width.div_ceil(2) * 2;
     let mut out = Vec::with_capacity(width * height * 3);

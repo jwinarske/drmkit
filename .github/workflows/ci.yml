@@ -33,11 +33,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgbm-dev libseat-dev libxkbcommon-dev xkb-data libinput-dev libudev-dev meson ninja-build
           # Ubuntu ships libdisplay-info 0.1.1, three minor versions behind the
-          # 0.3 API the EDID parser uses -- the accessors for colour primaries,
+          # 0.3 API the EDID parser uses -- the accessors for color primaries,
           # HDR static metadata and signal colorimetry do not exist before it.
           # libdisplay-info-sys probes the system version through pkg-config and
           # fails the build rather than silently compiling a smaller API, which
-          # is the right behaviour and leaves building it as the fix.
+          # is the right behavior and leaves building it as the fix.
           #
           # Pinned to the tag the bindings target, so the version CI tests
           # against is the one the crate was written for.
@@ -114,11 +114,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgbm-dev libseat-dev libxkbcommon-dev xkb-data libinput-dev libudev-dev meson ninja-build
           # Ubuntu ships libdisplay-info 0.1.1, three minor versions behind the
-          # 0.3 API the EDID parser uses -- the accessors for colour primaries,
+          # 0.3 API the EDID parser uses -- the accessors for color primaries,
           # HDR static metadata and signal colorimetry do not exist before it.
           # libdisplay-info-sys probes the system version through pkg-config and
           # fails the build rather than silently compiling a smaller API, which
-          # is the right behaviour and leaves building it as the fix.
+          # is the right behavior and leaves building it as the fix.
           #
           # Pinned to the tag the bindings target, so the version CI tests
           # against is the one the crate was written for.
@@ -388,7 +388,7 @@ jobs:
       #
       # A race exits 66 without needing halt_on_error, so the lane fails rather
       # than printing a warning and passing; verified with a deliberate
-      # unsynchronised static.
+      # unsynchronized static.
       - run: >
           cargo +nightly test -p drmkit-modeset
           -Zbuild-std --target x86_64-unknown-linux-gnu --lib

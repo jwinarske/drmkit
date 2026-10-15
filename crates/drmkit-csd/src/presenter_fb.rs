@@ -39,7 +39,7 @@ pub struct BlitItem<'a> {
 ///
 /// `None` for a depth this cannot describe. Refusing is the point: a caller
 /// handed a guess would write 32-bit pixels into a 24-bit buffer, and the
-/// result is not a wrong colour but a sheared image, because every row lands
+/// result is not a wrong color but a sheared image, because every row lands
 /// at the wrong offset.
 ///
 /// The red-versus-blue offset decides channel order, which is the one thing
@@ -58,7 +58,7 @@ pub const fn fb_fourcc_for(
             // A zero-length transparency field means the buffer has no alpha
             // channel, whatever the byte width suggests -- the fourth byte is
             // padding, and describing it as alpha would have the display
-            // engine blend against uninitialised data.
+            // engine blend against uninitialized data.
             let has_alpha = transparency_length != 0;
             Some(if red_offset > blue_offset {
                 if has_alpha {

@@ -400,7 +400,7 @@ impl LayerBufferSource for GbmSurfaceSource {
     ///
     /// `gbm_surface_lock_front_buffer` must be called exactly once per
     /// `eglSwapBuffers`, and never before the first. Calling it otherwise is
-    /// undefined behaviour in GBM, not merely an error — which is why this is
+    /// undefined behavior in GBM, not merely an error — which is why this is
     /// the producer's contract to keep and cannot be checked here. A source
     /// whose producer has not swapped reports [`SourceError::WouldBlock`] only
     /// where GBM says so. Before the producer binds the surface the call is a

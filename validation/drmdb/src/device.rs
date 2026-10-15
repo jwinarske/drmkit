@@ -220,7 +220,7 @@ fn range_of(props: Option<&Value>, name: &str) -> (Option<u64>, Option<u64>) {
     };
     let spec = property.get("spec");
     let min = spec.and_then(|s| s.get("min")).and_then(Value::as_u64);
-    // `Max`, capitalised, is what drm_info emits -- and reading only the
+    // `Max`, capitalized, is what drm_info emits -- and reading only the
     // lowercase spelling silently made every range look degenerate, which
     // read as the whole fleet having fixed zpos. Both are accepted so a
     // future spelling change is a missing value rather than a wrong survey.

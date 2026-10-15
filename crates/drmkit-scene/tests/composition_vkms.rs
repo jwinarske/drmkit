@@ -216,7 +216,7 @@ fn fixture_claiming_zpos(claim: bool) -> Option<Fixture> {
     })
 }
 
-/// Add `count` mappable layers, each a distinct colour block.
+/// Add `count` mappable layers, each a distinct color block.
 fn fill(fx: &mut Fixture, count: usize) {
     fill_sized(fx, count, 32, 32);
 }

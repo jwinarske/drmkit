@@ -2,7 +2,7 @@ opaque_over_opaque                 FFFF0000 FFFF0000
 transparent_over_opaque            FF0000FF FF0000FF
 half_alpha_over_opaque             FF80007F FF80007F
 alpha_33_over_opaque               FF3300CC FF3300CC
-alpha_cc_over_grey                 FF1AE61A FF1AE61A
+alpha_cc_over_gray                 FF1AE61A FF1AE61A
 xrgb_padding_ignored               FFFF0000 FFFF0000
 plane_alpha_8000                   80808080 80808080
 plane_alpha_ffff                   FFABCDEF FFABCDEF

@@ -443,7 +443,7 @@ fn create_planar_p010_allocates_and_registers_a_framebuffer_vkms() {
         for column in 0..64usize {
             let at = row * stride + column * 2;
             if let Some(sample) = mapping.get_mut(at..at + 2) {
-                // Mid-grey in the high ten bits, little-endian.
+                // Mid-gray in the high ten bits, little-endian.
                 sample[0] = 0x00;
                 sample[1] = 0x40;
             }

@@ -28,7 +28,7 @@ jobs:
     # The lane takes about three minutes. A guest that wedges in a blocking
     # kernel call otherwise holds the job for GitHub's six-hour default: on
     # 2026-10-08 one sat in rebind_vkms for three and a half hours, with no
-    # log until it was cancelled.
+    # log until it was canceled.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

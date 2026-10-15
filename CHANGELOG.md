@@ -8,6 +8,13 @@ minor version may break the API and a patch version does not.
 
 ## [Unreleased]
 
+### Deprecated
+
+- `drmkit-scene`: `OutputSignalling` and `derive_output_signalling` are now
+  `OutputSignaling` and `derive_output_signaling`, in the US spelling the
+  rest of the API uses. The old names remain as deprecated aliases until
+  0.2.
+
 ### Fixed
 
 - `drmkit-scene`: a source's damage is bounded before it reaches the kernel,
@@ -141,7 +148,7 @@ twenty-one crates.
 - `drmkit-present`: the scanout spine — buffer rings, modifier negotiation,
   frame pacing, and a backend that drives them.
 - `drmkit-display`: EDID through libdisplay-info (`edid`), the hotplug watch
-  (`hotplug`), driver and connector capabilities, colour pipelines and tone
+  (`hotplug`), driver and connector capabilities, color pipelines and tone
   mapping.
 - `drmkit-cursor`, `-capture`, `-csd`: cursor themes and cursor planes,
   readback of what a CRTC is scanning out, and client-side decorations.

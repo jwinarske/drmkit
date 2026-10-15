@@ -12,7 +12,7 @@
 //! `parse_edid` is total by contract: every input either yields a
 //! `ConnectorInfo` or an error, and never panics. libdisplay-info does the
 //! hard part, so what this exercises is the translation layer — the string
-//! handling, the optional gating, the centimetre-to-millimetre arithmetic on
+//! handling, the optional gating, the centimeter-to-millimeter arithmetic on
 //! values a hostile blob chooses.
 //!
 //! This was the phase-1 gate item that could not be seeded before the code it
@@ -51,7 +51,7 @@ fuzz_target!(|data: &[u8]| {
         );
     }
 
-    // Physical size is centimetres scaled by ten. A negative or absurd figure
+    // Physical size is centimeters scaled by ten. A negative or absurd figure
     // means the conversion overflowed or a signed field was read as unsigned.
     assert!(
         info.width_mm >= 0 && info.height_mm >= 0,

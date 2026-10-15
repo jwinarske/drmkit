@@ -7,7 +7,7 @@
 //! other way. Every one of these is defined by a standard, so the constants are
 //! written as the fractions the specification gives rather than as decimals —
 //! `2610 / 16384`, not `0.15930175`. A transposed digit in a hand-rounded
-//! constant is invisible in review and shows up as a colour cast.
+//! constant is invisible in review and shows up as a color cast.
 //!
 //! All of it is `f64`. These run once per LUT entry at construction, not per
 //! pixel, so the precision is free.
@@ -82,7 +82,7 @@ pub fn srgb_oetf(linear: f64) -> f64 {
 ///
 /// A pure 2.4 gamma. Used as the SDR output curve rather than sRGB's piecewise
 /// one: BT.1886 is what a display actually does, and the near-black linear
-/// segment sRGB adds is an encoding convenience, not a display behaviour.
+/// segment sRGB adds is an encoding convenience, not a display behavior.
 #[must_use]
 pub fn bt1886_oetf(linear: f64) -> f64 {
     linear.max(0.0).powf(1.0 / 2.4)
@@ -112,7 +112,7 @@ pub struct ColorLut {
     pub reserved: u16,
 }
 
-/// A 3x3 colour transform, as the kernel reads it.
+/// A 3x3 color transform, as the kernel reads it.
 ///
 /// Row-major, each entry S31.32 sign-magnitude -- see [`encode_s31_32`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,7 +153,7 @@ pub fn encode_s31_32(value: f64) -> u64 {
         return 0;
     }
     let scaled = (value.abs() * S31_32_SCALE).round();
-    // Saturating rather than wrapping. No colour matrix has a coefficient
+    // Saturating rather than wrapping. No color matrix has a coefficient
     // anywhere near 2^31, so this is unreachable in practice; wrapping would
     // turn an overflow into a small number and hide it. The comparison is
     // against 2^63 rather than 2^63 - 1 because the latter is not
@@ -263,7 +263,7 @@ pub fn build_identity_ctm() -> ColorCtm {
 ///
 /// Only valid after a degamma stage that produces linear values. Applied to
 /// gamma-encoded ones it is simply wrong, and wrong in a way that looks like
-/// a plausible picture with the colours shifted.
+/// a plausible picture with the colors shifted.
 #[must_use]
 pub fn build_bt2020_to_bt709_ctm() -> ColorCtm {
     encode_matrix([

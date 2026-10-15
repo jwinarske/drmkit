@@ -500,7 +500,7 @@ fn a_layers_ycbcr_reaches_its_plane_and_is_rewritten_only_on_change_vkms() {
 /// claim under test is what the scene *constructs* — that a buffer carrying an
 /// acquire fence causes `IN_FENCE_FD` to be written on the plane that buffer
 /// landed on, and that the commit report says so. Whether the kernel then
-/// honours a valid fence is the kernel's business, and a real one is awkward to
+/// honors a valid fence is the kernel's business, and a real one is awkward to
 /// come by: `CONFIG_SW_SYNC` is a debug option and off on most kernels, leaving
 /// only an `OUT_FENCE` round-trip.
 ///

@@ -110,7 +110,7 @@ struct Slot {
 ///
 /// # Threading
 ///
-/// Not synchronised, by design. Drive `acquire`, `present` and `release` from
+/// Not synchronized, by design. Drive `acquire`, `present` and `release` from
 /// the one thread the producer renders on -- the present loop. `&mut self` on
 /// the mutating methods makes sharing it across threads a compile error rather
 /// than a race.
@@ -278,7 +278,7 @@ impl BufferRing {
     ///
     /// Call it once the flip that replaced this slot has landed, or once its
     /// render has been abandoned. The scanning slot is ignored rather than
-    /// freed -- releasing what is on screen is not a request this can honour.
+    /// freed -- releasing what is on screen is not a request this can honor.
     pub fn release(&mut self, slot: usize) {
         if let Some(s) = self.slots.get_mut(slot)
             && s.state != State::Scanning

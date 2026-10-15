@@ -126,7 +126,7 @@ impl Default for Config {
 
 /// A software present path: hand it a finished CPU frame, it puts it on screen.
 ///
-/// For callers that render a whole frame on the CPU — a software rasteriser, a
+/// For callers that render a whole frame on the CPU — a software rasterizer, a
 /// plotting library, an instrument panel — and want none of GL, Vulkan or GBM.
 /// It bundles a single-layer scene over a [`DumbRingSource`], so it inherits
 /// the plane allocation, damage and release discipline rather than re-rolling

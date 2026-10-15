@@ -101,7 +101,7 @@ fn a_synthesized_event_is_not_fed_back_in() {
 }
 
 #[test]
-fn cancelling_stops_whatever_was_running() {
+fn canceling_stops_whatever_was_running() {
     let mut repeat = repeat();
     repeat.on_key(&press(KEY_A), true);
     assert_eq!(repeat.cancel(), Timer::Disarm);

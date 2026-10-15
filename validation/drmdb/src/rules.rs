@@ -99,7 +99,7 @@ impl Report {
     }
 }
 
-/// How many survey rows are printed before the tail is summarised.
+/// How many survey rows are printed before the tail is summarized.
 const SURVEY_ROWS: usize = 14;
 
 pub(crate) fn check_all(devices: &[Device]) -> Report {
@@ -117,8 +117,8 @@ pub(crate) fn check_all(devices: &[Device]) -> Report {
             zpos_shapes(devices),
             degenerate_mutable_zpos(devices),
             cursor_paths(devices),
-            colour_pipeline_shapes(devices),
-            connector_signalling_shapes(devices),
+            color_pipeline_shapes(devices),
+            connector_signaling_shapes(devices),
             crtcs_with_more_than_one_primary(devices),
             primaries_with_a_pinned_zpos(devices),
             in_formats_by_driver(devices),
@@ -400,17 +400,17 @@ fn cursor_paths(devices: &[Device]) -> Survey {
     }
 }
 
-/// Which colour stages each CRTC in the corpus actually has.
+/// Which color stages each CRTC in the corpus actually has.
 ///
 /// `CrtcColorPipeline::new` refuses a CRTC with none of the three, and a CRTC
 /// with some of them succeeds while the missing stages refuse individually.
 /// That design only earns its keep if partial pipelines are common.
 ///
 /// They are, and P-21 understated it: the finding reads as a vc4 quirk, but a
-/// CRTC with no colour pipeline at all is the second most common shape in the
+/// CRTC with no color pipeline at all is the second most common shape in the
 /// corpus. The `NoPipeline` branch is not an edge case a Raspberry Pi
 /// happened to expose.
-fn colour_pipeline_shapes(devices: &[Device]) -> Survey {
+fn color_pipeline_shapes(devices: &[Device]) -> Survey {
     let mut shapes: BTreeMap<String, usize> = BTreeMap::new();
     for device in devices {
         for crtc in &device.crtcs {
@@ -425,7 +425,7 @@ fn colour_pipeline_shapes(devices: &[Device]) -> Survey {
                 stages.push("gamma");
             }
             let key = if stages.is_empty() {
-                "no colour pipeline at all".to_owned()
+                "no color pipeline at all".to_owned()
             } else {
                 stages.join(" + ")
             };
@@ -435,7 +435,7 @@ fn colour_pipeline_shapes(devices: &[Device]) -> Survey {
     let mut rows: Vec<(String, usize)> = shapes.into_iter().collect();
     rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     Survey {
-        title: "CRTC colour pipeline shapes".to_owned(),
+        title: "CRTC color pipeline shapes".to_owned(),
         unit: "CRTCs",
         note: "every stage refuses on its own, which is what lets a partial \
                pipeline work rather than being refused whole",
@@ -486,7 +486,7 @@ fn every_crtc_has_a_primary_plane(devices: &[Device]) -> Finding {
 
 /// How many planes describe their formats with `IN_FORMATS`, by driver.
 ///
-/// Without it `build_format_metadata` synthesises a table pairing every
+/// Without it `build_format_metadata` synthesizes a table pairing every
 /// advertised `FourCC` with `LINEAR`, which is the pre-modifier reading and
 /// the conservative one: nothing compressed is offered to a plane that never
 /// said it could take it.
@@ -521,13 +521,13 @@ fn in_formats_by_driver(devices: &[Device]) -> Survey {
     Survey {
         title: "planes with no IN_FORMATS, by driver".to_owned(),
         unit: "planes",
-        note: "these get a synthesised FourCC-by-LINEAR table, which offers \
+        note: "these get a synthesized FourCC-by-LINEAR table, which offers \
                nothing compressed to a plane that never claimed it",
         rows,
     }
 }
 
-/// Which output-signalling properties each connector actually carries.
+/// Which output-signaling properties each connector actually carries.
 ///
 /// `ConnectorCapabilities` keeps `Colorspace` and `HDR_OUTPUT_METADATA`
 /// independent -- the first as a per-entry table, the second as its own flag
@@ -537,9 +537,9 @@ fn in_formats_by_driver(devices: &[Device]) -> Survey {
 /// That independence is not a defensive flourish. Nearly a third of the
 /// connectors in the corpus carry exactly one of the two, and the split runs
 /// both ways rather than one being a subset of the other. Collapsing them
-/// onto a single "supports signalling" flag would either drop HDR metadata on
+/// onto a single "supports signaling" flag would either drop HDR metadata on
 /// 691 connectors or write a `Colorspace` that 696 do not have.
-fn connector_signalling_shapes(devices: &[Device]) -> Survey {
+fn connector_signaling_shapes(devices: &[Device]) -> Survey {
     let mut shapes: BTreeMap<&'static str, usize> = BTreeMap::new();
     for device in devices {
         for connector in &device.connectors {
@@ -560,7 +560,7 @@ fn connector_signalling_shapes(devices: &[Device]) -> Survey {
         .collect();
     rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     Survey {
-        title: "connector output-signalling shapes".to_owned(),
+        title: "connector output-signaling shapes".to_owned(),
         unit: "connectors",
         note: "the two properties are gated separately because the split runs \
                both ways -- neither is a subset of the other",
@@ -582,7 +582,7 @@ fn connector_signalling_shapes(devices: &[Device]) -> Survey {
 /// taken one to the second primary while this takes whichever free plane the
 /// kernel happens to list first -- typically an overlay.
 ///
-/// Reported rather than asserted: neither behaviour is wrong, and nothing has
+/// Reported rather than asserted: neither behavior is wrong, and nothing has
 /// been measured diverging. What the survey establishes is that the hardware
 /// is real, and on two of the drivers the lab is being built around.
 fn crtcs_with_more_than_one_primary(devices: &[Device]) -> Survey {

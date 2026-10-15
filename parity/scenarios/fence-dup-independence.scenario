@@ -24,12 +24,12 @@
 # frame, including the frame that searches. The test commit is built by
 # DeviceCommitter from the allocator's Layer property bags, which never carry
 # the fence, so IN_FENCE_FD appears on applies only. Both implementations
-# agree on that, byte for byte, which is what makes it a pinned behaviour
+# agree on that, byte for byte, which is what makes it a pinned behavior
 # rather than a divergence. The dup still matters -- it is what lets the same
 # fence arm frame after frame -- but for that reason, not the stated one.
 #
 # The fence is a real one: `mint` keeps the out-fence of a frame that has
-# already landed and is therefore already signalled. An unsignalled fence
+# already landed and is therefore already signaled. An unsignaled fence
 # armed as IN_FENCE_FD would simply hang the flip, and a scenario that hung
 # would be worse than none.
 
@@ -42,7 +42,7 @@ frame
 frame
 
 # Keep this frame's out-fence. It signals when the frame lands, so by the time
-# anything arms it, it is already signalled.
+# anything arms it, it is already signaled.
 mint
 
 # ov1's buffer now carries a render-done fence.

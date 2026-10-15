@@ -205,7 +205,7 @@ impl SceneLayer {
     ///
     /// For a caller that needs a specific plane rather than whichever one the
     /// allocator picks: a driver-bound producer, a plane with hardware the
-    /// others lack, or a layout the caller has already validated. Honoured
+    /// others lack, or a layout the caller has already validated. Honored
     /// where it can be, reported where it cannot — see
     /// [`pinned_plane`](Self::pinned_plane).
     ///
@@ -357,9 +357,9 @@ struct Acquired {
     plane_layers: Vec<(LayerId, PlaneLayer)>,
     /// What each source said changed, for `FB_DAMAGE_CLIPS`.
     frame_damage: HashMap<LayerId, Vec<crate::DamageRect>>,
-    /// Pin requests the hardware could not honour.
+    /// Pin requests the hardware could not honor.
     pins_unhonored: usize,
-    /// Pins that were honoured, layer to plane.
+    /// Pins that were honored, layer to plane.
     pinned: Vec<(LayerId, u32)>,
 }
 
@@ -802,7 +802,7 @@ impl LayerScene {
         let mut plane_layers: Vec<(LayerId, PlaneLayer)> = Vec::new();
         let mut frame_damage: HashMap<LayerId, Vec<crate::DamageRect>> = HashMap::new();
         let mut pins_unhonored = 0usize;
-        // Honoured pins, layer to plane. The allocator skips these layers by
+        // Honored pins, layer to plane. The allocator skips these layers by
         // design -- the scene owns their planes -- so the plan and the report
         // have to carry them, or a pinned layer is programmed by nobody and
         // reported by nobody while still being counted as considered.
@@ -841,7 +841,7 @@ impl LayerScene {
                     let pin = revoke_refused_pin(&self.pin_verdicts, layer_id, &mut lowered, pin);
                     match pin {
                         PinOutcome::Refused => pins_unhonored += 1,
-                        PinOutcome::Honoured(plane_id) => pinned.push((layer_id, plane_id)),
+                        PinOutcome::Honored(plane_id) => pinned.push((layer_id, plane_id)),
                         PinOutcome::NotRequested => {}
                     }
                     plane_layers.push((layer_id, lowered));
@@ -861,7 +861,7 @@ impl LayerScene {
             let pin = revoke_refused_pin(&self.pin_verdicts, layer_id, &mut plane_layer, pin);
             match pin {
                 PinOutcome::Refused => pins_unhonored += 1,
-                PinOutcome::Honoured(plane_id) => pinned.push((layer_id, plane_id)),
+                PinOutcome::Honored(plane_id) => pinned.push((layer_id, plane_id)),
                 PinOutcome::NotRequested => {}
             }
 
@@ -1306,7 +1306,7 @@ impl LayerScene {
     /// leave pinned planes off, so nothing else would find out before the real
     /// commit failed whole. Each pin is tested with the assignment and the
     /// pins already proven. A refused one is composited this frame, and from
-    /// the next is not honoured, so the layer takes normal allocation.
+    /// the next is not honored, so the layer takes normal allocation.
     fn test_pins<C: TestCommitter>(
         &mut self,
         allocation: &mut drmkit_planes::Allocation,
@@ -1319,7 +1319,7 @@ impl LayerScene {
         if refused.is_empty() {
             return Ok(0);
         }
-        // Composited this frame; from the next the pin is not honoured and the
+        // Composited this frame; from the next the pin is not honored and the
         // layer takes normal allocation.
         for (layer_id, plane_layer) in plane_layers.iter_mut() {
             if refused.contains(layer_id) {
@@ -2037,7 +2037,7 @@ struct Composition {
 /// still arrives; it simply stops using the hardware, and no counter says so.
 ///
 /// amdgpu pins its primary at zpos 2 and rejects the disable; ARM Mali display
-/// cores pin similarly. The reference documents both the behaviour and the
+/// cores pin similarly. The reference documents both the behavior and the
 /// remedy, and this is the remedy: reserving the primary takes it out of the
 /// disable pass, so tests validate against whatever it was already showing --
 /// the fbcon framebuffer on a cold start, the previous canvas when warm.
@@ -2339,16 +2339,16 @@ fn lower(
     plane_layer.set_app_priority(layer.app_priority);
     plane_layer.set_force_composited(layer.force_composited);
 
-    // The pin, if it can be honoured. `set_pinned` makes the allocator skip
+    // The pin, if it can be honored. `set_pinned` makes the allocator skip
     // this layer entirely -- the scene owns the plane from here -- so an
-    // unhonourable pin must not set it, or the layer would be skipped by the
+    // unhonorable pin must not set it, or the layer would be skipped by the
     // allocator *and* placed on nothing.
     let pin = match layer.pinned_plane {
         None => PinOutcome::NotRequested,
-        Some(plane_id) if pin_is_honourable(&plane_layer, plane_id, registry, crtc_index) => {
+        Some(plane_id) if pin_is_honorable(&plane_layer, plane_id, registry, crtc_index) => {
             plane_layer.set_pinned(true);
             plane_layer.set_assigned_plane(Some(plane_id));
-            PinOutcome::Honoured(plane_id)
+            PinOutcome::Honored(plane_id)
         }
         Some(_) => PinOutcome::Refused,
     };
@@ -2361,7 +2361,7 @@ enum PinOutcome {
     /// The caller asked for nothing.
     NotRequested,
     /// The layer owns this plane; the allocator will not offer it elsewhere.
-    Honoured(u32),
+    Honored(u32),
     /// The plane cannot take this layer, so it goes through normal allocation.
     Refused,
 }
@@ -2394,7 +2394,7 @@ fn remember_pin(verdicts: &mut Vec<PinVerdict>, verdict: PinVerdict) {
     verdicts.push(verdict);
 }
 
-/// A pin the kernel refused is not honoured again: the layer is unpinned and
+/// A pin the kernel refused is not honored again: the layer is unpinned and
 /// takes normal allocation, and the refusal is counted.
 fn revoke_refused_pin(
     verdicts: &[PinVerdict],
@@ -2403,7 +2403,7 @@ fn revoke_refused_pin(
     pin: PinOutcome,
 ) -> PinOutcome {
     match pin {
-        PinOutcome::Honoured(plane_id)
+        PinOutcome::Honored(plane_id)
             if pin_verdict(verdicts, layer_id, plane_id, plane_layer.property_hash())
                 == Some(false) =>
         {
@@ -2423,7 +2423,7 @@ fn revoke_refused_pin(
 /// `TEST_ONLY` and take the whole frame down -- every correctly placed layer
 /// with it -- so the check happens here, and a refused pin costs the caller
 /// determinism rather than a frame.
-fn pin_is_honourable(
+fn pin_is_honorable(
     layer: &PlaneLayer,
     plane_id: u32,
     registry: &PlaneRegistry,

@@ -11,7 +11,7 @@ use crate::sprite::Rotation;
 /// Where the plane's top-left corner goes, given where the pointer is.
 ///
 /// The hotspot is the pixel that has to land under the pointer -- the tip of
-/// the arrow, the centre of a crosshair -- so the plane is offset back by it.
+/// the arrow, the center of a crosshair -- so the plane is offset back by it.
 /// Getting this wrong is invisible in a screenshot and obvious the moment
 /// anyone clicks: the sprite looks right and the click lands somewhere else.
 ///

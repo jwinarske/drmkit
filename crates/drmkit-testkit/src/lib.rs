@@ -12,7 +12,7 @@
 //! cases, so on any given board an unknown fraction of a passing run asserted
 //! nothing at all. Every hardware claim in this tree that turned out to be
 //! wrong was a claim nothing measured, and a case that skips silently is the
-//! most comfortable way to stop measuring: the count goes up, the colour
+//! most comfortable way to stop measuring: the count goes up, the color
 //! stays green, and the assertion never runs.
 //!
 //! [`skipped`] prints a line the runner can find. It does not change what the
@@ -21,7 +21,7 @@
 //!
 //! ```no_run
 //! let Some(crtc) = find_a_crtc_with_a_pipeline() else {
-//!     drmkit_testkit::skipped("no CRTC on this device has a colour pipeline");
+//!     drmkit_testkit::skipped("no CRTC on this device has a color pipeline");
 //!     return;
 //! };
 //! # fn find_a_crtc_with_a_pipeline() -> Option<u32> { None }
@@ -111,7 +111,7 @@ pub const DEVICE_MARKER: &str = "DRMKIT-DEVICE";
 /// `/dev/dri/card0`. Which driver that is depends on the machine, and nothing
 /// in a run's output used to say. On the workstation this was written on,
 /// card0 is vkms and amdgpu is card1 -- so a session's worth of results
-/// labelled "amdgpu" were vkms, and nothing in the logs contradicted it.
+/// labeled "amdgpu" were vkms, and nothing in the logs contradicted it.
 ///
 /// Printed once per test binary. The driver is read from sysfs rather than
 /// asked of the device, so it is the kernel's own name for what is bound.
@@ -130,7 +130,7 @@ pub fn announce_card(path: &str) {
 ///
 /// From the DRM version ioctl, not from sysfs. sysfs reports the *bus* driver
 /// -- vkms binds through the faux bus and shows up there as `faux_driver`,
-/// which is exactly the sort of near-answer that let a vkms run be labelled
+/// which is exactly the sort of near-answer that let a vkms run be labeled
 /// amdgpu in the first place. The ioctl gives the name the driver registers,
 /// and needs neither master nor any capability.
 #[must_use]

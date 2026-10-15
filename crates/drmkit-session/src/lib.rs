@@ -36,7 +36,7 @@
 //! `TakeDeviceOpts::preserve_fd_across_resume` asks the seat to hand back the
 //! same descriptor rather than a fresh one, on the grounds that the
 //! capability-revoking backends leave it valid. Plausible, and it saves a
-//! reopen per device per switch, but it is an optimisation over a path that is
+//! reopen per device per switch, but it is an optimization over a path that is
 //! already correct -- and getting it wrong means scanning out through a
 //! descriptor the kernel has stopped honoring, on a machine none of the CI
 //! lanes resemble. It waits for a device to be proved on.

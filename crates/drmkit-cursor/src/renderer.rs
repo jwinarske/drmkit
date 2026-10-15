@@ -233,7 +233,7 @@ impl<'a> Renderer<'a> {
     /// from the errno alone.
     #[allow(
         deprecated,
-        reason = "drmModeSetCursor is deprecated in favour of a cursor plane, \
+        reason = "drmModeSetCursor is deprecated in favor of a cursor plane, \
                   which is what every other path here uses. This is the \
                   fallback for controllers that have no such plane."
     )]

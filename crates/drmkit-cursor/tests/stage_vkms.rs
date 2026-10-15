@@ -13,7 +13,7 @@ use drm::control::Device as _;
 use drmkit_core::{AtomicRequest, Device, ObjectType, PropertyStore};
 use drmkit_cursor::{PlaneState, Rotation, stage};
 
-/// Serialises the tests that open the card. See the note in
+/// Serializes the tests that open the card. See the note in
 /// `drmkit-scene/tests/composition_vkms.rs`: the lane runs binaries in turn
 /// but tests inside one in parallel.
 static CARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

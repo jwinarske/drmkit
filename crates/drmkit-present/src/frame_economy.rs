@@ -45,7 +45,7 @@ impl FrameAction {
 ///
 /// # Threading
 ///
-/// Not synchronised: one present loop owns it, the same one that owns the
+/// Not synchronized: one present loop owns it, the same one that owns the
 /// [`BufferRing`](crate::BufferRing).
 #[derive(Debug)]
 pub struct FrameEconomy {

@@ -15,7 +15,7 @@ use drmkit_core::Device;
 use drmkit_present::{DumbRingSource, Rect, Repaint};
 use drmkit_scene::LayerBufferSource as _;
 
-/// Serialises the cases: two of them opening the same card at once looks like
+/// Serializes the cases: two of them opening the same card at once looks like
 /// a device fault.
 static CARD_LOCK: Mutex<()> = Mutex::new(());
 
@@ -268,7 +268,7 @@ fn every_crtc_negotiates_a_format_its_planes_advertise_vkms() {
     }
 }
 
-/// A caller's own preference list is honoured, not merely consulted.
+/// A caller's own preference list is honored, not merely consulted.
 #[test]
 #[ignore = "needs a DRM device"]
 fn a_callers_preference_list_is_the_one_used_vkms() {

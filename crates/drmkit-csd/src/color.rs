@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: (c) 2026 Joel Winarske
 // SPDX-License-Identifier: MIT
 
-//! Colours, and reading them from a theme file.
+//! Colors, and reading them from a theme file.
 
-/// An 8-bit-per-channel colour with alpha.
+/// An 8-bit-per-channel color with alpha.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[allow(
     clippy::exhaustive_structs,
@@ -20,7 +20,7 @@ pub struct Color {
     pub a: u8,
 }
 
-/// Why a colour could not be read.
+/// Why a color could not be read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ColorError {
@@ -33,7 +33,7 @@ pub enum ColorError {
 }
 
 impl Color {
-    /// A colour from its channels.
+    /// A color from its channels.
     #[must_use]
     pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self { r, g, b, a }
@@ -43,7 +43,7 @@ impl Color {
     ///
     /// Six digits means fully opaque. That is the CSS convention and the one a
     /// theme author will expect; defaulting to transparent instead would make
-    /// every colour written the short way invisible.
+    /// every color written the short way invisible.
     ///
     /// Case-insensitive, because a hand-written theme file mixes both and
     /// refusing lowercase would be a rule with nothing behind it.

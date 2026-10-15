@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: (c) 2026 Joel Winarske
 // SPDX-License-Identifier: MIT
 
-//! Display characterisation and colour handling.
+//! Display characterization and color handling.
 //!
 //! What a connected display can do, and what has to happen to pixels before
 //! they reach it. Two halves that mostly do not talk to each other.
@@ -23,14 +23,14 @@
 //!
 //! # Getting the pixels right
 //!
-//! - [`ToneMapper`] — SDR to HDR and back, over a [`ToneMapCurve`]. Colour
+//! - [`ToneMapper`] — SDR to HDR and back, over a [`ToneMapCurve`]. Color
 //!   maths has too many plausible readings for a paper derivation to be worth
 //!   much, so its answers are diffed against the reference's own, vector by
 //!   vector.
 //! - [`CrtcColorPipeline`] — the CRTC's degamma, CTM and gamma stages. Each
 //!   refuses on its own rather than the pipeline refusing whole, because
 //!   partial pipelines are the common case: of 4,129 CRTCs surveyed, 848 have
-//!   no colour stage at all and three more shapes sit between that and the
+//!   no color stage at all and three more shapes sit between that and the
 //!   full three.
 //! - [`HdrSourceMetadata`] and [`HdrMetadataCache`] — the CTA-861.3 blob a
 //!   sink needs to switch into HDR, and the cache that stops it being rewritten
@@ -43,7 +43,7 @@
 //!
 //! `edid` is off by default: `libdisplay-info-sys` links a system library, and
 //! the cross lanes have no sysroot for it. Everything else here — the tone
-//! mapper and colour curves that downstream crates want — builds without it.
+//! mapper and color curves that downstream crates want — builds without it.
 
 mod capabilities;
 

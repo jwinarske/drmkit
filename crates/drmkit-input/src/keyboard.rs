@@ -284,7 +284,7 @@ impl Keyboard {
     /// wrong side, which is the only way to move a latch xkb owns. Produces
     /// no events and does not disturb the held-key set.
     ///
-    /// For honouring a lock state from elsewhere -- what the console had, what
+    /// For honoring a lock state from elsewhere -- what the console had, what
     /// the session manager reports -- and used internally by
     /// [`Keyboard::reload`].
     pub fn set_leds(&mut self, desired: Leds) {

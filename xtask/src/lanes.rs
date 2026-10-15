@@ -45,7 +45,7 @@ pub(crate) fn run() -> Result<(), String> {
         .filter_map(|line| {
             let line = line.trim().strip_prefix("- ")?;
             // Both quote styles, and none. YAML accepts all three, and a
-            // linter that recognised only the spelling in use today would
+            // linter that recognized only the spelling in use today would
             // report a reformat as a missing path -- which is worse than not
             // checking, because it is a failure that is right to ignore.
             let path = line.trim_matches(|c| c == '\'' || c == '"');

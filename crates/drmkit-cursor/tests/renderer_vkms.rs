@@ -201,7 +201,7 @@ fn a_cursor_is_drawn_and_staged_vkms() {
 
     // The plane is armed at the position the hotspot implies -- and the
     // hotspot is in *buffer* coordinates, not the frame's. A 16x16 sprite
-    // centred in a 64x64 cursor buffer starts 24 pixels in, so a hotspot 8
+    // centered in a 64x64 cursor buffer starts 24 pixels in, so a hotspot 8
     // pixels into the sprite is 32 into the buffer, and a pointer at
     // (100, 200) puts the buffer's corner at (68, 168).
     //

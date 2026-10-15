@@ -98,7 +98,9 @@ pub use scene::{
     FrameBuild, IncompatibilityReason, LayerHandle, LayerIncompatibility, LayerScene,
     PendingDetach, PlanePlan, RebindReport, SceneError, SceneLayer,
 };
-pub use signaling::{ColorPrimaries, OutputSignalling, derive_output_signalling, widest_gamut};
+pub use signaling::{ColorPrimaries, OutputSignaling, derive_output_signaling, widest_gamut};
+#[allow(deprecated, reason = "the 0.1.0 names, kept for compatibility")]
+pub use signaling::{OutputSignalling, derive_output_signalling};
 pub use source::{
     AcquiredBuffer, BindingModel, DamageRect, DmaBufDesc, LayerBufferSource, SourceError,
     SourceFormat,

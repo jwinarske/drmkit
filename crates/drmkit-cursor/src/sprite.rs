@@ -6,7 +6,7 @@
 //! A cursor plane is a fixed size the driver chooses -- 64x64 on i915, 256x256
 //! on amdgpu -- and a themed cursor is whatever size the theme ships. So a
 //! frame has to be rotated if the display is, shrunk if it is too big,
-//! centred, and the hotspot has to move with it. All of that is arithmetic,
+//! centered, and the hotspot has to move with it. All of that is arithmetic,
 //! and all of it is here, away from anything that needs a device.
 //!
 //! The hotspot comes back from the same call that writes the pixels.
@@ -295,7 +295,7 @@ pub fn compose(
 /// pixels got.
 ///
 /// Scaling truncates here where the pixels round. That is the reference's
-/// behaviour and it is the conservative direction: the hotspot stays inside
+/// behavior and it is the conservative direction: the hotspot stays inside
 /// the sprite rather than stepping one pixel past its edge.
 fn hotspot_in_buffer(
     frame: &Frame,

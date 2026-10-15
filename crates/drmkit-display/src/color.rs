@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: (c) 2026 Joel Winarske
 // SPDX-License-Identifier: MIT
 
-//! Colour primaries, independent of where they came from.
+//! Color primaries, independent of where they came from.
 //!
 //! These describe a set of primaries and a white point. An EDID is one source
 //! of them and HDR source metadata is another, so they live apart from the
@@ -21,7 +21,7 @@ pub struct Chromaticity {
     pub y: f32,
 }
 
-/// The display's colour primaries and white point.
+/// The display's color primaries and white point.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[allow(
     clippy::exhaustive_structs,

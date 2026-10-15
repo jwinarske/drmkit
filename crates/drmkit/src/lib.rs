@@ -41,7 +41,7 @@
 //! ship gate, what remains is the smoke run on RK3588 and `VisionFive` 2
 //! boards; the 0.1 releases ship ahead of it. A scene can bring up a display,
 //! allocate planes for a layer stack, commit a frame, composite what it
-//! cannot place, and release buffers on the right vblank; EDID, colour
+//! cannot place, and release buffers on the right vblank; EDID, color
 //! management, cursor and capture are in. So are the present spine,
 //! cross-output orchestration, GBM surface sources and client-side
 //! decorations.
@@ -72,10 +72,10 @@
 //! | [`drmkit-scene-set`](https://docs.rs/drmkit-scene-set) | Several scenes committed together, and how many ioctls that costs. |
 //! | [`drmkit-present`](https://docs.rs/drmkit-present) | The scanout spine: buffer rings, modifier negotiation, frame pacing, and a backend that drives them. |
 //! | [`drmkit-csd`](https://docs.rs/drmkit-csd) | Client-side decorations: title bars, shadows, and getting them onto a plane. |
-//! | [`drmkit-display`](https://docs.rs/drmkit-display) | EDID, driver capabilities, colour pipelines and tone mapping. |
+//! | [`drmkit-display`](https://docs.rs/drmkit-display) | EDID, driver capabilities, color pipelines and tone mapping. |
 //! | [`drmkit-cursor`](https://docs.rs/drmkit-cursor) | Cursor themes, and getting one onto a plane. |
 //! | [`drmkit-capture`](https://docs.rs/drmkit-capture) | Reading back what a CRTC is scanning out. |
-//! | [`drmkit-sync`](https://docs.rs/drmkit-sync) | `sync_file` fences, for explicit synchronisation. |
+//! | [`drmkit-sync`](https://docs.rs/drmkit-sync) | `sync_file` fences, for explicit synchronization. |
 //! | [`drmkit-session`](https://docs.rs/drmkit-session) | Holding devices across a VT switch. |
 //! | [`drmkit-input`](https://docs.rs/drmkit-input) | libinput devices and xkb key resolution. |
 //! | [`drmkit-log`](https://docs.rs/drmkit-log) | Diagnostics: a process-wide level and an installable sink. |

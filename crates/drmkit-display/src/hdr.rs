@@ -5,18 +5,18 @@
 //!
 //! A caller describes the content it is emitting -- transfer function,
 //! mastering display primaries and luminance, content light levels -- and this
-//! serialises it into the kernel's `struct hdr_output_metadata`, which the
+//! serializes it into the kernel's `struct hdr_output_metadata`, which the
 //! connector's `HDR_OUTPUT_METADATA` property points at. The kernel turns that
 //! into the HDR `InfoFrame` the sink receives, per CTA-861.3 and SMPTE ST 2086.
 //!
-//! Pointing the property at `0` instead clears HDR signalling and the sink
+//! Pointing the property at `0` instead clears HDR signaling and the sink
 //! returns to SDR.
 
 use drmkit_core::{Device, PropertyBlob, Result as CoreResult};
 
 use crate::color::ColorimetryInfo;
 
-/// Serialised size of `struct hdr_output_metadata`.
+/// Serialized size of `struct hdr_output_metadata`.
 ///
 /// The struct is a `__u32` followed by a 26-byte infoframe at offset 4, which
 /// pads to 32. Verified equal on x86-64 and aarch64 against the kernel's own
@@ -91,7 +91,7 @@ pub struct HdrSourceMetadata {
     pub eotf: TransferFunction,
     /// Mastering display primaries and white point.
     ///
-    /// Named by colour here; the serialiser reorders to the green/blue/red
+    /// Named by color here; the serializer reorders to the green/blue/red
     /// the wire format asks for.
     pub display_primaries: ColorimetryInfo,
     /// Peak luminance of the mastering display, cd/m².
@@ -125,7 +125,7 @@ fn cie_to_u16(v: f32) -> u16 {
     }
 }
 
-/// Serialise to the kernel's `struct hdr_output_metadata` byte layout.
+/// Serialize to the kernel's `struct hdr_output_metadata` byte layout.
 ///
 /// The bytes go straight to `create_property_blob`. Written field by field at
 /// measured offsets rather than by casting a `repr(C)` struct: the padding is
@@ -181,7 +181,7 @@ const fn fnv1a_64(data: &[u8]) -> u64 {
     hash
 }
 
-/// A stable hash of the serialised metadata.
+/// A stable hash of the serialized metadata.
 ///
 /// Identical content hashes identically, and changing any single field changes
 /// it. That is the whole job: it lets a cache tell "the same metadata again"
@@ -210,7 +210,7 @@ pub trait HdrBlob {
     fn forget(self);
 }
 
-/// A property blob holding serialised HDR metadata, freed when dropped.
+/// A property blob holding serialized HDR metadata, freed when dropped.
 ///
 /// The borrow of the device is what makes freeing it safe -- see
 /// [`PropertyBlob`], whose reasoning this inherits along with its lifetime.
@@ -221,7 +221,7 @@ pub struct HdrMetadataBlob<'a> {
 }
 
 impl<'a> HdrMetadataBlob<'a> {
-    /// Serialise `src` and hand it to the kernel as a property blob.
+    /// Serialize `src` and hand it to the kernel as a property blob.
     ///
     /// # Errors
     ///

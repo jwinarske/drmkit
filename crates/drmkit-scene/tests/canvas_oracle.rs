@@ -7,7 +7,7 @@
 //! from the reference over the same inputs and recording what came back — not
 //! derived by hand. Hand-derived expectations are worth very little for this
 //! kind of code: the rounding, the premultiplied convention and the
-//! nearest-neighbour mapping all have several plausible readings, and a wrong
+//! nearest-neighbor mapping all have several plausible readings, and a wrong
 //! reading tends to produce a wrong expectation and a matching wrong
 //! implementation.
 //!
@@ -98,7 +98,7 @@ const CASES: &[Case] = &[
         want: &[0xFF33_00CC, 0xFF33_00CC],
     },
     Case {
-        name: "alpha_cc_over_grey",
+        name: "alpha_cc_over_gray",
         dst: (2, 1, 0xFF80_8080),
         src: (2, 1, 0xCC00_CC00),
         drm_fourcc: ARGB,

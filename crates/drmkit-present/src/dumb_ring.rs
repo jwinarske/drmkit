@@ -29,6 +29,11 @@ pub enum PaintError {
     /// from.
     #[error("no known bits-per-pixel for fourcc {0:#010x}")]
     UnknownFormat(u32),
+
+    /// A zero width, height or slot count, which the reference refuses as
+    /// `EINVAL`: a ring of nothing could never paint a frame.
+    #[error("a dumb ring needs a non-zero {0}")]
+    Zero(&'static str),
 }
 
 /// A ring of CPU-mapped dumb buffers, presented as a scene layer's source.
@@ -80,9 +85,19 @@ impl DumbRingSource {
     ///
     /// # Errors
     ///
+    /// [`PaintError::Zero`] for a zero `width`, `height` or `max_slots`, and
     /// [`PaintError::UnknownFormat`] if `fourcc`'s bits-per-pixel is not known,
     /// since that is what sizes the allocation.
     pub fn new(width: u32, height: u32, fourcc: u32, max_slots: usize) -> Result<Self, PaintError> {
+        for (name, value) in [
+            ("width", usize::try_from(width).unwrap_or(usize::MAX)),
+            ("height", usize::try_from(height).unwrap_or(usize::MAX)),
+            ("slot count", max_slots),
+        ] {
+            if value == 0 {
+                return Err(PaintError::Zero(name));
+            }
+        }
         let bpp = drmkit_fmt::format_bpp(fourcc);
         if bpp == 0 {
             return Err(PaintError::UnknownFormat(fourcc));

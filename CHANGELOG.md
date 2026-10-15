@@ -127,6 +127,9 @@ minor version may break the API and a patch version does not.
 - `drmkit-scene-sources`: a GBM source that cannot re-allocate on resume
   reports the errno, as the reference does, rather than `Unsupported`
   (P-71).
+- `drmkit-present`: `DumbRingSource::new` refuses a zero width, height or
+  slot count as the new `PaintError::Zero`, as the reference refuses it with
+  `EINVAL`, rather than failing at the first paint (P-72).
 
 ## [0.1.1] - 2026-10-14
 

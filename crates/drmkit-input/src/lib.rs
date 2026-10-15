@@ -106,8 +106,12 @@ pub enum InputError {
     #[error("repeat timer")]
     Timer(#[source] std::io::Error),
 
-    /// The seat could not be opened.
-    #[error("no such seat, or no permission for it: {0}")]
+    /// libinput could not enumerate the seat through udev, opening it or
+    /// after a resume. Carries the seat's name, or `resume`.
+    ///
+    /// Not "no such seat": libinput accepts a seat name udev does not know
+    /// and simply finds no devices on it.
+    #[error("libinput could not enumerate the seat through udev: {0}")]
     Seat(String),
 
     /// libinput could not read its devices.

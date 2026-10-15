@@ -135,6 +135,10 @@ minor version may break the API and a patch version does not.
   caller's descriptor number. After a session loss the next open can take
   that number, and clearing a `DmaBufSourceCache` -- documented for session
   loss -- removed the new file's framebuffer (P-73).
+- `drmkit-input`: `InputError::Seat` says libinput could not enumerate the
+  seat through udev, which is what it reports. It said "no such seat, or no
+  permission for it", but libinput accepts an unknown seat name and finds no
+  devices on it.
 
 ## [0.1.1] - 2026-10-14
 

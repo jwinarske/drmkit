@@ -79,9 +79,9 @@ pub enum DrawError {
 pub struct RendererConfig {
     /// A font to load for the title.
     ///
-    /// Accepted and unused: see the module docs. Kept so a caller written
-    /// against the reference compiles, and so the field exists when text
-    /// arrives.
+    /// Accepted and unused: see the module docs. Kept so the field exists
+    /// when text arrives. The reference's `try_system_font` has no
+    /// counterpart here, since there is no font stack to search.
     pub font_path: Option<String>,
 }
 
@@ -382,11 +382,13 @@ fn fill_circle(canvas: &mut Canvas<'_>, cx: i32, cy: i32, radius: i32, color: Co
     }
 }
 
-/// Round a clamped 0..=255 float to a byte, without a float-to-int cast.
+/// Round a float to a byte, clamping it to `0..=255` first, without a
+/// float-to-int cast.
 ///
-/// Every such cast in Rust has a target-dependent edge, and a decoration that
-/// differed by a channel between architectures would make the determinism
-/// this renderer promises untrue in the one place it is hardest to notice.
+/// A float-to-int `as` saturates on every target, so the cast would not be
+/// wrong; stepping through the byte values instead keeps clippy's pedantic
+/// cast lints quiet without an `allow`, at a cost the fixed 256-step range
+/// keeps small.
 fn round_channel(value: f64) -> u8 {
     let clamped = value.clamp(0.0, 255.0);
     u8::try_from(

@@ -20,10 +20,14 @@ pub enum HoverButton {
 
 /// What changed since the decoration was last drawn.
 ///
-/// A bitmask rather than a bool: redrawing a title bar because the pointer
-/// moved over a button costs a rounded-rect fill; redrawing it because the
-/// geometry changed costs a blur. A caller that cannot tell them apart pays
-/// the second price for the first event.
+/// Reserved for a partial-redraw path, as upstream reserves it:
+/// [`Renderer::draw`](crate::Renderer::draw) reads none of these bits today
+/// and repaints the whole decoration whatever is set.
+///
+/// A bitmask rather than a bool so a caller can already record *what*
+/// changed: redrawing a title bar because the pointer moved over a button
+/// needs only a rounded-rect fill, while redrawing it because the geometry
+/// changed needs a blur, and a bool could not tell the two apart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Dirty(u32);
 
@@ -83,7 +87,8 @@ pub struct WindowState {
     pub focused: bool,
     /// Which button is hovered.
     pub hover: HoverButton,
-    /// What has changed since the last draw.
+    /// What has changed since the last draw. Not yet read by the renderer;
+    /// see [`Dirty`].
     pub dirty: Dirty,
     /// How far through the focus transition, or [`PROGRESS_UNSET`].
     pub focus_progress: f32,

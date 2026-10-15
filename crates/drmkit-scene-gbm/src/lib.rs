@@ -113,6 +113,9 @@ pub enum SurfaceError {
     Create(String),
 
     /// A locked buffer could not be registered as a framebuffer.
+    ///
+    /// Raised inside [`acquire`](GbmSurfaceSource::acquire), which reports it
+    /// to the scene as [`SourceError::Failed`] carrying the same errno.
     #[error("registering a framebuffer: {0}")]
     Framebuffer(rustix::io::Errno),
 }
@@ -244,8 +247,10 @@ impl GbmSurfaceSource {
 
     /// Set the producer's render-done fence for the next acquire.
     ///
-    /// The scene hands it to `IN_FENCE_FD` where the plane takes one, so the
-    /// display engine waits for the render rather than the CPU doing it.
+    /// That acquire takes it; the one after carries no fence unless the
+    /// producer sets another. The scene hands it to `IN_FENCE_FD` where the
+    /// plane takes one, so the display engine waits for the render rather
+    /// than the CPU doing it.
     pub fn set_acquire_fence(&mut self, fence: SyncFence) {
         self.pending_fence = Some(fence);
     }
@@ -410,8 +415,9 @@ impl LayerBufferSource for GbmSurfaceSource {
     /// # Errors
     ///
     /// [`SourceError::WouldBlock`] when there is no front buffer to lock,
-    /// which is flow control. Anything else means the buffer could not be made
-    /// into a framebuffer.
+    /// which is flow control. [`SourceError::Failed`] when the buffer could
+    /// not be made into a framebuffer, carrying the kernel's errno from the
+    /// registration.
     fn acquire(&mut self) -> Result<AcquiredBuffer, SourceError> {
         if self.paused || (self.config.require_bind && !self.bound) {
             return Err(SourceError::WouldBlock);

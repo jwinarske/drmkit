@@ -18,7 +18,7 @@
 //! # Threading
 //!
 //! `submit` runs on the producer's thread and performs the first-sight import,
-//! so unlike the ring's it is not allocation-free and can fail. The scene calls
+//! so unlike the ring's it performs ioctls and can fail. The scene calls
 //! `acquire` and `release` on its commit thread. The import map and the
 //! presenter's handoff are separate locks and are never held nested.
 

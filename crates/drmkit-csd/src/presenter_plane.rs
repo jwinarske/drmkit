@@ -8,8 +8,8 @@ use crate::{PropertyWrite, SurfaceRef};
 /// The property ids for one reserved plane, and what to write to the ones
 /// whose values do not come from the surface.
 ///
-/// Ids rather than names because they are resolved once at probe time; a zero
-/// id means the plane does not expose that property, which is why the
+/// Ids rather than names because the caller resolves them once; a zero id
+/// means the plane does not expose that property, which is why the
 /// optional ones are checked rather than assumed.
 #[derive(Debug, Clone, Copy, Default)]
 #[non_exhaustive]
@@ -135,7 +135,7 @@ pub fn compute_writes(
         add(slot.plane_id, slot.src_h_prop, to_16_16(surface.height));
 
         // The optional three. A zero id means the plane does not expose the
-        // property, and writing to object zero is an EINVAL that takes the
+        // property, and writing to property zero is an EINVAL that takes the
         // whole commit down rather than just this plane.
         if slot.blend_mode_prop != 0 {
             add(slot.plane_id, slot.blend_mode_prop, slot.blend_mode_value);

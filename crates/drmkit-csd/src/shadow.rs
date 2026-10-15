@@ -17,7 +17,8 @@ use crate::{Color, Theme};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum Elevation {
-    /// Unfocused: softer and weaker, so the focused window reads as nearer.
+    /// Unfocused: the same blur at 70% of the theme's shadow alpha, so the
+    /// focused window reads as nearer.
     #[default]
     Blurred,
     /// Focused.
@@ -38,15 +39,20 @@ pub struct ShadowKey {
     pub theme_id: u64,
 }
 
-/// A hash of everything about a theme that changes how a shadow looks.
+/// A hash of the theme fields that affect a decoration's pixels.
 ///
-/// Not of the whole theme. The name and the animation duration cannot change
-/// a pixel, so hashing them would evict every cached shadow when a caller
-/// renamed a theme or made its animations quicker — a cache miss on every
-/// window, for nothing.
+/// The same fields upstream hashes, and wider than the shadow alone needs —
+/// the panel, rim, title and button colors and the font size are in it too.
+/// Not of the whole theme: the name, the font stack and the animation
+/// duration cannot change a pixel, so hashing them would evict every cached
+/// shadow when a caller renamed a theme or made its animations quicker — a
+/// cache miss on every window, for nothing.
 ///
-/// FNV-1a, matching upstream, because the value is a cache key rather than a
-/// security boundary and both ends must agree on it.
+/// FNV-1a over the same bytes in the same order as upstream, so the two
+/// produce the same value for the same theme. The value is a cache key rather
+/// than a security boundary. Integers are hashed most significant byte first;
+/// `noise_amplitude` is hashed as its native-endian bytes, as upstream hashes
+/// it, so a theme with noise hashes differently on a big-endian host.
 #[must_use]
 pub fn theme_id(theme: &Theme) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -200,13 +206,15 @@ impl ShadowCache {
     /// what is already in `dst` shows through where the shadow is not opaque.
     /// On a cleared buffer that is the same as a copy.
     ///
-    /// Returns whether anything was written. A zero-sized key or an
-    /// undersized destination writes nothing rather than failing: a window
-    /// being resized passes through both, and a decoration that errored on
-    /// the way would flicker.
+    /// Returns `false`, writing nothing, for a zero-sized key or destination,
+    /// and `true` otherwise — rather than failing: a window being resized
+    /// passes through zero, and a decoration that errored on the way would
+    /// flicker.
     ///
     /// A destination smaller than the patch is **clipped**, not refused — the
-    /// alternative is reading past the caller's buffer.
+    /// alternative is writing past the caller's buffer. Rows that do not fit
+    /// in `pixels` at `stride` are skipped too, and the call still returns
+    /// `true`.
     pub fn blit_into(&mut self, key: ShadowKey, theme: &Theme, dst: &mut ShadowDest<'_>) -> bool {
         if key.width == 0 || key.height == 0 || dst.width == 0 || dst.height == 0 {
             return false;
@@ -239,16 +247,21 @@ impl ShadowCache {
     /// `dst`.
     ///
     /// What a focus change animates through. Both patches are cached, so the
-    /// transition costs a per-pixel lerp rather than a blur per frame. The
-    /// blend is composited source-over, as [`blit_into`](Self::blit_into) is,
-    /// and the endpoints are exactly `blit_into` of one patch.
+    /// transition costs a per-pixel lerp rather than a blur per frame — given
+    /// a [`capacity`](Self::capacity) of at least two. With a capacity of
+    /// one, rendering `b` evicts `a`, and a mid-transition blend draws
+    /// nothing and returns `false`. The blend is composited source-over, as
+    /// [`blit_into`](Self::blit_into) is, and the endpoints are exactly
+    /// `blit_into` of one patch.
     ///
     /// `t` is clamped to `0..=1`: an animation that overshoots is a caller
     /// bug, and extrapolating a color past its endpoints produces values
     /// that are not a shadow at all.
     ///
     /// The two keys must be the same size, as the reference requires; keys
-    /// that differ write nothing and return `false`.
+    /// that differ write nothing and return `false`. Otherwise the return is
+    /// as for `blit_into`: `false`, writing nothing, for a zero-sized key or
+    /// destination, and `true` once the blend is composited.
     pub fn blit_cross_fade(
         &mut self,
         a: ShadowKey,
@@ -333,18 +346,14 @@ fn src_over_row(src: &[u8], dst: &mut [u8]) {
     }
 }
 
-/// Round a clamped 0..=255 float to a byte.
-///
-/// The clamp is the precondition: `as u8` on an unclamped float saturates on
-/// some targets and wraps on others, and a shadow is not worth a difference
-/// like that between architectures.
+/// Round a float to a byte, clamping it to `0..=255` first.
 fn to_u8(value: f32) -> u8 {
     // `round` rather than truncate: truncating biases every channel down by
     // up to one, which over a whole blurred patch is a visibly lighter shadow.
-    // Stepping through the 256 byte values is exact and has no cast in it,
-    // which is worth more here than the arithmetic would be: the range is
-    // fixed and tiny, and every float-to-integer cast in Rust has a
-    // target-dependent edge this avoids entirely.
+    // Stepping through the 256 byte values rather than casting with `as`
+    // keeps clippy's pedantic cast lints quiet without an `allow`; the range
+    // is fixed and tiny, so the search costs little. (A float-to-int `as`
+    // saturates on every target, so the cast would not be wrong, only noisy.)
     let clamped = value.clamp(0.0, 255.0);
     u8::try_from(
         (0u16..=255)

@@ -130,9 +130,9 @@ pub struct BufferRing {
 }
 
 impl BufferRing {
-    /// How deep a ring grows, and how many rectangles a union may hold, unless
-    /// the caller says otherwise.
+    /// How deep a ring grows unless the caller says otherwise.
     pub const DEFAULT_MAX_SLOTS: usize = 3;
+    /// How many rectangles a union may hold unless the caller says otherwise.
     /// See [`BufferRing::new`] for what happens when a union exceeds this.
     pub const DEFAULT_MAX_DAMAGE_RECTS: usize = 16;
 
@@ -188,10 +188,11 @@ impl BufferRing {
 
     /// How many presents have happened since this slot was last presented.
     ///
-    /// Zero means it has never been presented and its contents are undefined --
-    /// not that it is current. The two are distinguished by
-    /// [`Repaint::Full`] coming back from [`acquire`](Self::acquire), which is
-    /// the answer that actually matters to a producer.
+    /// Zero means either that it has never been presented, so its contents are
+    /// undefined, or that it is the slot presented last, which is current.
+    /// [`acquire`](Self::acquire) is what tells them apart where it matters to
+    /// a producer: it never hands out the slot presented last, and answers
+    /// [`Repaint::Full`] for one never presented.
     #[must_use]
     pub fn age(&self, slot: usize) -> u32 {
         match self.slots.get(slot) {
@@ -252,7 +253,8 @@ impl BufferRing {
     ///
     /// The outgoing scanning slot becomes releasable rather than free: its flip
     /// has not landed, so the display engine may still be reading it. Freeing
-    /// it here is invariant 1's mistake in a different place.
+    /// it here is the mistake `drmkit-scene`'s invariant 1 (release only after
+    /// the replacing flip lands) forbids, in a different place.
     pub fn present(&mut self, slot: usize, frame_damage: &[Rect]) {
         if slot >= self.slots.len() {
             return;

@@ -22,8 +22,9 @@ A scene can bring up a display, allocate planes for a layer stack, commit a
 frame, composite what it cannot place, and release buffers on the right
 vblank. EDID, color management, cursor and capture are in, as are the present
 spine, cross-output orchestration, GBM surface sources and client-side
-decorations. The GL compositor, EGL streams, and the V4L2 and `GStreamer`
-sources are not.
+decorations. The GL compositor, the GL and Vulkan scanout producers, EGL
+streams, the V4L2, `GStreamer` and nvbufsurface sources, and the Vulkan
+display surface are not.
 
 See the [crate documentation](https://docs.rs/drmkit) for which member crate
 does what, or <https://github.com/jwinarske/drmkit> for the porting plan.

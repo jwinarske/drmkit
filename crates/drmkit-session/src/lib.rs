@@ -45,7 +45,7 @@
 //! same seat, so input descriptors get the revocable lifetime the DRM one has.
 //!
 //! Both halves it needs now exist: this crate opens devices through a seat,
-//! and `drmkit_input::Seat::open` takes any `LibinputInterface` the caller
+//! and `drmkit_input::Seat::open_with` takes any `LibinputInterface` the caller
 //! supplies. What is missing is the piece between them — an implementation of
 //! that trait backed by a [`Session`], so an input descriptor is revoked and
 //! reissued on a VT switch the way the DRM one is. Until it exists a caller

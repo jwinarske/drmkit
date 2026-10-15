@@ -1,13 +1,16 @@
 // SPDX-FileCopyrightText: (c) 2026 Joel Winarske
 // SPDX-License-Identifier: MIT
 
-//! Deciding how many ioctls one frame across several outputs costs.
+//! Planning how many ioctls one frame across several outputs costs.
 
 /// How to split a frame across the outputs it touches.
+///
+/// The policy shapes the groups [`partition_for_policy`] returns; each group
+/// is one atomic commit for the caller to make.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum NarrowPolicy {
-    /// Never split: one atomic commit for every engaged scene.
+    /// Never split: one group, so one atomic commit, for every engaged scene.
     ///
     /// The only policy that makes a multi-output frame **atomic** — either
     /// every output shows the new frame or none does. What it costs is that

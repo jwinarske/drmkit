@@ -266,8 +266,10 @@ impl LayerBufferSource for DumbRingSource {
     /// Nothing to do: the next `paint` allocates against the device it is
     /// given.
     ///
-    /// The reference re-points its stored device here. Not holding one is what
-    /// makes this empty.
+    /// The reference re-points its stored device here, drops the pending frame
+    /// and reallocates every live slot. This port dropped the slots and the
+    /// pending frame in [`on_session_paused`](Self::on_session_paused), and
+    /// holds no device to re-point, which is what makes this empty.
     fn on_session_resumed(&mut self, _device: &Device) -> Result<(), SourceError> {
         Ok(())
     }

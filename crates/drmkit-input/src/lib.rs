@@ -32,6 +32,14 @@
 //! what a caller writes around a `Vec` of events anyway.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
+// The docs link to `Keyboard` and `Seat` wherever they explain what those do,
+// and each is behind a feature. A build without one keeps the prose and loses
+// the link rather than failing; the default build, which has both, is the one
+// that checks every link resolves.
+#![cfg_attr(
+    not(all(feature = "xkb", feature = "libinput")),
+    allow(rustdoc::broken_intra_doc_links)
+)]
 
 mod event;
 mod leds;

@@ -41,9 +41,7 @@ pub struct GbmBufferSource {
     /// The exported DMA-BUF, kept rather than dropped after the import.
     ///
     /// The import takes its own reference, so holding this is not what keeps
-    /// the framebuffer alive. It is what makes the source *compositable*:
-    /// `export_dma_buf` hands out a borrow of it, and a source that dropped
-    /// the descriptor would have nothing to offer -- see that method.
+    /// the framebuffer alive. It is the descriptor `export_dma_buf` lends.
     dma_buf: std::os::fd::OwnedFd,
     /// The exported buffer's row stride, reported alongside the descriptor.
     pitch: u32,
@@ -57,7 +55,7 @@ pub struct GbmBufferSource {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum GbmSourceError {
-    /// The allocation failed.
+    /// Opening the GBM device, allocating, or exporting the buffer failed.
     #[error("allocating a GBM buffer: {0}")]
     Allocate(#[from] drmkit_gbm::GbmError),
 
@@ -93,9 +91,11 @@ impl GbmBufferSource {
     ///
     /// # Errors
     ///
-    /// [`GbmSourceError::Allocate`] if the driver refuses the format, size, or
-    /// every modifier offered; [`GbmSourceError::Import`] if the result cannot
-    /// be made into a framebuffer; [`GbmSourceError::MultiPlanar`] if the
+    /// [`GbmSourceError::Allocate`] if the GBM device cannot be opened, the
+    /// driver refuses the format or size, or the buffer cannot be exported --
+    /// refusing every modifier offered falls back to an unconstrained
+    /// allocation rather than failing; [`GbmSourceError::Import`] if the
+    /// result cannot be made into a framebuffer; [`GbmSourceError::MultiPlanar`] if the
     /// driver returns more than one plane.
     pub fn create(
         device: &Device,
@@ -191,9 +191,9 @@ impl LayerBufferSource for GbmBufferSource {
     /// allocator could not place it on a plane, which is exactly the case
     /// composition exists to rescue.
     ///
-    /// Not forwarded to the wrapped import, which does not implement this: it
-    /// consumes the descriptor it is handed and keeps only the framebuffer.
-    /// This source keeps its own, so it has one to lend.
+    /// Answered from this source's own export rather than forwarded to the
+    /// wrapped import, which holds a duplicate of the same DMA-BUF: either
+    /// names the GBM allocation.
     fn export_dma_buf(&mut self) -> Result<DmaBufDesc<'_>, SourceError> {
         Ok(DmaBufDesc {
             fds: vec![std::os::fd::AsFd::as_fd(&self.dma_buf)],

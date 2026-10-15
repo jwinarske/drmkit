@@ -61,8 +61,9 @@ pub const SURFACE_FOURCC: u32 = drmkit_fmt::fourcc::ARGB8888;
 #[derive(Debug, Default)]
 pub struct Surface {
     buffer: Option<Buffer>,
-    /// Bumped on every `paint`, so the compositor can tell a decoration that
-    /// moved from one that was redrawn.
+    /// Bumped on every `paint` except a read-only ([`MapAccess::Read`]) one,
+    /// so the compositor can tell a decoration that moved from one that was
+    /// redrawn.
     ///
     /// Without it, a decoration at the same place with different pixels looks
     /// unchanged to [`compute_damage`](crate::compute_damage) and is never
@@ -146,7 +147,8 @@ impl Surface {
         SURFACE_FOURCC
     }
 
-    /// How many times this surface has been painted.
+    /// How many times this surface has been painted — mapped by
+    /// [`paint`](Self::paint) for anything other than [`MapAccess::Read`].
     #[must_use]
     pub const fn generation(&self) -> u64 {
         self.generation
@@ -154,10 +156,11 @@ impl Surface {
 
     /// Map the pixels for drawing, and count the paint.
     ///
-    /// The generation is bumped whether or not anything is actually written:
-    /// a caller that mapped for writing intends to, and under-reporting a
-    /// change leaves a stale decoration on screen where over-reporting only
-    /// costs a recomposite.
+    /// The generation is bumped for any map that allows writing, whether or
+    /// not anything is actually written: a caller that mapped for writing
+    /// intends to, and under-reporting a change leaves a stale decoration on
+    /// screen where over-reporting only costs a recomposite. A read-only
+    /// ([`MapAccess::Read`]) map does not bump it.
     ///
     /// # Errors
     ///

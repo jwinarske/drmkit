@@ -70,17 +70,19 @@ impl OverlayReservation {
     /// that knows the window's stacking position passes it here rather than
     /// discovering the problem on screen.
     ///
-    /// **Re-reserving a CRTC releases what it held first.** A caller
-    /// responding to a mode change asks again with a new count, and the old
-    /// claim would otherwise keep planes it no longer wants out of everyone
-    /// else's reach.
+    /// **Re-reserving a CRTC releases what it held first** — except with a
+    /// `count` of zero, which, as upstream, returns early and leaves an
+    /// existing claim in place. A caller responding to a mode change asks
+    /// again with a new count, and the old claim would otherwise keep planes
+    /// it no longer wants out of everyone else's reach; to give them all up,
+    /// call [`release`](Self::release).
     ///
     /// # Errors
     ///
-    /// [`ReserveError::Shortfall`] when fewer than `count` planes match. The
-    /// reservation is left as it was — released, since the release happens
-    /// first — rather than partially filled: a caller that asked for three and
-    /// got two would have to work out which of its decorations to drop.
+    /// [`ReserveError::Shortfall`] when fewer than `count` planes match. This
+    /// CRTC's previous claim has already been released and nothing new is
+    /// claimed — no partial fill: a caller that asked for three and got two
+    /// would have to work out which of its decorations to drop.
     pub fn reserve(
         &mut self,
         registry: &PlaneRegistry,
@@ -90,9 +92,9 @@ impl OverlayReservation {
         min_zpos: u64,
     ) -> Result<Vec<u32>, ReserveError> {
         if count == 0 {
-            // Still records the CRTC, so `reserved_for` answers with an empty
-            // slice rather than nothing -- a caller that asked for none has a
-            // reservation, it is just empty.
+            // Records the CRTC if it held nothing, and otherwise leaves its
+            // existing claim alone, as upstream does: nothing is released on
+            // this path. `reserved_for` answers with a slice either way.
             self.by_crtc.entry(crtc_index).or_default();
             return Ok(Vec::new());
         }

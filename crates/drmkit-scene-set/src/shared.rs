@@ -19,16 +19,19 @@ use drmkit_sync::SyncFence;
 ///
 /// `RefCell` rather than a lock because the commit path is single-threaded by
 /// contract — a lock here would suggest the scenes could be committed from
-/// different threads, which the atomic ioctl they share does not allow.
+/// different threads, which a combined atomic commit across them does not
+/// allow.
 pub(crate) struct SharedSource(pub(crate) Rc<RefCell<dyn LayerBufferSource>>);
 
 impl LayerBufferSource for SharedSource {
     /// Acquire from the shared producer.
     ///
-    /// Every mirrored copy acquires independently and gets the same buffer,
-    /// which is the point: one render, several outputs. The release side is
-    /// what a caller has to think about — the source hears one release per
-    /// copy, and a ring sized for one output will starve driving two.
+    /// Every mirrored copy calls the inner source's `acquire`. A
+    /// static-buffer source returns the same buffer each time, which is the
+    /// point: one render, several outputs. A ring or swap-chain source hands
+    /// each copy a different buffer, or none, so it does not suit mirroring.
+    /// The release side is what a caller has to think about — the source
+    /// hears one release per copy.
     fn acquire(&mut self) -> Result<AcquiredBuffer, SourceError> {
         self.0.borrow_mut().acquire()
     }

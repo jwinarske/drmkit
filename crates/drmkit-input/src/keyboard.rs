@@ -204,8 +204,8 @@ impl Keyboard {
     /// xkbcommon documents: a key's own press must not change what that press
     /// produces. With a latching modifier -- a sticky Shift, a dead key -- the
     /// press being resolved is the one that consumes the latch, so reading
-    /// afterwards reads a state the user has already left. The reference does
-    /// it the other way round; see the module tests.
+    /// afterward reads a state the user has already left. The reference
+    /// resolves first too (`keyboard.cpp`); see the module tests.
     ///
     /// A repeat -- [`KeyEvent::repeat`], as a key repeater synthesizes it --
     /// is resolved and nothing more, as the reference treats it: feeding xkb

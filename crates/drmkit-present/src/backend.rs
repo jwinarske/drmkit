@@ -109,11 +109,13 @@ struct SavedCrtc {
 /// # Teardown
 ///
 /// Dropping the backend while a flip it armed is still outstanding waits, up to
-/// 100 ms, for the CRTC's vblank sequence to move past that commit before the
-/// scene lets go of its buffers. It never reads the event queue, so the event
-/// stays queued for the caller. Dispatching it and calling
-/// [`flip_landed`](Self::flip_landed) first means there is nothing to wait for.
-/// The device must outlive the backend: the wait reads the sequence on it.
+/// 100 ms, for the CRTC's vblank sequence to move past that commit or for its
+/// flip event to be queued, before the scene lets go of its buffers. On a CRTC
+/// with no vblank counter the queued event is the only thing it waits on. It
+/// never reads the event queue, so the event stays queued for the caller.
+/// Dispatching it and calling [`flip_landed`](Self::flip_landed) first means
+/// there is nothing to wait for. The device must outlive the backend: the wait
+/// polls it.
 pub struct ScanoutBackend {
     target: ScanoutTarget,
     profile: DriverProfile,
@@ -161,8 +163,8 @@ impl ScanoutBackend {
     ///
     /// # Errors
     ///
-    /// [`PresentError::Bind`] if no output can be found, the planes cannot be
-    /// probed, or the producer cannot allocate.
+    /// [`PresentError::Bind`] if no output can be found, the driver or the
+    /// planes cannot be probed, or the producer cannot allocate.
     pub fn create(
         device: &Device,
         producer: &mut dyn ScanoutProducer,
@@ -326,8 +328,9 @@ impl ScanoutBackend {
     ///
     /// # Errors
     ///
-    /// [`PresentError::Build`] if the scene cannot build the frame,
-    /// [`PresentError::Commit`] if the kernel refuses it.
+    /// [`PresentError::Bind`] if the mode cannot be learned for the first,
+    /// modesetting frame; [`PresentError::Build`] if the scene cannot build
+    /// the frame; [`PresentError::Commit`] if the kernel refuses it.
     pub fn present(
         &mut self,
         device: &Device,
@@ -336,8 +339,8 @@ impl ScanoutBackend {
     ) -> Result<CommitReport, PresentError> {
         // An unconditional present is a full commit by definition, and it
         // still has to be counted -- `frames_committed` reports every frame
-        // that reached the kernel, not only the gated ones. Running it through
-        // the economy is what keeps one counter authoritative for both paths.
+        // sent for commit, not only the gated ones. Running it through the
+        // economy is what keeps one counter authoritative for both paths.
         self.economy.force_full();
         let _ = self.economy.decide(true, false);
         self.commit(device, flags, out_fence)
@@ -519,7 +522,11 @@ impl ScanoutBackend {
         self.economy.force_full();
     }
 
-    /// How many frames reached the kernel.
+    /// How many frames were sent for commit.
+    ///
+    /// Counted when the frame is decided, before it is built: a frame whose
+    /// mode could not be learned, that the scene could not build, or that the
+    /// kernel refused is counted all the same.
     #[must_use]
     pub const fn frames_committed(&self) -> u64 {
         self.economy.committed()

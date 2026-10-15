@@ -15,6 +15,11 @@ minor version may break the API and a patch version does not.
 - `drmkit-scene`: `LayerBufferSource::with_mapping`, a provided method that
   runs a closure over a CPU view of the pixels. The scene's composition reads
   through it; its default maps with `map`, so existing sources need nothing.
+- `drmkit-scene`: `LayerScene::on_session_paused` and `on_session_resumed`,
+  as the reference has them. A pause hands every held buffer back and pauses
+  each source and the canvas; a resume rebuilds the allocator's view of the
+  output, resumes each source on the new device, makes the canvas again, and
+  lifts any suspension. Every caller had to walk the layers itself (P-74).
 
 ### Deprecated
 
@@ -175,11 +180,6 @@ twenty-one crates.
 
 ### Added
 
-- `drmkit-scene`: `LayerScene::on_session_paused` and `on_session_resumed`,
-  as the reference has them. A pause hands every held buffer back and pauses
-  each source and the canvas; a resume rebuilds the allocator's view of the
-  output, resumes each source on the new device, makes the canvas again, and
-  lifts any suspension. Every caller had to walk the layers itself (P-74).
 - `drmkit-core`, `-modeset`, `-dumb`, `-fmt`, `-sync`, `-log`, `-time`: device
   handles and cached properties, atomic requests, mode selection and page-flip
   dispatch, dumb buffers, format modifiers and `IN_FORMATS`, `sync_file`

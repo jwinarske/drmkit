@@ -311,3 +311,81 @@ fn an_unknown_crtc_negotiates_nothing_vkms() {
         None
     );
 }
+
+/// A zero size or slot count is refused when the source is made, as the
+/// reference refuses it, rather than failing at the first paint.
+#[test]
+fn a_ring_of_nothing_is_refused() {
+    use drmkit_present::PaintError;
+    let xrgb = drmkit_fmt::fourcc::XRGB8888;
+    for (width, height, slots, what) in [
+        (0, 64, 2, "width"),
+        (64, 0, 2, "height"),
+        (64, 64, 0, "slot count"),
+    ] {
+        assert!(
+            matches!(
+                DumbRingSource::new(width, height, xrgb, slots),
+                Err(PaintError::Zero(name)) if name == what
+            ),
+            "{what}"
+        );
+    }
+}
+
+/// A frame's damage covers what the frame itself changed, not only the stale
+/// region it repainted.
+///
+/// The reference reports the stale region alone: the union of what changed
+/// while the slot was off screen, computed before this frame is presented.
+/// A frame that changes somewhere new then sends clips that miss it, and a
+/// driver that copies only the clipped area -- a shadow-buffered or
+/// self-refreshing panel -- never shows the change. The port reports what the
+/// callback says it touched, which includes it.
+#[test]
+#[ignore = "needs a DRM device"]
+fn a_frames_damage_covers_its_own_change_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let (width, height) = drmkit_testkit::framebuffer::size(&device, 256, 64);
+    let mut source = DumbRingSource::new(width, height, drmkit_fmt::fourcc::XRGB8888, 2)
+        .expect("XRGB8888 has a known bpp");
+    let rect = |x| Rect {
+        x,
+        y: 0,
+        width: 16,
+        height: 16,
+    };
+
+    // Two frames fill both slots; the third reuses the first, owing frame
+    // two's change, and changes somewhere new itself.
+    let mut previous = None;
+    let mut third = None;
+    for (frame, changed) in [rect(0), rect(100), rect(200)].into_iter().enumerate() {
+        source
+            .paint(&device, |_, repaint| {
+                let mut touched = match repaint {
+                    Repaint::Full => Vec::new(),
+                    Repaint::Region(stale) => stale.clone(),
+                };
+                touched.push(changed);
+                touched
+            })
+            .unwrap_or_else(|error| panic!("frame {frame}: {error}"));
+        let acquired = source.acquire().expect("a painted slot is acquirable");
+        if frame == 2 {
+            third = Some(acquired.damage.clone());
+        }
+        if let Some(previous) = previous.replace(acquired) {
+            source.release(previous);
+        }
+    }
+
+    let damage = third.expect("three frames");
+    assert!(
+        damage
+            .iter()
+            .any(|clip| clip.x == 200 && clip.w == 16 && clip.h == 16),
+        "the third frame changed x = 200 and its clips must say so: {damage:?}"
+    );
+}

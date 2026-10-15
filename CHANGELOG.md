@@ -70,6 +70,12 @@ minor version may break the API and a patch version does not.
   sheared and `NV12` could not be created. A format with no known depth is
   refused as `InvalidConfig`, and a resume that cannot re-allocate reports
   the kernel's errno rather than `ENOMEM` (P-65).
+- `drmkit-present`: when nothing is negotiated -- no plane advertises
+  `IN_FORMATS`, or none takes a layout the producer can make --
+  `ScanoutBackend::create` allows the producer `LINEAR`, as the reference
+  does and as `ScanoutProducer` documented. It passed an empty set, which a
+  producer reads as no constraint, so a tiled or compressed buffer no plane
+  takes could reach the first commit (P-66).
 
 ## [0.1.1] - 2026-10-14
 

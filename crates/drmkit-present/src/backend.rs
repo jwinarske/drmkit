@@ -186,36 +186,11 @@ impl ScanoutBackend {
                 .map_err(|error| PresentError::Bind(format!("plane {}: {error}", plane.id)))?;
         }
 
-        // Negotiate against the union across every non-cursor plane on this
-        // CRTC, not the primary's IN_FORMATS alone -- see
-        // `PlaneRegistry::candidate_modifiers` for the split-SoC case that
-        // makes the difference.
-        let plane_modifiers = registry.candidate_modifiers(crtc_index, config.fourcc);
-        let producer_modifiers = producer.exportable_modifiers(config.fourcc);
-        let modifiers = if plane_modifiers.is_empty() {
-            // No plane advertises IN_FORMATS. That is "this driver does not
-            // say", not "nothing works", so the producer is left unconstrained
-            // and the commit is what finds out.
-            Vec::new()
-        } else {
-            let producer: Vec<drmkit_fmt::Modifier> = producer_modifiers
-                .iter()
-                .copied()
-                .map(drmkit_fmt::Modifier)
-                .collect();
-            let planes: Vec<drmkit_fmt::Modifier> = plane_modifiers
-                .iter()
-                .copied()
-                .map(drmkit_fmt::Modifier)
-                .collect();
-            negotiate(&producer, &planes, config.rotation)
-                .into_iter()
-                .map(|modifier| modifier.0)
-                .collect()
-        };
+        let (modifiers, allowed) =
+            Self::negotiate_modifiers(&registry, crtc_index, producer, config);
 
         let source = producer
-            .create_buffer(width, height, config.fourcc, &modifiers)
+            .create_buffer(width, height, config.fourcc, &allowed)
             .map_err(|error| PresentError::Bind(format!("allocating: {error}")))?;
 
         let mut scene = LayerScene::new(crtc_id);
@@ -284,6 +259,48 @@ impl ScanoutBackend {
         })
     }
 
+    /// What the producer may allocate in, and the negotiation it came from.
+    ///
+    /// Negotiated against the union across every non-cursor plane on the
+    /// CRTC, not the primary's `IN_FORMATS` alone -- see
+    /// `PlaneRegistry::candidate_modifiers` for the split-SoC case that makes
+    /// the difference. Where no plane advertises `IN_FORMATS`, or nothing
+    /// overlaps, the negotiation is empty and the producer is allowed
+    /// `LINEAR`, which every plane scans out; the allocator's `TEST_ONLY` then
+    /// decides where it lands.
+    fn negotiate_modifiers(
+        registry: &PlaneRegistry,
+        crtc_index: u32,
+        producer: &mut dyn ScanoutProducer,
+        config: &Config,
+    ) -> (Vec<u64>, Vec<u64>) {
+        let plane_modifiers = registry.candidate_modifiers(crtc_index, config.fourcc);
+        let producer_modifiers = producer.exportable_modifiers(config.fourcc);
+        let modifiers: Vec<u64> = if plane_modifiers.is_empty() {
+            Vec::new()
+        } else {
+            let producer: Vec<drmkit_fmt::Modifier> = producer_modifiers
+                .iter()
+                .copied()
+                .map(drmkit_fmt::Modifier)
+                .collect();
+            let planes: Vec<drmkit_fmt::Modifier> = plane_modifiers
+                .iter()
+                .copied()
+                .map(drmkit_fmt::Modifier)
+                .collect();
+            negotiate(&producer, &planes, config.rotation)
+                .into_iter()
+                .map(|modifier| modifier.0)
+                .collect()
+        };
+        let allowed = if modifiers.is_empty() {
+            vec![drmkit_fmt::Modifier::LINEAR.0]
+        } else {
+            modifiers.clone()
+        };
+        (modifiers, allowed)
+    }
     /// Capture the CRTC as it stands, for [`RestorePolicy::SavedCrtc`].
     ///
     /// Read through the legacy CRTC ioctl rather than atomic properties
@@ -526,10 +543,11 @@ impl ScanoutBackend {
         &self.profile
     }
 
-    /// The negotiated modifiers the producer was allowed to allocate in.
+    /// The negotiated modifiers, most preferred first.
     ///
-    /// Empty when no plane advertised `IN_FORMATS`, which is *unconstrained*
-    /// rather than *nothing was acceptable*.
+    /// Empty when the backend fell back to `LINEAR` -- no plane advertised
+    /// `IN_FORMATS`, or none of them took a layout the producer could make --
+    /// and the producer was allowed `LINEAR` alone.
     #[must_use]
     pub fn modifiers(&self) -> &[u64] {
         &self.modifiers

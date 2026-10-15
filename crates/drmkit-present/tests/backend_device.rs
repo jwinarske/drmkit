@@ -814,3 +814,64 @@ impl LayerBufferSource for DamagingSource {
         self.inner.on_session_resumed(device)
     }
 }
+
+/// A producer with no opinion, or with layouts no plane takes: what the
+/// backend allows it is recorded, and the allocation goes to the GBM producer.
+struct Recording<'a> {
+    inner: GbmScanoutProducer<'a>,
+    exportable: Vec<u64>,
+    allowed: Vec<u64>,
+}
+
+impl drmkit_present::ScanoutProducer for Recording<'_> {
+    fn exportable_modifiers(&mut self, _fourcc: u32) -> Vec<u64> {
+        self.exportable.clone()
+    }
+
+    fn create_buffer(
+        &mut self,
+        width: u32,
+        height: u32,
+        fourcc: u32,
+        allowed: &[u64],
+    ) -> Result<Box<dyn LayerBufferSource>, drmkit_present::ProducerError> {
+        self.allowed = allowed.to_vec();
+        self.inner.create_buffer(width, height, fourcc, allowed)
+    }
+}
+
+/// With nothing negotiated the producer is allowed `LINEAR`, which every
+/// plane scans out, as the reference falls back -- never an empty set, which
+/// a producer reads as no constraint at all.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn nothing_negotiated_falls_back_to_linear_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+
+    // No opinion, and a vendor layout no plane on vkms advertises.
+    for exportable in [Vec::new(), vec![0x0200_0000_0000_0001]] {
+        let mut producer = Recording {
+            inner: GbmScanoutProducer::new(&device),
+            exportable: exportable.clone(),
+            allowed: Vec::new(),
+        };
+        let backend = match ScanoutBackend::create(&device, &mut producer, &backend_config()) {
+            Ok(backend) => backend,
+            Err(error) => {
+                drmkit_testkit::skipped(&format!("no scanout output here ({error})"));
+                return;
+            }
+        };
+        assert!(
+            backend.modifiers().is_empty(),
+            "{exportable:x?}: nothing was negotiated"
+        );
+        drop(backend);
+        assert_eq!(
+            producer.allowed,
+            [0],
+            "{exportable:x?}: the producer is allowed LINEAR alone"
+        );
+    }
+}

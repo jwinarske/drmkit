@@ -6,7 +6,8 @@
 //! Port of `src/scene/dumb_buffer_source.{hpp,cpp}`.
 
 use drmkit_core::Device;
-use drmkit_dumb::{Buffer, Config, MapAccess, Mapping};
+use drmkit_dumb::{Buffer, Config, DumbError, MapAccess, Mapping};
+use drmkit_fmt::{format_bpp, fourcc};
 use drmkit_scene::{
     AcquiredBuffer, BindingModel, DamageRect, LayerBufferSource, SourceError, SourceFormat,
 };
@@ -40,24 +41,23 @@ impl DumbBufferSource {
     /// The kernel zero-fills a dumb buffer at creation, so the first acquire
     /// presents a fully transparent image rather than whatever was in memory.
     ///
+    /// The allocation follows the format: a packed format at its own depth --
+    /// 16 bits for `RGB565`, 24 for `RGB888` -- and the semi-planar 4:2:0
+    /// formats (`NV12`, `NV21`, `P010`, `P012`, `P016`) as one allocation
+    /// holding both planes, through [`Buffer::create_planar`].
+    ///
     /// # Errors
     ///
-    /// Whatever the allocation failed with.
+    /// [`DumbError::InvalidConfig`] for a format with no known depth, which
+    /// the reference refuses as `EINVAL`; otherwise whatever the allocation
+    /// failed with.
     pub fn create(
         device: &Device,
         width: u32,
         height: u32,
         fourcc: u32,
-    ) -> Result<Self, drmkit_dumb::DumbError> {
-        let buffer = Buffer::create(
-            device,
-            &Config {
-                width,
-                height,
-                fourcc,
-                ..Config::default()
-            },
-        )?;
+    ) -> Result<Self, DumbError> {
+        let buffer = allocate_for_format(device, width, height, fourcc)?;
 
         Ok(Self {
             format: SourceFormat {
@@ -151,20 +151,56 @@ impl LayerBufferSource for DumbBufferSource {
 
         self.buffer.forget();
 
-        self.buffer = Buffer::create(
-            device,
-            &Config {
-                width,
-                height,
-                fourcc,
-                ..Config::default()
-            },
-        )
-        .map_err(|_| SourceError::Failed(rustix::io::Errno::NOMEM))?;
+        self.buffer = allocate_for_format(device, width, height, fourcc)
+            .map_err(|error| SourceError::Failed(crate::cursor::errno(&error)))?;
 
         // `format` is re-affirmed, not reassigned: dimensions and modifier are
         // unchanged, and consumers rely on `format()` returning the same value
         // across a resume.
         Ok(())
     }
+}
+
+/// Whether `fourcc` is one of the semi-planar 4:2:0 layouts a dumb buffer
+/// can hold: luma, then interleaved chroma, in one allocation.
+const fn is_semiplanar_yuv(fourcc: u32) -> bool {
+    matches!(
+        fourcc,
+        fourcc::NV12 | fourcc::NV21 | fourcc::P010 | fourcc::P012 | fourcc::P016
+    )
+}
+
+/// A buffer of the shape `fourcc` needs. Port of the reference's
+/// `allocate_for_format`.
+///
+/// A packed format is allocated at its own depth, so a 16-bit format gets a
+/// 16-bit stride -- what a controller that cannot scan out `XRGB8888`, such as
+/// tilcdc, needs. A semi-planar format goes through
+/// [`Buffer::create_planar`], which sizes the chroma plane and registers
+/// both planes.
+fn allocate_for_format(
+    device: &Device,
+    width: u32,
+    height: u32,
+    fourcc: u32,
+) -> Result<Buffer, DumbError> {
+    if is_semiplanar_yuv(fourcc) {
+        return Buffer::create_planar(device, fourcc, width, height);
+    }
+    let bpp = format_bpp(fourcc);
+    if bpp == 0 {
+        return Err(DumbError::InvalidConfig {
+            reason: "format has no known single-plane depth",
+        });
+    }
+    Buffer::create(
+        device,
+        &Config {
+            width,
+            height,
+            fourcc,
+            bpp,
+            add_fb: true,
+        },
+    )
 }

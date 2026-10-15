@@ -63,6 +63,13 @@ minor version may break the API and a patch version does not.
   and the rest resume, as the reference reports it through
   `resume_failed_cb`; `dispatch` returned the first failure and left every
   later device closed (P-64).
+- `drmkit-scene-sources`: `DumbBufferSource` allocates for its format, as
+  the reference does: a packed format at its own depth, so `RGB565` gets a
+  16-bit stride, and the semi-planar 4:2:0 formats as two planes. Every
+  format was sized at 32 bits a pixel in one plane, so `RGB565` scanned out
+  sheared and `NV12` could not be created. A format with no known depth is
+  refused as `InvalidConfig`, and a resume that cannot re-allocate reports
+  the kernel's errno rather than `ENOMEM` (P-65).
 
 ## [0.1.1] - 2026-10-14
 

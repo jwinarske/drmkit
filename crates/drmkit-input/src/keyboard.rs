@@ -206,8 +206,16 @@ impl Keyboard {
     /// press being resolved is the one that consumes the latch, so reading
     /// afterwards reads a state the user has already left. The reference does
     /// it the other way round; see the module tests.
+    ///
+    /// A repeat -- [`KeyEvent::repeat`], as a key repeater synthesizes it --
+    /// is resolved and nothing more, as the reference treats it: feeding xkb
+    /// another press of a key it already holds is mutating the state from a
+    /// read.
     pub fn process_key(&mut self, event: &mut KeyEvent) {
         self.resolve(event);
+        if event.repeat {
+            return;
+        }
 
         let code = keycode(event.key);
         let direction = if event.pressed {
@@ -350,9 +358,11 @@ fn compile(context: &xkb::Context, names: &KeymapNames) -> Result<xkb::Keymap, I
         names.model.as_str(),
         names.layout.as_str(),
         names.variant.as_str(),
-        // The crate takes options as an owned Option because it has to append
-        // its own NUL; an empty string means the same thing as None to xkb.
-        Some(names.options.clone()),
+        // Absent, not empty, when there are none, as the reference passes them.
+        // xkb fills an empty rules, model, layout or variant from its
+        // defaults, but options only when absent: an empty string is "no
+        // options", and the user's `XKB_DEFAULT_OPTIONS` would be dropped.
+        (!names.options.is_empty()).then(|| names.options.clone()),
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     )
     .ok_or(InputError::Keymap)

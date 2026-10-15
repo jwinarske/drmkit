@@ -116,6 +116,17 @@ minor version may break the API and a patch version does not.
     `SurfaceError::Export`, with the kernel's errno, where it was `Empty`;
   - `decoration_geometry` no longer overflows, and panics, on a shadow
     extent or title bar past `i32::MAX / 2`.
+- `drmkit-input`: `Keyboard::process_key` treats a repeat as a read, as the
+  reference does, rather than feeding xkb another press of a key it holds;
+  and keymap names with no options take the user's `XKB_DEFAULT_OPTIONS`,
+  which an empty options string had been overriding (P-71).
+- `drmkit-session`: a seat that cannot be opened is logged as an error, as
+  the reference logs it, where it was debug; and a dispatch that fails
+  before the seat activates is `SessionError::NoBackend`, the "no seat" a
+  caller falls back on, rather than `SessionError::Seat` (P-71).
+- `drmkit-scene-sources`: a GBM source that cannot re-allocate on resume
+  reports the errno, as the reference does, rather than `Unsupported`
+  (P-71).
 
 ## [0.1.1] - 2026-10-14
 

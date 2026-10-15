@@ -249,6 +249,25 @@ fn resolving_does_not_move_the_state() {
 }
 
 #[test]
+fn a_repeat_through_process_key_does_not_move_the_state() {
+    // A repeat handed to `process_key` rather than `resolve` is still only a
+    // read, as the reference treats it: a latch it reads is not spent.
+    let mut keyboard = Keyboard::from_string(LATCH_KEYMAP).expect("compile");
+    press(&mut keyboard, KEY_LEFTSHIFT);
+
+    let mut event = KeyEvent {
+        key: KEY_A,
+        pressed: true,
+        repeat: true,
+        ..KeyEvent::default()
+    };
+    keyboard.process_key(&mut event);
+    assert_eq!(event.utf8, "A");
+    assert_eq!(keyboard.held_keys(), [KEY_LEFTSHIFT], "and `a` is not held");
+    assert!(keyboard.modifiers().shift, "nor was the latch spent");
+}
+
+#[test]
 fn a_latching_layout_types_what_the_user_latched() {
     // The same ordering, on a layout people have installed rather than one
     // written for the test. Latvian writes its long vowels by latching level

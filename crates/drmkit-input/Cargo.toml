@@ -35,6 +35,11 @@ default = ["libinput", "xkb"]
 libinput = ["dep:input"]
 xkb = ["dep:xkbcommon"]
 
+[[test]]
+name = "xkb_default_options"
+harness = false
+required-features = ["xkb"]
+
 [[example]]
 name = "input"
 required-features = ["libinput", "xkb"]

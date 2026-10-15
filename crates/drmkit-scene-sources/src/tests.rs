@@ -145,6 +145,54 @@ fn a_session_resume_preserves_the_source_format_vkms() {
     let _ = old_fb;
 }
 
+/// A packed format is allocated at its own depth, as the reference sizes it:
+/// a 16-bit format gets a 16-bit stride, and keeps it across a resume.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_dumb_source_allocates_at_the_formats_depth_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let width = 64;
+    let mut source =
+        DumbBufferSource::create(&device, width, 16, drmkit_fmt::fourcc::RGB565).expect("create");
+    assert_eq!(source.buffer().stride(), width * 2, "two bytes a pixel");
+
+    source.on_session_paused();
+    source.on_session_resumed(&device).expect("resume");
+    assert_eq!(
+        source.buffer().stride(),
+        width * 2,
+        "the resumed allocation follows the format too"
+    );
+}
+
+/// A semi-planar format is one allocation holding both planes, registered as
+/// two: the reference's `create_planar` path. At 32 bpp and one plane the
+/// kernel refuses the framebuffer.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_dumb_source_allocates_a_semiplanar_format_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let mut source =
+        DumbBufferSource::create(&device, 64, 32, drmkit_fmt::fourcc::NV12).expect("create NV12");
+    assert_ne!(source.acquire().expect("acquire").fb_id, 0);
+}
+
+/// A format with no known depth is refused before anything is allocated,
+/// as the reference refuses it with `EINVAL`.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_dumb_source_refuses_a_format_it_cannot_size_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let created = DumbBufferSource::create(&device, 64, 32, drmkit_fmt::fourcc::YUV420);
+    assert!(
+        matches!(created, Err(drmkit_dumb::DumbError::InvalidConfig { .. })),
+        "{created:?}"
+    );
+}
+
 /// Repeated resumes must not leak: each one forgets the old handles and
 /// allocates fresh. Measured as descriptor-table growth, for the same reason as
 /// the other leak tests — an absolute count races the parallel harness.

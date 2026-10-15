@@ -199,7 +199,7 @@ fn blit(buffer: &mut Buffer, pixels: &[u32], width: u32, height: u32, buffer_wid
 /// The kernel's own answer where there is one. Flattening these to a single
 /// value would turn a driver refusing a size into "out of memory", which sends
 /// whoever reads the log looking in the wrong place.
-fn errno(error: &DumbError) -> rustix::io::Errno {
+pub(crate) fn errno(error: &DumbError) -> rustix::io::Errno {
     match error {
         DumbError::Io(errno) => *errno,
         DumbError::InvalidConfig { .. } | DumbError::UnsupportedFormat { .. } => {

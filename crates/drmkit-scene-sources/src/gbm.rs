@@ -220,11 +220,11 @@ impl LayerBufferSource for GbmBufferSource {
             height,
         } = self.format;
 
-        let gbm = GbmDevice::new(device).map_err(|_| SourceError::Unsupported)?;
+        let gbm = GbmDevice::new(device).map_err(|error| resume_error(&error.into()))?;
         let buffer = GbmBuffer::create_with_modifiers(&gbm, width, height, fourcc, &[modifier])
-            .map_err(|_| SourceError::Unsupported)?;
+            .map_err(|error| resume_error(&error.into()))?;
         let (imported, dma_buf, format) =
-            Self::import(device, &buffer).map_err(|_| SourceError::Unsupported)?;
+            Self::import(device, &buffer).map_err(|error| resume_error(&error))?;
 
         // The old import's framebuffer and handles went with the old
         // descriptor: forgotten, not torn down through it, as the reference's
@@ -237,5 +237,58 @@ impl LayerBufferSource for GbmBufferSource {
         self.dma_buf = dma_buf;
         self.format = format;
         Ok(())
+    }
+}
+
+/// A failed re-allocation as the scene sees it, with the errno the reference
+/// would report rather than `Unsupported` for everything.
+///
+/// The kernel's errno where there is one. `drmkit-gbm` keeps only a message
+/// for a refused device or allocation, so those are `EIO`, the reference's
+/// own answer when libgbm leaves `errno` unset. A multi-planar allocation is
+/// a layout this source cannot carry, so that one is `Unsupported`.
+fn resume_error(error: &GbmSourceError) -> SourceError {
+    match error {
+        GbmSourceError::Allocate(drmkit_gbm::GbmError::Io(errno)) => SourceError::Failed(*errno),
+        GbmSourceError::Import(error) => crate::external::source_error(error),
+        GbmSourceError::MultiPlanar { .. } => SourceError::Unsupported,
+        _ => SourceError::Failed(rustix::io::Errno::IO),
+    }
+}
+
+#[cfg(test)]
+mod resume_error_tests {
+    use super::{GbmSourceError, resume_error};
+    use drmkit_scene::SourceError;
+    use rustix::io::Errno;
+
+    /// A resume that cannot re-allocate says why, as the reference does,
+    /// rather than claiming the source cannot do it at all.
+    #[test]
+    fn a_failed_reallocation_keeps_its_errno() {
+        let cases = [
+            (
+                GbmSourceError::Allocate(drmkit_gbm::GbmError::Io(Errno::NOMEM)),
+                Errno::NOMEM,
+            ),
+            (
+                GbmSourceError::Allocate(drmkit_gbm::GbmError::Allocation("refused".to_owned())),
+                Errno::IO,
+            ),
+            (
+                GbmSourceError::Import(crate::ExternalError::Io(Errno::NOSPC)),
+                Errno::NOSPC,
+            ),
+        ];
+        for (error, errno) in cases {
+            assert!(
+                matches!(resume_error(&error), SourceError::Failed(got) if got == errno),
+                "{error}"
+            );
+        }
+        assert!(matches!(
+            resume_error(&GbmSourceError::MultiPlanar { planes: 2 }),
+            SourceError::Unsupported
+        ));
     }
 }

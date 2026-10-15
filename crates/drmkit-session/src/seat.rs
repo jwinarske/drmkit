@@ -68,7 +68,8 @@ impl LibseatBackend {
     ///   The same when the backend connects but does not activate the seat
     ///   within [`DEFAULT_ENABLE_TIMEOUT`] -- seatd over SSH, with no VT to
     ///   take -- so the caller falls back the same way.
-    /// - [`SessionError::Seat`] if a dispatch fails.
+    ///   And the same when a dispatch fails before the seat activates, as the
+    ///   reference falls back on it.
     pub fn open() -> Result<Self, SessionError> {
         Self::open_within(Some(DEFAULT_ENABLE_TIMEOUT))
     }
@@ -103,7 +104,7 @@ impl LibseatBackend {
         let mut seat = libseat::Seat::open(listener).map_err(|errno| {
             // Which backend refused, and why, is the whole of the diagnosis
             // when a seat is expected and does not appear.
-            drmkit_log::log_debug!("no seat: {errno}");
+            drmkit_log::log_error!("seat: opening a seat failed: {errno}");
             SessionError::NoBackend
         })?;
         let poll_fd = seat.get_fd().ok().map(|fd| fd.as_raw_fd());
@@ -140,7 +141,7 @@ impl LibseatBackend {
             |timeout_ms| {
                 seat.dispatch(timeout_ms)
                     .map(|_| ())
-                    .map_err(|errno| SessionError::Seat(format!("dispatch: {errno}")))
+                    .map_err(|errno| errno.to_string())
             },
             inbox,
             timeout,
@@ -156,9 +157,11 @@ impl LibseatBackend {
 /// `dispatch` is the seat's, taking a timeout in milliseconds with `-1` to
 /// block. While bounded, no single dispatch outlasts [`DISPATCH_SLICE_MS`] or
 /// the time left, so the deadline is kept. A timeout is
-/// [`SessionError::NoBackend`], the "no seat" a caller already falls back on.
+/// [`SessionError::NoBackend`], the "no seat" a caller already falls back on,
+/// and so is a dispatch that fails before the seat is ours, logged as an
+/// error, as the reference treats both.
 fn wait_until_active(
-    mut dispatch: impl FnMut(i32) -> Result<(), SessionError>,
+    mut dispatch: impl FnMut(i32) -> Result<(), String>,
     inbox: &Inbox,
     timeout: Option<Duration>,
 ) -> Result<(), SessionError> {
@@ -179,7 +182,10 @@ fn wait_until_active(
                 i32::try_from(left.as_millis().min(DISPATCH_SLICE_MS)).unwrap_or(0)
             }
         };
-        dispatch(timeout_ms)?;
+        if let Err(error) = dispatch(timeout_ms) {
+            drmkit_log::log_error!("seat: dispatch before the seat was enabled failed: {error}");
+            return Err(SessionError::NoBackend);
+        }
         if drain_through_activation(&mut inbox.borrow_mut()) {
             return Ok(());
         }
@@ -379,15 +385,38 @@ mod tests {
         assert_eq!(waits, [-1]);
     }
 
-    /// A failed dispatch ends the wait with its error, not a timeout.
+    /// A dispatch that fails before the seat is ours ends the wait at once as
+    /// "no seat", the answer a caller falls back on, as the reference gives
+    /// it -- and the failure is logged as an error, so the fallback is not
+    /// silent.
     #[test]
     fn a_failed_dispatch_is_reported() {
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&captured);
+        drmkit_log::set_log_sink(move |level, message| {
+            sink.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((level, message.to_owned()));
+        });
         let inbox: Inbox = Rc::new(RefCell::new(Vec::new()));
+        let started = Instant::now();
         let result = wait_until_active(
-            |_| Err(SessionError::Seat("dispatch: EIO".to_owned())),
+            |_| Err("EIO".to_owned()),
             &inbox,
             Some(DEFAULT_ENABLE_TIMEOUT),
         );
-        assert_eq!(result, Err(SessionError::Seat("dispatch: EIO".to_owned())));
+        drmkit_log::reset_log_sink();
+
+        assert_eq!(result, Err(SessionError::NoBackend));
+        assert!(started.elapsed() < DEFAULT_ENABLE_TIMEOUT, "not a timeout");
+        let captured = captured
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(
+            captured.iter().any(|(level, message)| {
+                *level == drmkit_log::LogLevel::Error && message.contains("EIO")
+            }),
+            "{captured:?}"
+        );
     }
 }

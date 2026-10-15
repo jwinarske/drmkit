@@ -52,4 +52,14 @@ fn main() {
         "the line ending comes off: {message:?}"
     );
     println!("seat_log: {message}");
+
+    // And the refusal itself is an error, as the reference logs it: a seat
+    // that was expected and did not appear is not debug chatter.
+    let refused = captured
+        .iter()
+        .find(|(_, message)| message.starts_with("seat: opening a seat failed"));
+    let Some((level, message)) = refused else {
+        panic!("the failed open was not logged: {captured:?}");
+    };
+    assert_eq!(*level, LogLevel::Error, "{message}");
 }

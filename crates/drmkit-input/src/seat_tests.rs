@@ -144,3 +144,16 @@ fn a_seat_that_does_not_exist_opens_with_nothing_on_it() {
     .expect("opens anyway");
     assert_eq!(seat.keyboard_count(), 0);
 }
+
+/// A seat libinput cannot enumerate is reported as that, not as a seat that
+/// does not exist: libinput accepts an unknown name and finds no devices on
+/// it, so "no such seat" would send a caller looking for the wrong problem.
+#[test]
+fn a_seat_error_says_what_failed() {
+    let message = crate::InputError::Seat("seat0".to_owned()).to_string();
+    assert_eq!(
+        message,
+        "libinput could not enumerate the seat through udev: seat0"
+    );
+    assert!(!message.contains("no such seat"), "{message}");
+}

@@ -37,7 +37,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.94.1"
 license = "MIT"
@@ -48,30 +48,30 @@ keywords = ["drm", "kms", "display", "graphics", "embedded"]
 categories = ["graphics", "os::linux-apis"]
 
 [workspace.dependencies]
-drmkit-core = { version = "0.1.1", path = "crates/drmkit-core" }
-drmkit-dumb = { version = "0.1.1", path = "crates/drmkit-dumb" }
-drmkit-gbm = { version = "0.1.1", path = "crates/drmkit-gbm" }
-drmkit-scene-gbm = { version = "0.1.1", path = "crates/drmkit-scene-gbm" }
-drmkit-scene-set = { version = "0.1.1", path = "crates/drmkit-scene-set" }
-drmkit-capture = { version = "0.1.1", path = "crates/drmkit-capture" }
-drmkit-cursor = { version = "0.1.1", path = "crates/drmkit-cursor" }
-drmkit-csd = { version = "0.1.1", path = "crates/drmkit-csd" }
+drmkit-core = { version = "0.1.2", path = "crates/drmkit-core" }
+drmkit-dumb = { version = "0.1.2", path = "crates/drmkit-dumb" }
+drmkit-gbm = { version = "0.1.2", path = "crates/drmkit-gbm" }
+drmkit-scene-gbm = { version = "0.1.2", path = "crates/drmkit-scene-gbm" }
+drmkit-scene-set = { version = "0.1.2", path = "crates/drmkit-scene-set" }
+drmkit-capture = { version = "0.1.2", path = "crates/drmkit-capture" }
+drmkit-cursor = { version = "0.1.2", path = "crates/drmkit-cursor" }
+drmkit-csd = { version = "0.1.2", path = "crates/drmkit-csd" }
 # Path-only: the testkit is never published, and only a path-only
 # dev-dependency is dropped from a published manifest rather than looked up on
 # crates.io.
 drmkit-testkit = { path = "crates/drmkit-testkit" }
-drmkit-display = { version = "0.1.1", path = "crates/drmkit-display" }
-drmkit-fmt = { version = "0.1.1", path = "crates/drmkit-fmt" }
-drmkit-input = { version = "0.1.1", path = "crates/drmkit-input" }
-drmkit-log = { version = "0.1.1", path = "crates/drmkit-log" }
-drmkit-modeset = { version = "0.1.1", path = "crates/drmkit-modeset" }
-drmkit-planes = { version = "0.1.1", path = "crates/drmkit-planes" }
-drmkit-present = { version = "0.1.1", path = "crates/drmkit-present" }
-drmkit-scene = { version = "0.1.1", path = "crates/drmkit-scene" }
-drmkit-session = { version = "0.1.1", path = "crates/drmkit-session" }
-drmkit-scene-sources = { version = "0.1.1", path = "crates/drmkit-scene-sources" }
-drmkit-sync = { version = "0.1.1", path = "crates/drmkit-sync" }
-drmkit-time = { version = "0.1.1", path = "crates/drmkit-time" }
+drmkit-display = { version = "0.1.2", path = "crates/drmkit-display" }
+drmkit-fmt = { version = "0.1.2", path = "crates/drmkit-fmt" }
+drmkit-input = { version = "0.1.2", path = "crates/drmkit-input" }
+drmkit-log = { version = "0.1.2", path = "crates/drmkit-log" }
+drmkit-modeset = { version = "0.1.2", path = "crates/drmkit-modeset" }
+drmkit-planes = { version = "0.1.2", path = "crates/drmkit-planes" }
+drmkit-present = { version = "0.1.2", path = "crates/drmkit-present" }
+drmkit-scene = { version = "0.1.2", path = "crates/drmkit-scene" }
+drmkit-session = { version = "0.1.2", path = "crates/drmkit-session" }
+drmkit-scene-sources = { version = "0.1.2", path = "crates/drmkit-scene-sources" }
+drmkit-sync = { version = "0.1.2", path = "crates/drmkit-sync" }
+drmkit-time = { version = "0.1.2", path = "crates/drmkit-time" }
 
 drm = { version = "0.15" }
 jpeg-encoder = { version = "0.6", default-features = false, features = ["std"] }

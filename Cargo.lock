@@ -123,7 +123,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drmkit-capture",
  "drmkit-core",
@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-capture"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drm",
  "drmkit-core",
@@ -166,7 +166,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drm",
  "drm-ffi",
@@ -177,7 +177,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-csd"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drm",
  "drmkit-core",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-cursor"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drm",
  "drmkit-core",
@@ -206,7 +206,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-display"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drm",
  "drmkit-core",
@@ -222,7 +222,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-drmdb"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drmkit-cursor",
  "drmkit-fmt",
@@ -233,7 +233,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-dumb"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drm",
  "drm-ffi",
@@ -245,11 +245,11 @@ dependencies = [
 
 [[package]]
 name = "drmkit-fmt"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "drmkit-gbm"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drmkit-core",
  "drmkit-fmt",
@@ -260,7 +260,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-input"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drmkit-log",
  "input",
@@ -271,14 +271,14 @@ dependencies = [
 
 [[package]]
 name = "drmkit-log"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "tracing",
 ]
 
 [[package]]
 name = "drmkit-modeset"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drm",
  "drm-ffi",
@@ -321,7 +321,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-planes"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drm",
  "drm-ffi",
@@ -335,7 +335,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-present"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drm",
  "drmkit-core",
@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-probe"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drm",
  "drmkit-core",
@@ -365,7 +365,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-scene"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drm",
  "drmkit-capture",
@@ -385,7 +385,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-scene-gbm"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drm",
  "drmkit-core",
@@ -401,7 +401,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-scene-set"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drm",
  "drmkit-core",
@@ -417,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-scene-sources"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drm",
  "drmkit-core",
@@ -434,7 +434,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-session"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drmkit-log",
  "libseat",
@@ -443,7 +443,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-sync"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rustix",
  "thiserror",
@@ -451,7 +451,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-testkit"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drm",
  "drmkit-core",
@@ -459,7 +459,7 @@ dependencies = [
 
 [[package]]
 name = "drmkit-time"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rustix",
 ]
@@ -1015,7 +1015,7 @@ dependencies = [
 
 [[package]]
 name = "tests-integration"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drmkit-testkit",
 ]
@@ -1257,7 +1257,7 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 
 [[package]]
 name = "xtask"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drmkit-testkit",
 ]

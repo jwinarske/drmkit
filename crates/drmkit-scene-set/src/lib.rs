@@ -48,9 +48,9 @@ pub struct Target {
     pub display: DisplayParams,
     /// Force this copy through composition rather than onto a plane.
     ///
-    /// A mirrored source cannot be mapped for composition, so a copy forced
-    /// here is dropped from each frame rather than blended. Set it only when
-    /// that is the intent.
+    /// The copy is blended from the shared source's pixels, read through
+    /// [`with_mapping`](drmkit_scene::LayerBufferSource::with_mapping), so the
+    /// source must offer a CPU view.
     pub force_composited: bool,
 }
 

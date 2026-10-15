@@ -16,6 +16,7 @@ keywords = ["drm", "kms", "compositor", "multi-monitor", "scanout"]
 
 [dependencies]
 drmkit-core = { workspace = true }
+drmkit-dumb = { workspace = true }
 drmkit-planes = { workspace = true }
 drmkit-scene = { workspace = true }
 drmkit-sync = { workspace = true }

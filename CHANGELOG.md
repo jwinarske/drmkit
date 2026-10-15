@@ -8,6 +8,12 @@ minor version may break the API and a patch version does not.
 
 ## [Unreleased]
 
+### Added
+
+- `drmkit-scene`: `LayerBufferSource::with_mapping`, a provided method that
+  runs a closure over a CPU view of the pixels. The scene's composition reads
+  through it; its default maps with `map`, so existing sources need nothing.
+
 ### Deprecated
 
 - `drmkit-scene`: `OutputSignalling` and `derive_output_signalling` are now
@@ -139,6 +145,10 @@ minor version may break the API and a patch version does not.
   seat through udev, which is what it reports. It said "no such seat, or no
   permission for it", but libinput accepts an unknown seat name and finds no
   devices on it.
+- `drmkit-scene-set`: a mirrored layer that falls to composition, or is
+  forced there, is blended from the shared source, as the reference blends
+  it. It was dropped from every frame, since a shared source could not be
+  mapped (P-68).
 
 ## [0.1.1] - 2026-10-14
 

@@ -54,12 +54,19 @@ impl LayerBufferSource for SharedSource {
         self.0.borrow().has_fresh_content()
     }
 
-    // `map` is not forwarded, though the reference forwards it. A mapping
-    // borrows the source for as long as it lives, and the source is behind a
-    // `RefCell` the caller also holds: the borrow guard cannot outlive this
-    // call, and handing the mapping out without it would let the caller, or
-    // another copy, re-allocate or map the buffer while the view is live. So
-    // a shared source cannot be composited; its layer needs a plane.
+    /// Forwarded with the shared borrow held for exactly as long as `f` runs,
+    /// so the scene can composite a mirrored copy, as the reference forwards
+    /// `map`. `map` itself is not forwarded: a mapping borrows the source for
+    /// its whole life, and the `RefCell` guard cannot outlive this call, so
+    /// handing one out would let the caller or another copy re-allocate the
+    /// buffer under a live view.
+    fn with_mapping(
+        &mut self,
+        access: drmkit_dumb::MapAccess,
+        f: &mut dyn FnMut(&mut drmkit_dumb::Mapping<'_>),
+    ) -> Result<(), SourceError> {
+        self.0.borrow_mut().with_mapping(access, f)
+    }
 
     /// Not forwarded. One copy retiring says nothing about the others, which
     /// may still be scanning the same buffer out; letting it go to the

@@ -2176,19 +2176,6 @@ fn blend_targets(
         if !crate::format_supported(format.fourcc) {
             continue;
         }
-        let Ok(mapping) = layer.source.map(drmkit_dumb::MapAccess::Read) else {
-            // A source whose pixels never reach the CPU cannot be rescued this
-            // way. It stays dropped for the frame.
-            continue;
-        };
-        let src = CompositeSrc {
-            pixels: mapping.pixels(),
-            src_stride_bytes: mapping.stride(),
-            src_width: mapping.width(),
-            src_height: mapping.height(),
-            drm_fourcc: format.fourcc,
-            plane_alpha: display.alpha.unwrap_or(u16::MAX),
-        };
         // The canvas samples whole pixels, so a sub-pixel crop rounds to the
         // nearest one.
         let src_rect = display
@@ -2199,29 +2186,48 @@ fn blend_targets(
                 w: round_16_16(fixed.w),
                 h: round_16_16(fixed.h),
             });
-        canvas.blend(
-            &src,
-            CompositeRect {
-                x: src_rect.x,
-                y: src_rect.y,
-                w: if src_rect.w == 0 {
-                    format.width
-                } else {
-                    src_rect.w
+        let blend = &mut |mapping: &mut drmkit_dumb::Mapping<'_>| {
+            let src = CompositeSrc {
+                pixels: mapping.pixels(),
+                src_stride_bytes: mapping.stride(),
+                src_width: mapping.width(),
+                src_height: mapping.height(),
+                drm_fourcc: format.fourcc,
+                plane_alpha: display.alpha.unwrap_or(u16::MAX),
+            };
+            canvas.blend(
+                &src,
+                CompositeRect {
+                    x: src_rect.x,
+                    y: src_rect.y,
+                    w: if src_rect.w == 0 {
+                        format.width
+                    } else {
+                        src_rect.w
+                    },
+                    h: if src_rect.h == 0 {
+                        format.height
+                    } else {
+                        src_rect.h
+                    },
                 },
-                h: if src_rect.h == 0 {
-                    format.height
-                } else {
-                    src_rect.h
+                CompositeRect {
+                    x: display.dst_rect.x,
+                    y: display.dst_rect.y,
+                    w: display.dst_rect.w,
+                    h: display.dst_rect.h,
                 },
-            },
-            CompositeRect {
-                x: display.dst_rect.x,
-                y: display.dst_rect.y,
-                w: display.dst_rect.w,
-                h: display.dst_rect.h,
-            },
-        );
+            );
+        };
+        if layer
+            .source
+            .with_mapping(drmkit_dumb::MapAccess::Read, blend)
+            .is_err()
+        {
+            // A source whose pixels never reach the CPU cannot be rescued this
+            // way. It stays dropped for the frame.
+            continue;
+        }
         blended += 1;
     }
     blended

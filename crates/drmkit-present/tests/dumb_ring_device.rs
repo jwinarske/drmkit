@@ -115,6 +115,67 @@ fn a_reused_slot_eventually_asks_for_a_partial_repaint_vkms() {
     );
 }
 
+/// A session pause forgets the ring's history along with its buffers, so the
+/// first paint after the resume repaints in full.
+///
+/// Every slot comes back zeroed. A ring that remembered a slot as nearly
+/// current would ask for a partial repaint of a blank buffer, and the rest of
+/// it would scan out blank.
+#[test]
+#[ignore = "needs a DRM device"]
+fn the_first_paint_after_a_resume_is_full_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let (width, height) = drmkit_testkit::framebuffer::size(&device, 128, 128);
+    let mut source = DumbRingSource::new(width, height, drmkit_fmt::fourcc::XRGB8888, 2)
+        .expect("XRGB8888 has a known bpp");
+    let corner = || {
+        vec![Rect {
+            x: 0,
+            y: 0,
+            width: 16,
+            height: 16,
+        }]
+    };
+
+    // Paint until the ring has history enough to ask for less than the whole.
+    // The previous frame is released once the next is acquired, as the scene
+    // retires it, so a slot is always free.
+    let mut partial = false;
+    let mut previous = None;
+    for frame in 0..8 {
+        source
+            .paint(&device, |_, repaint| {
+                partial |= matches!(repaint, Repaint::Region(_));
+                corner()
+            })
+            .unwrap_or_else(|error| panic!("frame {frame}: {error}"));
+        let acquired = source.acquire().expect("a painted slot is acquirable");
+        if let Some(previous) = previous.replace(acquired) {
+            source.release(previous);
+        }
+    }
+    assert!(partial, "the ring never got as far as a partial repaint");
+    // Still held by the scene when the session goes: the pause forgets it.
+    drop(previous);
+
+    source.on_session_paused();
+    source.on_session_resumed(&device).expect("resume");
+
+    let mut first = None;
+    source
+        .paint(&device, |_, repaint| {
+            first = Some(matches!(repaint, Repaint::Full));
+            corner()
+        })
+        .expect("paint after resume");
+    assert_eq!(
+        first,
+        Some(true),
+        "the buffer is new and blank; a partial repaint would leave it so"
+    );
+}
+
 /// Slots are allocated as the ring grows, not up front.
 ///
 /// The reference documents this ("slots are allocated lazily") and has no case

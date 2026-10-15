@@ -223,11 +223,20 @@ impl LayerBufferSource for DumbRingSource {
         self.format
     }
 
-    /// Drop every buffer without touching the dead descriptor.
+    /// Drop every buffer without touching the dead descriptor, and the ring's
+    /// history with them.
     ///
     /// The GEM handles and framebuffer ids belonged to it and the kernel
     /// reclaims them when it closes; issuing ioctls against it would fail and
     /// change nothing.
+    ///
+    /// The history goes because it describes the buffers, not the slots: each
+    /// slot is re-allocated zeroed after the resume, so a slot the ring
+    /// remembered as nearly current would ask for a partial repaint of a
+    /// blank buffer and leave the rest of it blank on screen. A fresh ring
+    /// answers [`Repaint::Full`] for every slot, as for a new source. Slots
+    /// still held by the scene are forgotten with it; a late release of one
+    /// names no slot the fresh ring has and is ignored.
     fn on_session_paused(&mut self) {
         for slot in &mut self.buffers {
             if let Some(buffer) = slot.as_mut() {
@@ -236,6 +245,7 @@ impl LayerBufferSource for DumbRingSource {
             *slot = None;
         }
         self.pending = None;
+        self.ring = BufferRing::new(self.ring.max_slots(), BufferRing::DEFAULT_MAX_DAMAGE_RECTS);
     }
 
     /// Nothing to do: the next `paint` allocates against the device it is

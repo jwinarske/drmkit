@@ -312,10 +312,11 @@ pub trait LayerBufferSource {
 
     /// Acquire a CPU view of the pixel storage.
     ///
-    /// Composition fallback reads through this to rescue layers the allocator
+    /// Composition fallback reads through this, by way of
+    /// [`with_mapping`](Self::with_mapping), to rescue layers the allocator
     /// could not place. A source whose pixels live only in GPU memory returns
     /// [`SourceError::Unsupported`] — and is then uncompositable: the scene's
-    /// CPU composition reads only through this.
+    /// CPU composition reads only through these.
     ///
     /// # Errors
     ///
@@ -328,12 +329,36 @@ pub trait LayerBufferSource {
         Err(SourceError::Unsupported)
     }
 
+    /// Run `f` over a CPU view of the pixel storage, writable when `access`
+    /// allows it.
+    ///
+    /// What the scene's composition reads through. The default maps with
+    /// [`map`](Self::map) and hands that view to `f`, so a source that
+    /// implements `map` needs nothing here. A source that can lend its pixels
+    /// only for a bounded time -- one shared behind a `RefCell`, whose borrow
+    /// cannot outlive a call -- overrides this instead, and holds whatever it
+    /// must for exactly as long as `f` runs.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`map`](Self::map) fails with; `f` is not called then.
+    fn with_mapping(
+        &mut self,
+        access: drmkit_dumb::MapAccess,
+        f: &mut dyn FnMut(&mut drmkit_dumb::Mapping<'_>),
+    ) -> Result<(), SourceError> {
+        let mut mapping = self.map(access)?;
+        f(&mut mapping);
+        Ok(())
+    }
+
     /// Export the currently-acquired buffer's DMA-BUF planes.
     ///
     /// For a consumer that imports DMA-BUFs: a source whose pixels never reach
     /// CPU memory — a V4L2 capture buffer — can be handed on this way. Upstream
     /// composites such a layer on the GPU; that compositor is not ported yet,
-    /// and the scene's CPU composition reads only through [`map`](Self::map).
+    /// and the scene's CPU composition reads only through
+    /// [`with_mapping`](Self::with_mapping).
     ///
     /// # Errors
     ///

@@ -544,3 +544,72 @@ fn the_commit_plan_follows_the_set_and_what_the_caller_says_needs_a_modeset() {
         "a modeset named on a hole changes nothing -- there is no output there"
     );
 }
+
+/// A mirrored copy can be read for composition, as the reference forwards
+/// `map`: the scene reads it through `with_mapping`, which the shared source
+/// forwards with its borrow held for the read. Without it every mirrored copy
+/// that fell to composition left the screen.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn a_mirrored_copy_can_be_read_for_composition_vkms() {
+    use drmkit_dumb::MapAccess;
+    use drmkit_scene::LayerBufferSource as _;
+
+    let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
+    let device = match drmkit_core::Device::open(&path) {
+        Ok(device) => device,
+        Err(error) => {
+            assert!(
+                std::env::var_os("DRMKIT_REQUIRE_MASTER").is_none(),
+                "{path}: {error}, but DRMKIT_REQUIRE_MASTER is set"
+            );
+            drmkit_testkit::skipped(&format!("no DRM device at {path} ({error})"));
+            return;
+        }
+    };
+    let mut painted = drmkit_scene_sources::DumbBufferSource::create(
+        &device,
+        16,
+        16,
+        drmkit_fmt::fourcc::ARGB8888,
+    )
+    .expect("a 16x16 dumb buffer");
+    painted
+        .map(MapAccess::Write)
+        .expect("a dumb buffer maps")
+        .pixels_mut()
+        .fill(0x5a);
+    let shared: std::rc::Rc<std::cell::RefCell<dyn drmkit_scene::LayerBufferSource>> =
+        std::rc::Rc::new(std::cell::RefCell::new(painted));
+
+    let mut set = SceneSet::new(vec![
+        drmkit_scene::LayerScene::new(1),
+        drmkit_scene::LayerScene::new(2),
+    ]);
+    set.add_layer(&LayerSpec {
+        source: shared,
+        targets: (0..2)
+            .map(|scene_index| Target {
+                scene_index,
+                display: drmkit_scene::DisplayParams::default(),
+                force_composited: true,
+            })
+            .collect(),
+    })
+    .expect("both scenes exist");
+
+    for index in 0..2 {
+        let scene = set.scene_mut(index).expect("the scene");
+        let handle = scene.handles().next().expect("its copy");
+        let layer = scene.layer_mut(handle).expect("its copy");
+        let mut seen = Vec::new();
+        layer
+            .source_mut()
+            .with_mapping(MapAccess::Read, &mut |mapping| {
+                seen.extend_from_slice(mapping.row(0).unwrap_or_default());
+            })
+            .unwrap_or_else(|error| panic!("scene {index}: the copy cannot be read: {error}"));
+        assert_eq!(seen.len(), 16 * 4, "scene {index}: one row of ARGB8888");
+        assert!(seen.iter().all(|byte| *byte == 0x5a), "scene {index}");
+    }
+}

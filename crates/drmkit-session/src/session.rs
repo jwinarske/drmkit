@@ -107,8 +107,24 @@ pub enum SessionEvent {
     /// Every per-descriptor kernel object is gone: framebuffers, property
     /// blobs, client capabilities, GEM handles. All of it is rebuilt.
     Resumed {
-        /// The devices as they now stand, in the order they were taken.
+        /// The devices as they now stand, in the order they were taken --
+        /// those that came back. One that could not be reopened is reported
+        /// by a [`SessionEvent::DeviceLost`] queued ahead of this, and is no
+        /// longer held.
         devices: Vec<TakenDevice>,
+    },
+    /// A device could not be reopened on resume.
+    ///
+    /// The descriptor the caller held for it was closed with the pause, and
+    /// there is no new one: everything on that device is gone until the
+    /// caller takes it again. The other devices are unaffected and come back
+    /// in the [`SessionEvent::Resumed`] that follows. The reference reports the
+    /// same through its `resume_failed_cb` (drm-cxx#246).
+    DeviceLost {
+        /// Where it was opened from.
+        path: PathBuf,
+        /// What the seat said when asked to reopen it.
+        error: String,
     },
 }
 
@@ -232,10 +248,13 @@ impl<B: Backend> Session<B> {
     /// this call, which means the caller is re-entering the seat from inside
     /// the seat's own dispatch. Queuing instead keeps that from being possible.
     ///
+    /// A device that cannot be reopened on resume is not an error here: it is
+    /// reported as a [`SessionEvent::DeviceLost`], and the rest come back.
+    ///
     /// # Errors
     ///
-    /// [`SessionError::Seat`] if the seat refuses, or if reopening a device
-    /// on resume fails.
+    /// [`SessionError::Seat`] if the seat refuses to dispatch or to
+    /// acknowledge a pause.
     pub fn dispatch(&mut self, timeout_ms: i32) -> Result<(), SessionError> {
         self.raw.clear();
         let mut raw = std::mem::take(&mut self.raw);
@@ -243,7 +262,7 @@ impl<B: Backend> Session<B> {
         for event in raw.drain(..) {
             match event {
                 RawEvent::Disable => self.on_disable()?,
-                RawEvent::Enable => self.on_enable()?,
+                RawEvent::Enable => self.on_enable(),
             }
         }
         self.raw = raw;
@@ -275,9 +294,9 @@ impl<B: Backend> Session<B> {
     }
 
     /// Handle the seat coming back.
-    fn on_enable(&mut self) -> Result<(), SessionError> {
+    fn on_enable(&mut self) {
         if self.active {
-            return Ok(());
+            return;
         }
         self.active = true;
 
@@ -289,26 +308,39 @@ impl<B: Backend> Session<B> {
         for device in std::mem::take(&mut self.devices) {
             // Closing first: the seat tracks one open device per handle, and
             // opening the same path again without closing leaks its handle for
-            // as long as the session runs.
-            self.backend.close_device(device.id)?;
-            let (id, fd) = self
-                .backend
-                .open_device(&device.path)
-                .inspect_err(|error| {
-                    // The caller is told too, by the error out of `dispatch`. This
-                    // says which device, which is the part that identifies why.
-                    drmkit_log::log_error!("reopening {} failed: {error}", device.path.display());
-                })?;
-            refreshed.push(TakenDevice {
-                path: device.path,
-                id,
-                fd,
-            });
+            // as long as the session runs. A refusal to close changes nothing
+            // about the reopen, so it is noted and passed over, as the
+            // reference ignores it.
+            if let Err(error) = self.backend.close_device(device.id) {
+                drmkit_log::log_debug!(
+                    "closing {} before reopening it failed: {error}",
+                    device.path.display()
+                );
+            }
+            // One device that will not come back is not a reason to leave the
+            // others dark: the reference logs it, reports it for that device,
+            // and goes on to the rest.
+            match self.backend.open_device(&device.path) {
+                Ok((id, fd)) => refreshed.push(TakenDevice {
+                    path: device.path,
+                    id,
+                    fd,
+                }),
+                Err(error) => {
+                    drmkit_log::log_error!(
+                        "reopening {} on resume failed: {error}",
+                        device.path.display()
+                    );
+                    self.pending.push_back(SessionEvent::DeviceLost {
+                        path: device.path,
+                        error: error.to_string(),
+                    });
+                }
+            }
         }
         drmkit_log::log_info!("session resumed: {} device(s) reopened", refreshed.len());
         self.devices.clone_from(&refreshed);
         self.pending
             .push_back(SessionEvent::Resumed { devices: refreshed });
-        Ok(())
     }
 }

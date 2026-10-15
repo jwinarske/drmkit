@@ -53,6 +53,11 @@ minor version may break the API and a patch version does not.
   goes, and when it fails, as the reference does. They were never closed,
   so every buffer a producer had handed over stayed pinned until the device
   was closed (P-62).
+- `drmkit-session`: a device that cannot be reopened on resume no longer
+  costs the others. It is reported as the new `SessionEvent::DeviceLost`
+  and the rest resume, as the reference reports it through
+  `resume_failed_cb`; `dispatch` returned the first failure and left every
+  later device closed (P-64).
 
 ## [0.1.1] - 2026-10-14
 

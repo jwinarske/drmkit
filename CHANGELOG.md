@@ -80,6 +80,11 @@ minor version may break the API and a patch version does not.
   as the reference forwards it, and a removed layer's slot is reused, so a
   set whose layers come and go no longer grows by one slot each time
   (P-68).
+- `drmkit-present`: `DumbRingSource` forgets its repaint history when the
+  session pauses, along with its buffers. The first paint after a resume
+  could be asked for a partial repaint of a freshly allocated, blank buffer,
+  leaving the rest of it blank on screen; every slot now starts over with a
+  full repaint (P-69).
 
 ## [0.1.1] - 2026-10-14
 

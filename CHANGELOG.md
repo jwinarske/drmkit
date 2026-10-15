@@ -76,6 +76,10 @@ minor version may break the API and a patch version does not.
   does and as `ScanoutProducer` documented. It passed an empty set, which a
   producer reads as no constraint, so a tiled or compressed buffer no plane
   takes could reach the first commit (P-66).
+- `drmkit-scene-set`: a mirrored layer's plane binding reaches its source,
+  as the reference forwards it, and a removed layer's slot is reused, so a
+  set whose layers come and go no longer grows by one slot each time
+  (P-68).
 
 ## [0.1.1] - 2026-10-14
 

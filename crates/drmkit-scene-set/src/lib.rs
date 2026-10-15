@@ -129,6 +129,9 @@ pub struct SceneSet {
     /// `None` is a hole: a removed scene, kept so indices stay stable.
     scenes: Vec<Option<LayerScene>>,
     layers: Vec<Option<SetLayer>>,
+    /// Emptied layer slots, reused most recent first, as the reference reuses
+    /// them, so adding and removing layers does not grow the set.
+    free_layers: Vec<usize>,
     next_generation: u32,
 }
 
@@ -151,6 +154,7 @@ impl SceneSet {
         Self {
             scenes: scenes.into_iter().map(Some).collect(),
             layers: Vec::new(),
+            free_layers: Vec::new(),
             next_generation: 1,
         }
     }
@@ -248,12 +252,19 @@ impl SceneSet {
 
         let generation = self.next_generation;
         self.next_generation = self.next_generation.wrapping_add(1).max(1);
-        self.layers.push(Some(SetLayer { generation, copies }));
+        let layer = Some(SetLayer { generation, copies });
+        let index = if let Some(index) = self.free_layers.pop() {
+            self.layers[index] = layer;
+            index
+        } else {
+            self.layers.push(layer);
+            self.layers.len() - 1
+        };
 
         Ok(SetLayerHandle {
             // One-based: zero is the "never issued" value a default handle
             // carries, and it must not name the first layer.
-            id: u32::try_from(self.layers.len()).unwrap_or(u32::MAX),
+            id: u32::try_from(index + 1).unwrap_or(u32::MAX),
             generation,
         })
     }
@@ -279,6 +290,7 @@ impl SceneSet {
         }
 
         let Some(taken) = slot.take() else { return };
+        self.free_layers.push(index);
         let copies = taken.copies;
         for (scene_index, layer_handle) in copies {
             if let Some(scene) = self.scene_mut(scene_index) {

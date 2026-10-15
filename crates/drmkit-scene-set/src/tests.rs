@@ -364,6 +364,95 @@ fn removing_with_a_stale_or_default_handle_is_a_no_op() {
     set.remove_layer(handle);
 }
 
+fn one_target() -> Vec<Target> {
+    vec![Target {
+        scene_index: 0,
+        display: drmkit_scene::DisplayParams::default(),
+        force_composited: false,
+    }]
+}
+
+/// A removed layer's slot is reused, as the reference reuses it, and the
+/// old handle does not answer for the layer that took it.
+///
+/// Without reuse, a set whose layers come and go -- a notification, a
+/// tooltip -- grew by a slot every time.
+#[test]
+fn a_removed_layers_slot_is_reused_and_its_old_handle_is_stale() {
+    let mut set = SceneSet::new(vec![drmkit_scene::LayerScene::new(1)]);
+    let spec = LayerSpec {
+        source: source(),
+        targets: one_target(),
+    };
+
+    let first = set.add_layer(&spec).expect("scene 0 exists");
+    for _ in 0..8 {
+        let handle = set.add_layer(&spec).expect("scene 0 exists");
+        set.remove_layer(handle);
+    }
+    assert_eq!(set.layers.len(), 2, "two live at most, so two slots");
+
+    set.remove_layer(first);
+    let second = set.add_layer(&spec).expect("scene 0 exists");
+    assert_ne!(second, first, "a reused slot carries a new generation");
+    set.remove_layer(first);
+    assert_eq!(
+        set.scene(0).map(drmkit_scene::LayerScene::len),
+        Some(1),
+        "the old handle must not remove the layer that took its slot"
+    );
+}
+
+/// Records the plane calls a shared source sees.
+#[derive(Default)]
+struct Binding {
+    bound: Vec<u32>,
+    unbound: Vec<u32>,
+}
+
+impl drmkit_scene::LayerBufferSource for Binding {
+    fn acquire(&mut self) -> Result<drmkit_scene::AcquiredBuffer, drmkit_scene::SourceError> {
+        Err(drmkit_scene::SourceError::WouldBlock)
+    }
+
+    fn release(&mut self, _acquired: drmkit_scene::AcquiredBuffer) {}
+
+    fn format(&self) -> drmkit_scene::SourceFormat {
+        Stub.format()
+    }
+
+    fn bind_to_plane(&mut self, plane_id: u32) -> Result<(), drmkit_scene::SourceError> {
+        self.bound.push(plane_id);
+        Ok(())
+    }
+
+    fn unbind_from_plane(&mut self, plane_id: u32) {
+        self.unbound.push(plane_id);
+    }
+}
+
+/// Binding a copy to a plane reaches the shared source, as the reference
+/// forwards it. Swallowed, a driver-owned producer was never bound.
+#[test]
+fn plane_binding_reaches_the_shared_source() {
+    let mut set = SceneSet::new(vec![drmkit_scene::LayerScene::new(1)]);
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(Binding::default()));
+    set.add_layer(&LayerSpec {
+        source: shared.clone(),
+        targets: one_target(),
+    })
+    .expect("scene 0 exists");
+
+    let scene = set.scene_mut(0).expect("scene 0");
+    let handle = scene.handles().next().expect("the copy");
+    let layer = scene.layer_mut(handle).expect("the copy");
+    layer.source_mut().bind_to_plane(31).expect("bind");
+    layer.source_mut().unbind_from_plane(31);
+
+    assert_eq!(shared.borrow().bound, [31]);
+    assert_eq!(shared.borrow().unbound, [31]);
+}
+
 /// Removing a scene leaves a hole, and the indices after it do not move.
 ///
 /// The index is the caller's handle to an output. Compacting would have every

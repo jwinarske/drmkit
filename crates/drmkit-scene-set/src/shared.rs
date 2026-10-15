@@ -51,6 +51,13 @@ impl LayerBufferSource for SharedSource {
         self.0.borrow().has_fresh_content()
     }
 
+    // `map` is not forwarded, though the reference forwards it. A mapping
+    // borrows the source for as long as it lives, and the source is behind a
+    // `RefCell` the caller also holds: the borrow guard cannot outlive this
+    // call, and handing the mapping out without it would let the caller, or
+    // another copy, re-allocate or map the buffer while the view is live. So
+    // a shared source cannot be composited; its layer needs a plane.
+
     /// Not forwarded. One copy retiring says nothing about the others, which
     /// may still be scanning the same buffer out; letting it go to the
     /// producer would have it overwritten mid-scanout on those outputs.
@@ -62,6 +69,16 @@ impl LayerBufferSource for SharedSource {
 
     fn format(&self) -> SourceFormat {
         LayerBufferSource::format(&*self.0.borrow())
+    }
+
+    /// Forwarded, as the reference forwards it: a driver-owned producer is
+    /// bound per plane, and each copy lands on a plane of its own.
+    fn bind_to_plane(&mut self, plane_id: u32) -> Result<(), SourceError> {
+        self.0.borrow_mut().bind_to_plane(plane_id)
+    }
+
+    fn unbind_from_plane(&mut self, plane_id: u32) {
+        self.0.borrow_mut().unbind_from_plane(plane_id);
     }
 
     fn on_session_paused(&mut self) {

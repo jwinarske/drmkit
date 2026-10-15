@@ -49,8 +49,9 @@ pub trait ScanoutProducer {
     /// take, and the refusal arrives at the atomic commit, naming the
     /// framebuffer rather than the layout that made it unscannable.
     ///
-    /// An empty `allowed` means no constraint -- the backend reaches it when no
-    /// plane exposes `IN_FORMATS` -- not that nothing is acceptable.
+    /// An empty `allowed` means no constraint, not that nothing is acceptable.
+    /// The backend never passes one: where no plane exposes `IN_FORMATS`, or
+    /// none overlaps what this producer can make, it passes `LINEAR` alone.
     ///
     /// # Errors
     ///

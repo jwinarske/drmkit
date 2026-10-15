@@ -1129,6 +1129,60 @@ fn an_external_source_reimports_on_resume_vkms() {
     );
 }
 
+/// Clearing a cache after its device has gone touches nothing on the device
+/// that replaced it.
+///
+/// After a session loss the old descriptor is closed and its number is free;
+/// the next open takes it, and the kernel hands out the freed framebuffer id
+/// again. A clear that tore its imports down by ioctl would remove the new
+/// file's framebuffer under that id. It must forget them instead, as the
+/// kernel already reclaimed them with the old descriptor.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn clearing_a_cache_after_session_loss_spares_the_new_device_vkms() {
+    use std::os::fd::AsRawFd as _;
+
+    let _guard = card_guard();
+    let Some(exporter) = open_card() else { return };
+    let Some(before) = open_card() else { return };
+    let Some((fd, pitch)) = real_dma_buf(&exporter, 64, 64) else {
+        panic!("vkms allocates and exports a dumb buffer");
+    };
+    let planes = [ExternalPlane {
+        fd: fd.as_fd(),
+        offset: 0,
+        pitch,
+    }];
+
+    let mut cache = DmaBufSourceCache::new();
+    let old_fb = cache
+        .get_or_create(1, &before, external_format(), &planes)
+        .expect("import")
+        .acquire()
+        .expect("acquire")
+        .fb_id;
+    let number = before.as_fd().as_raw_fd();
+    drop(before);
+
+    let Some(after) = open_card() else { return };
+    if after.as_fd().as_raw_fd() != number {
+        println!("note: skipped -- the descriptor number was not reused");
+        return;
+    }
+    let mut fresh =
+        ExternalDmaBufSource::create(&after, external_format(), &planes, None).expect("import");
+    let new_fb = fresh.acquire().expect("acquire").fb_id;
+    if new_fb != old_fb {
+        println!("note: the framebuffer id was not reused ({old_fb} -> {new_fb})");
+    }
+
+    cache.clear();
+    assert!(
+        framebuffer_exists(&after, new_fb),
+        "clearing the cache removed framebuffer {new_fb} from the device that replaced its own"
+    );
+}
+
 /// A ring presents again after a session resume, every slot of it.
 #[test]
 #[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]

@@ -226,6 +226,10 @@ impl LayerBufferSource for GbmBufferSource {
         let (imported, dma_buf, format) =
             Self::import(device, &buffer).map_err(|_| SourceError::Unsupported)?;
 
+        // The old import's framebuffer and handles went with the old
+        // descriptor: forgotten, not torn down through it, as the reference's
+        // `forget` before replacing anything.
+        self.imported.forget();
         self.gbm = gbm;
         self.pitch = buffer.stride();
         self.buffer = buffer;

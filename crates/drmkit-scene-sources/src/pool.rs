@@ -12,7 +12,7 @@
 //!
 //! It is the lazy-import half of [`DmaBufSourceCache`](crate::DmaBufSourceCache)
 //! folded behind the ring's presentation machine, sharing
-//! [`RingPresenter`](crate::RingPresenter) for the handoff, tokens, deferred
+//! [`RingPresenter`] for the handoff, tokens, deferred
 //! release, idle-hold and damage carry.
 //!
 //! # Threading

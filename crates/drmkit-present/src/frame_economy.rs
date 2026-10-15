@@ -47,12 +47,19 @@ impl FrameAction {
 ///
 /// Not synchronised: one present loop owns it, the same one that owns the
 /// [`BufferRing`](crate::BufferRing).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FrameEconomy {
     first: bool,
     force_full: bool,
     committed: u64,
     skipped: u64,
+}
+
+impl Default for FrameEconomy {
+    /// The same as [`new`](Self::new): the first decision commits in full.
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FrameEconomy {

@@ -57,7 +57,10 @@ impl Color {
             got: hex.to_owned(),
         };
         let digits = hex.strip_prefix('#').ok_or_else(malformed)?;
-        if !matches!(digits.len(), 6 | 8) {
+        // Every character a hex digit, as the reference's `parse_hex_byte`
+        // requires: `from_str_radix` alone would take a sign, so `#+1+2+3`
+        // would parse.
+        if !matches!(digits.len(), 6 | 8) || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(malformed());
         }
         let byte = |index: usize| {

@@ -416,10 +416,13 @@ fn lerp_color(a: Color, b: Color, t: f32) -> Color {
 /// The dither. Deterministic by construction: the offset is a hash of the
 /// pixel's position, so redrawing the same decoration produces the same
 /// bytes, which is what lets a caller skip a redraw that would change nothing.
-fn dither(color: Color, x: i32, y: i32, amplitude: f64) -> Color {
+pub(crate) fn dither(color: Color, x: i32, y: i32, amplitude: f64) -> Color {
     if amplitude <= 0.0 {
         return color;
     }
+    // Clamped as the reference clamps it: a theme asking for more than full
+    // strength gets full strength, not noise that swamps the panel.
+    let amplitude = amplitude.min(1.0);
     // A cheap integer hash of the coordinate, folded to 0..=255.
     let mixed =
         (x.unsigned_abs().wrapping_mul(1_664_525)) ^ (y.unsigned_abs().wrapping_mul(1_013_904_223));

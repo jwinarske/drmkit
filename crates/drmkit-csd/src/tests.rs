@@ -2959,3 +2959,154 @@ fn exporting_an_empty_surface_is_refused() {
         Err(SurfaceError::Empty)
     ));
 }
+
+// --- parity with the reference's arithmetic -------------------------------------
+
+/// The id is the reference's hash: each 32-bit field most significant byte
+/// first. Computed independently of this code, so a byte-order slip in either
+/// direction fails here.
+#[test]
+#[cfg(target_endian = "little")]
+fn a_theme_id_is_the_references_hash() {
+    let theme = Theme {
+        corner_radius: 0x0102_0304,
+        shadow_extent: 0x0a0b_0c0d,
+        noise_amplitude: 0.25,
+        title_bar: crate::TitleBar {
+            height: 0x1122_3344,
+            font: String::new(),
+            font_size: 0x5566_7788,
+        },
+        ..Theme::default()
+    };
+    assert_eq!(theme_id(&theme), 0x5dff_0f09_bf68_a248);
+}
+
+/// A color is hex digits and nothing else. A sign is not a digit, though
+/// the integer parser would take one.
+#[test]
+fn a_color_with_a_sign_in_it_is_malformed() {
+    for hex in ["#+1+2+3", "#+12345", "#12+345", "#+1234567"] {
+        assert!(
+            matches!(Color::from_hex(hex), Err(ColorError::Malformed { .. })),
+            "{hex}"
+        );
+    }
+}
+
+/// Geometry never panics, however large a theme's extent or title bar.
+#[test]
+fn an_enormous_shadow_or_title_bar_does_not_overflow_the_geometry() {
+    let theme = Theme {
+        shadow_extent: i32::MAX,
+        title_bar: crate::TitleBar {
+            height: i32::MAX,
+            font: String::new(),
+            font_size: 13,
+        },
+        ..Theme::default()
+    };
+    let geometry = decoration_geometry(&theme, 1000, 1000);
+    assert_eq!(geometry.panel_w, 0, "two extents leave no room for a panel");
+}
+
+/// A noise amplitude past one is full strength, as the reference clamps it.
+#[test]
+fn a_noise_amplitude_past_one_is_full_strength() {
+    let base = Color::new(128, 128, 128, 255);
+    for (x, y) in [(0, 0), (3, 7), (100, 41)] {
+        assert_eq!(
+            crate::renderer::dither(base, x, y, 4.0),
+            crate::renderer::dither(base, x, y, 1.0),
+            "({x}, {y})"
+        );
+    }
+}
+
+/// A shadow is composited over what is already there, as the reference
+/// composites it, not copied over it: where the shadow is faint, the
+/// destination shows through.
+#[test]
+fn a_shadow_is_composited_over_the_destination() {
+    let theme = glass_default();
+    let mut cache = ShadowCache::new(2);
+    let patch = key(64, 64, Elevation::Focused, &theme);
+
+    let (mut clear, stride) = dest(64, 64);
+    assert!(cache.blit_into(
+        patch,
+        &theme,
+        &mut ShadowDest {
+            pixels: &mut clear,
+            stride,
+            width: 64,
+            height: 64,
+        }
+    ));
+    let mut white = vec![0xFF_u8; clear.len()];
+    assert!(cache.blit_into(
+        patch,
+        &theme,
+        &mut ShadowDest {
+            pixels: &mut white,
+            stride,
+            width: 64,
+            height: 64,
+        }
+    ));
+
+    // The corner is as far from the panel as the patch goes: next to no
+    // shadow, so next to all of the white.
+    assert!(clear[3] < 0x80, "the corner is faint: {}", clear[3]);
+    assert!(
+        white[0] > 0x80,
+        "white shows through a faint shadow: {}",
+        white[0]
+    );
+}
+
+/// The two ends of a cross-fade must be the same size, as the reference
+/// requires; otherwise nothing is written.
+#[test]
+fn a_cross_fade_of_two_sizes_writes_nothing() {
+    let theme = glass_default();
+    let mut cache = ShadowCache::new(4);
+    let (mut pixels, stride) = dest(64, 64);
+    let written = cache.blit_cross_fade(
+        key(64, 64, Elevation::Blurred, &theme),
+        key(48, 48, Elevation::Focused, &theme),
+        &theme,
+        &mut ShadowDest {
+            pixels: &mut pixels,
+            stride,
+            width: 64,
+            height: 64,
+        },
+        0.5,
+    );
+    assert!(!written);
+    assert!(
+        pixels.iter().all(|byte| *byte == 0),
+        "the destination is untouched"
+    );
+}
+
+/// An exported surface is close-on-exec, as the reference exports it.
+#[test]
+#[ignore = "needs a DRM device; run under the vkms lane with --include-ignored"]
+fn an_exported_surface_is_close_on_exec_vkms() {
+    let _guard = card_guard();
+    let Some(device) = open_card() else { return };
+    let surface = Surface::create(
+        &device,
+        SurfaceConfig {
+            width: 64,
+            height: 32,
+        },
+    )
+    .expect("a 64x32 ARGB8888 surface");
+
+    let fd = surface.export(&device).expect("export");
+    let flags = rustix::io::fcntl_getfd(&fd).expect("fcntl");
+    assert!(flags.contains(rustix::io::FdFlags::CLOEXEC));
+}

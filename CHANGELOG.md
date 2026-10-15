@@ -95,6 +95,20 @@ minor version may break the API and a patch version does not.
   could be asked for a partial repaint of a freshly allocated, blank buffer,
   leaving the rest of it blank on screen; every slot now starts over with a
   full repaint (P-69).
+- `drmkit-csd`: seven small departures from the reference, each now as the
+  reference has it (P-70):
+  - `ShadowCache::blit_into` and `blit_cross_fade` composite source-over
+    onto the destination rather than overwriting it;
+  - `blit_cross_fade` refuses two keys of different sizes, and its endpoints
+    are exactly `blit_into`;
+  - `theme_id` hashes each 32-bit field most significant byte first, so it is
+    the reference's hash;
+  - `Color::from_hex` refuses a sign, so `#+1+2+3` is no longer a color;
+  - a noise amplitude past one is full strength;
+  - `Surface::export` is close-on-exec and reports a refusal as the new
+    `SurfaceError::Export`, with the kernel's errno, where it was `Empty`;
+  - `decoration_geometry` no longer overflows, and panics, on a shadow
+    extent or title bar past `i32::MAX / 2`.
 
 ## [0.1.1] - 2026-10-14
 

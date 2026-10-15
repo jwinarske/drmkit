@@ -5,8 +5,8 @@
 //!
 //! Three ways, in descending order of what the hardware will do for you:
 //!
-//! - **Plane** — each decoration on its own overlay. A hover costs a small
-//!   blit and one property write; nothing is recomposited.
+//! - **Plane** — each decoration on its own overlay. A hover repaints only
+//!   that decoration's small buffer; nothing is recomposited.
 //! - **Composite** — blend them onto one canvas plane. Costs a canvas-sized
 //!   blend per damaged region, and needs only one plane.
 //! - **Framebuffer** — no KMS plane at all. For an fbdev fallback, where the
@@ -52,7 +52,8 @@ pub const fn choose_presenter_tier(
     None
 }
 
-/// One property write an `apply` produces.
+/// One property write, as [`compute_writes`](crate::compute_writes) and
+/// [`compute_canvas_writes`](crate::compute_canvas_writes) produce them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(
     clippy::exhaustive_structs,

@@ -3,8 +3,7 @@
 
 //! The seam between a renderer and the scanout path.
 //!
-//! Port of `src/present/scanout_producer.hpp` and
-//! `src/present/gbm_producer.{hpp,cpp}`.
+//! Port of `src/present/scanout_producer.hpp`.
 
 use drmkit_scene::LayerBufferSource;
 

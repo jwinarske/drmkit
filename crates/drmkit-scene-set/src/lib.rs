@@ -5,11 +5,12 @@
 //!
 //! Port of `src/scene/scene_set.{hpp,cpp}`.
 //!
-//! A [`LayerScene`] drives one CRTC. A [`SceneSet`] drives several and decides
-//! how many atomic commits that costs — which is the whole question, because
-//! one commit across every output is *atomic* and several are not, while one
-//! commit means one output's refusal takes the rest down with it. See
-//! [`NarrowPolicy`].
+//! A [`LayerScene`] drives one CRTC. A [`SceneSet`] holds several, mirrors
+//! layers across them, and plans how many atomic commits a frame across them
+//! costs — which is the whole question, because one commit across every output
+//! is *atomic* and several are not, while one commit means one output's
+//! refusal takes the rest down with it. See [`NarrowPolicy`]. The set plans;
+//! making the commits is the caller's.
 //!
 //! # Mirrored layers
 //!
@@ -46,6 +47,10 @@ pub struct Target {
     /// mirroring at one geometry would letterbox or crop the other.
     pub display: DisplayParams,
     /// Force this copy through composition rather than onto a plane.
+    ///
+    /// A mirrored source cannot be mapped for composition, so a copy forced
+    /// here is dropped from each frame rather than blended. Set it only when
+    /// that is the intent.
     pub force_composited: bool,
 }
 
@@ -85,7 +90,7 @@ impl SetLayerHandle {
     /// Whether this handle ever named anything.
     ///
     /// A default handle does not. Checked rather than assumed because the
-    /// default is what a caller gets from an uninitialized field, and
+    /// default is what a caller gets from `SetLayerHandle::default()`, and
     /// removing with one must not remove whatever happens to be at index
     /// zero.
     #[must_use]
@@ -124,7 +129,8 @@ struct SetLayer {
     copies: Vec<(usize, LayerHandle)>,
 }
 
-/// Several scenes committed together.
+/// Several scenes, with mirrored layers and a plan for how a frame across
+/// them is committed.
 pub struct SceneSet {
     /// `None` is a hole: a removed scene, kept so indices stay stable.
     scenes: Vec<Option<LayerScene>>,

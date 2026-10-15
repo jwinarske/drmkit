@@ -42,8 +42,8 @@ pub enum ExternalError {
         /// What was wrong.
         reason: &'static str,
     },
-    /// An ioctl failed — importing a descriptor, or registering the
-    /// framebuffer.
+    /// An ioctl or syscall failed — duplicating or importing a descriptor, or
+    /// registering the framebuffer.
     #[error("external buffer operation failed: {0}")]
     Io(#[from] rustix::io::Errno),
     /// The key was [`retire`](crate::ExternalDmaBufPool::retire)d and its old
@@ -132,8 +132,8 @@ impl ImportedFramebuffer {
     ///
     /// # Errors
     ///
-    /// [`ExternalError`] if a descriptor cannot be imported or the kernel
-    /// refuses the framebuffer.
+    /// [`ExternalError`] if the format is not a recognized DRM format, a
+    /// descriptor cannot be imported, or the kernel refuses the framebuffer.
     pub(crate) fn reimport(
         &mut self,
         device: &Device,
@@ -323,8 +323,10 @@ impl ExternalDmaBufSource {
     ///
     /// # Errors
     ///
-    /// [`ExternalError::Invalid`] for a zero dimension, a zero format, or a
-    /// plane count outside 1..=4; [`ExternalError::Io`] if an ioctl fails.
+    /// [`ExternalError::Invalid`] for a zero dimension, a zero or unrecognized
+    /// format, a plane count outside 1..=4, or a zero pitch;
+    /// [`ExternalError::Io`] if a descriptor cannot be duplicated or an ioctl
+    /// fails.
     pub fn create(
         device: &Device,
         format: SourceFormat,
@@ -391,8 +393,10 @@ impl ExternalDmaBufSource {
     /// Set the producer's render-done fence for subsequent acquires.
     ///
     /// Replaces any previous one. The buffer's pixels are valid only once it
-    /// signals; see [`acquire`](LayerBufferSource::acquire) for why each
-    /// acquire hands back a duplicate rather than the fence itself.
+    /// signals. Each acquire hands back a duplicate rather than the fence
+    /// itself, because the scene acquires twice per frame -- a TEST commit,
+    /// then the real one -- and a fence moved out on the first would leave the
+    /// real commit unsynced.
     pub fn set_acquire_fence(&mut self, fence: SyncFence) {
         self.pending_fence = Some(fence);
     }

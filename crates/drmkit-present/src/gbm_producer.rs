@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 //! A [`ScanoutProducer`] backed by GBM.
+//!
+//! Port of `src/present/gbm_producer.{hpp,cpp}`.
 
 use drmkit_core::Device;
 use drmkit_scene::LayerBufferSource;

@@ -32,8 +32,9 @@ const LEVEL_DEBUG: c_int = 3;
 const BUFFER: usize = 1024;
 
 // The `va_list` argument is a pointer on every Linux ABI drmkit targets: on
-// x86-64 and aarch64 it is an array type and decays to one, on riscv64 it is
-// `void*` already, and on arm and i686 it is a single pointer-sized value.
+// x86-64 it is an array type and decays to one, on aarch64 it is a 32-byte
+// struct, which AAPCS64 passes by reference, on riscv64 it is `void*`
+// already, and on arm and i686 it is a single pointer-sized value.
 // libseat's level is an enum, passed as an `int`.
 unsafe extern "C" {
     fn libseat_set_log_handler(handler: Option<Handler>);

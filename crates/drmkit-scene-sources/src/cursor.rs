@@ -101,8 +101,9 @@ impl CursorSource {
     ///
     /// # Errors
     ///
-    /// [`SourceError::Failed`] with `EINVAL` if the pixel count does not match
-    /// the dimensions, or whatever the allocation failed with.
+    /// [`SourceError::Failed`] with `EINVAL` if a dimension is zero or oversize
+    /// or the pixel count does not match the dimensions, or whatever the
+    /// allocation failed with.
     pub fn from_argb(
         device: &Device,
         pixels: &[u32],

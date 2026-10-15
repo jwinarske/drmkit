@@ -25,7 +25,7 @@ pub enum ThemeError {
     /// A field held the wrong kind of value.
     ///
     /// Named, because a theme file is hand-written and "invalid argument" over
-    /// forty fields is not something a person can act on.
+    /// twenty-one fields is not something a person can act on.
     #[error("{field}: expected {expected}")]
     WrongType {
         /// Which field.
@@ -47,7 +47,7 @@ pub enum ThemeError {
 /// Load a theme from TOML text, filling anything absent from `base`.
 ///
 /// Inheritance is what makes a theme file worth hand-writing: a user who wants
-/// a different accent color writes three lines, not forty. `base` is
+/// a different accent color writes three lines, not twenty-one. `base` is
 /// typically [`glass_default`](crate::glass_default).
 ///
 /// # Errors
@@ -55,7 +55,12 @@ pub enum ThemeError {
 /// [`ThemeError::Syntax`] if the text is not TOML, [`ThemeError::WrongType`]
 /// if a field holds the wrong kind of value, and [`ThemeError::BadColor`] if a
 /// color is not `#RRGGBB` or `#RRGGBBAA` — each naming the field, since a
-/// theme file has forty of them and a caller cannot bisect a hand-written one.
+/// theme file has twenty-one of them and a caller cannot bisect a hand-written
+/// one.
+///
+/// A section — `title_bar`, `colors`, `buttons` or one button within it —
+/// that is not a table is ignored rather than refused, as upstream ignores
+/// it: its fields are simply absent and inherit from `base`.
 pub fn load_theme_str(text: &str, base: Theme) -> Result<Theme, ThemeError> {
     // `from_str`, not `str::parse`: the `FromStr` impl on `Value` parses a
     // single TOML *value*, so a whole document is rejected as trailing

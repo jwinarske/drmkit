@@ -59,8 +59,9 @@ impl LogPriority {
 //
 // `struct libinput*` is passed as an opaque pointer either way, and the
 // `va_list` argument is a pointer on every Linux ABI drmkit targets: on
-// x86-64 and aarch64 it is an array type and decays to one, on riscv64 it is
-// `void*` already, and on arm and i686 it is a single pointer-sized value.
+// x86-64 it is an array type and decays to one, on aarch64 it is a 32-byte
+// struct, which AAPCS64 passes by reference, on riscv64 it is `void*`
+// already, and on arm and i686 it is a single pointer-sized value.
 unsafe extern "C" {
     fn libinput_log_set_handler(libinput: *mut c_void, handler: Option<Handler>);
     fn libinput_log_set_priority(libinput: *mut c_void, priority: c_int);
@@ -144,8 +145,8 @@ fn forward(priority: c_int, message: &[u8]) {
 /// Which band a raw libinput priority falls in.
 ///
 /// Bands rather than exact values: libinput's are spaced ten apart precisely
-/// so more can be added between them, and an unknown one should land at the
-/// nearest level rather than be dropped.
+/// so more can be added between them, and an unknown one lands in the band at
+/// or above it rather than being dropped.
 fn classify(priority: c_int) -> LogPriority {
     if priority <= PRIORITY_DEBUG {
         LogPriority::Debug

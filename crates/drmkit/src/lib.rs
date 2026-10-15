@@ -46,7 +46,9 @@
 //! cross-output orchestration, GBM surface sources and client-side
 //! decorations.
 //!
-//! Not yet here: the GL compositor, EGL streams, V4L2 and `GStreamer` sources.
+//! Not yet here: the GL compositor, the GL and Vulkan scanout producers, EGL
+//! streams, the V4L2, `GStreamer` and nvbufsurface sources, and the Vulkan
+//! display surface.
 //! Of the 108 test files drm-cxx v5.0.0 has, 75 are ported, 14 partial and 3
 //! not applicable; the 16 still pending each wait on hardware or a library
 //! this tree does not have — a GPU render node, the `vgem`, `vivid` or
@@ -69,7 +71,7 @@
 //! | [`drmkit-scene`](https://docs.rs/drmkit-scene) | A layer stack, lowered to a frame and committed; composition for what will not fit. |
 //! | [`drmkit-scene-sources`](https://docs.rs/drmkit-scene-sources) | Where a layer's pixels come from: dumb buffers, imported DMA-BUFs. |
 //! | [`drmkit-scene-gbm`](https://docs.rs/drmkit-scene-gbm) | A layer fed by a GBM surface — the swap chain a GL or Vulkan producer renders into. |
-//! | [`drmkit-scene-set`](https://docs.rs/drmkit-scene-set) | Several scenes committed together, and how many ioctls that costs. |
+//! | [`drmkit-scene-set`](https://docs.rs/drmkit-scene-set) | Mirrored layers across several scenes, and how many commits a frame across them costs. |
 //! | [`drmkit-present`](https://docs.rs/drmkit-present) | The scanout spine: buffer rings, modifier negotiation, frame pacing, and a backend that drives them. |
 //! | [`drmkit-csd`](https://docs.rs/drmkit-csd) | Client-side decorations: title bars, shadows, and getting them onto a plane. |
 //! | [`drmkit-display`](https://docs.rs/drmkit-display) | EDID, driver capabilities, color pipelines and tone mapping. |

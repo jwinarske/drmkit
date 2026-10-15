@@ -20,10 +20,11 @@ use crate::{PlaneSlot, PropertyWrite};
 /// screen coordinates. There is no per-decoration geometry here, which is the
 /// difference from the plane tier: the positioning happened during the blend.
 ///
-/// `fb_id` is written verbatim, zero included. A zero framebuffer takes the
-/// canvas plane down, which is what a caller with nothing to show wants —
-/// leaving the previous canvas armed would keep the last frame's decorations
-/// on screen after every window has closed.
+/// `fb_id` is written verbatim, zero included, and `CRTC_ID` is always the
+/// slot's CRTC: this function never disarms the canvas plane. A zero `fb_id`
+/// with a CRTC set is a plane the kernel refuses, failing the whole commit,
+/// so a caller with nothing to show passes a cleared canvas, as upstream
+/// keeps its canvas plane always armed.
 #[must_use]
 pub fn compute_canvas_writes(
     slot: &PlaneSlot,

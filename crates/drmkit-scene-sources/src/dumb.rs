@@ -39,7 +39,8 @@ impl DumbBufferSource {
     /// Allocate a single buffer of the given size and format.
     ///
     /// The kernel zero-fills a dumb buffer at creation, so the first acquire
-    /// presents a fully transparent image rather than whatever was in memory.
+    /// presents a zero-filled image -- transparent for a format with alpha --
+    /// rather than whatever was in memory.
     ///
     /// The allocation follows the format: a packed format at its own depth --
     /// 16 bits for `RGB565`, 24 for `RGB888` -- and the semi-planar 4:2:0
@@ -72,7 +73,8 @@ impl DumbBufferSource {
         })
     }
 
-    /// Report the dirty region for the **next** acquire, then cleared.
+    /// Set the dirty region the **next** acquire reports; that acquire clears
+    /// it.
     ///
     /// Empty means full-frame. A software source that repaints only part of its
     /// buffer sets this so the scene can emit `FB_DAMAGE_CLIPS` and the driver

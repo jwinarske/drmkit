@@ -173,10 +173,15 @@ pub struct TouchEvent {
     /// libinput's timestamp, in milliseconds.
     pub time_ms: u32,
     /// The multi-touch slot, which identifies one finger across a sequence.
+    ///
+    /// `-1` on a [`TouchPhase::Frame`], which closes a batch rather than
+    /// naming a finger.
     pub slot: i32,
-    /// Position in device coordinates.
+    /// Position across the device's range, normalized to `[0, 1)`; zero for
+    /// up, frame and cancel.
     pub x: f64,
-    /// Position in device coordinates.
+    /// Position across the device's range, normalized to `[0, 1)`; zero for
+    /// up, frame and cancel.
     pub y: f64,
     /// What the point is doing.
     pub phase: TouchPhase,

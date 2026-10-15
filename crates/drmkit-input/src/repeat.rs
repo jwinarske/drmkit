@@ -29,7 +29,7 @@ pub struct RepeatConfig {
 }
 
 impl Default for RepeatConfig {
-    /// What X11 and every Wayland compositor settled on: 600 ms, then 25 Hz.
+    /// The reference's default (`key_repeater.hpp`): 600 ms, then 25 Hz.
     fn default() -> Self {
         Self {
             delay: Duration::from_millis(600),

@@ -30,10 +30,10 @@ pub type SlotKey = u64;
 
 /// How many damage rectangles a submit can carry.
 ///
-/// Fixed so `submit` allocates nothing on the producer's thread. An over-cap
-/// frame degrades to whole-frame rather than truncating — a short list would
-/// under-report the dirty area, and the parts left out would keep whatever the
-/// previous frame had.
+/// Bounds what one submit hands across, so a producer cannot grow the handoff
+/// without limit. An over-cap frame degrades to whole-frame rather than
+/// truncating — a short list would under-report the dirty area, and the parts
+/// left out would keep whatever the previous frame had.
 pub const MAX_DAMAGE: usize = 16;
 
 /// What the commit thread should do this vblank.
@@ -287,8 +287,9 @@ impl RingPresenter {
 
     /// Drop all pending, in-flight and scanning state.
     ///
-    /// For a session resume, which re-imports every buffer and restarts
-    /// presentation from scratch.
+    /// For a session pause: every framebuffer id is about to belong to a
+    /// revoked descriptor, so presentation restarts from scratch with the
+    /// producer's next submit.
     pub fn reset(&mut self) {
         let mut pending = self.lock();
         *pending = Pending::default();

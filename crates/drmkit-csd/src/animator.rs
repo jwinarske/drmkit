@@ -52,7 +52,7 @@ impl Track {
         self.running = true;
     }
 
-    /// Advance, and report whether the run is still going.
+    /// Advance; `running` says afterward whether the run is still going.
     fn advance(&mut self, dt: Duration, duration: Duration, target: f32) {
         if !self.running {
             return;
@@ -172,10 +172,13 @@ impl WindowAnim {
     /// Returns whether anything is still animating, which is what tells a
     /// caller to schedule another frame.
     ///
-    /// A zero or negative duration snaps. That is not an edge case to tolerate
-    /// but the documented way to turn animations off — `glass-minimal` sets
-    /// it — and dividing by it instead would produce an infinity that the
-    /// clamp turns into an instant jump anyway, less legibly.
+    /// A zero duration snaps. That is not an edge case to tolerate but the
+    /// documented way to turn animations off — `glass-minimal` sets it — and
+    /// dividing by it instead would produce an infinity that the clamp turns
+    /// into an instant jump anyway, less legibly. A `Duration` cannot be
+    /// negative, so a caller converting
+    /// [`Theme::animation_duration_ms`](crate::Theme::animation_duration_ms)
+    /// must map a negative value to zero itself to get the same snap.
     pub fn tick(&mut self, dt: Duration, duration: Duration) -> bool {
         if duration.is_zero() {
             self.snap();

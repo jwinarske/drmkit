@@ -66,8 +66,9 @@ impl ExternalDmaBufRing {
     /// Import every slot and register a framebuffer for each.
     ///
     /// Each slot's descriptors are duplicated here and held until the ring is
-    /// dropped, so the producer may close its own at any point and the
-    /// framebuffer ids stay valid across every frame.
+    /// dropped, so the producer may close its own at any point. The framebuffer
+    /// ids stay valid across every frame until a session pause, and a resume
+    /// registers new ones from the same descriptors.
     ///
     /// `fence_deadline` opts into the presenter's CPU pre-wait; see
     /// [`RingPresenter::acquire`] for why that excludes handing the fence to
@@ -93,7 +94,8 @@ impl ExternalDmaBufRing {
         let mut imported = Vec::with_capacity(slots.len());
         for planes in slots {
             // `?` drops what is already in `imported`, and each one's own drop
-            // destroys its framebuffer. A half-imported ring never escapes.
+            // destroys its framebuffer and closes its GEM handles. A
+            // half-imported ring never escapes.
             imported.push(ImportedFramebuffer::import(device, format, planes)?);
         }
 

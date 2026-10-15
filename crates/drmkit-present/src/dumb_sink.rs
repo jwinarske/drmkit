@@ -108,10 +108,12 @@ impl LayerBufferSource for SharedRing {
     reason = "built by callers with `..Default::default()`, which a new field does not break"
 )]
 pub struct Config {
-    /// The format to scan out, or `None` to negotiate one the plane takes.
+    /// The format to scan out, or `None` to negotiate one the plane takes,
+    /// falling back to `XRGB8888` when none of the defaults match or the planes
+    /// cannot be queried.
     pub format: Option<u32>,
     /// Ring depth. Three is what the buffer-age path wants: one scanning, one
-    /// in flight, one free to paint into.
+    /// in flight, one free to paint into. `0` means three.
     pub buffers: usize,
 }
 
@@ -148,11 +150,13 @@ impl Default for Config {
 /// # Teardown
 ///
 /// Dropping the sink while a flip it armed is still outstanding waits, up to
-/// 100 ms, for the CRTC's vblank sequence to move past that commit before the
-/// scene lets go of its buffers. It never reads the event queue, so the event
-/// stays queued for the caller. Dispatching it and calling
-/// [`flip_landed`](Self::flip_landed) first means there is nothing to wait for.
-/// The device must outlive the sink: the wait reads the sequence on it.
+/// 100 ms, for the CRTC's vblank sequence to move past that commit or for its
+/// flip event to be queued, before the scene lets go of its buffers. On a CRTC
+/// with no vblank counter the queued event is the only thing it waits on. It
+/// never reads the event queue, so the event stays queued for the caller.
+/// Dispatching it and calling [`flip_landed`](Self::flip_landed) first means
+/// there is nothing to wait for. The device must outlive the sink: the wait
+/// polls it.
 pub struct DumbScanoutSink {
     scene: LayerScene,
     ring: Rc<RefCell<DumbRingSource>>,
@@ -203,7 +207,7 @@ impl DumbScanoutSink {
     ///
     /// [`PresentError::Bind`] if the planes cannot be probed or the layer
     /// cannot be added; [`PresentError::Paint`] if the format has no known
-    /// bits-per-pixel.
+    /// bits-per-pixel or the mode has a zero width or height.
     pub fn create(
         device: &Device,
         crtc_id: u32,
@@ -286,8 +290,9 @@ impl DumbScanoutSink {
     ///
     /// The frame is always copied in full regardless of `damage`, because a
     /// reused ring slot holds an older frame and copying only the damage would
-    /// leave the rest of it stale. `damage` is what gets *reported*, which the
-    /// ring unions across buffer age into `FB_DAMAGE_CLIPS`.
+    /// leave the rest of it stale. `damage` is what gets *reported*: it becomes
+    /// this commit's `FB_DAMAGE_CLIPS` as given, as [`DumbRingSource`] reports
+    /// whatever its paint callback touched.
     ///
     /// Under-reporting damage leaves stale pixels on screen. It is a hint to
     /// the driver, not a description of the copy.

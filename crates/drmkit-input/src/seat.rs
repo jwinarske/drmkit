@@ -90,8 +90,8 @@ impl Seat {
     ///
     /// # Errors
     ///
-    /// [`InputError::Seat`] if udev has no such seat, or if there is no
-    /// permission to enumerate it.
+    /// [`InputError::Seat`] if libinput cannot enumerate the seat through
+    /// udev. An unknown seat name is not an error; see [`SeatOptions::seat`].
     pub fn open(options: &SeatOptions) -> Result<Self, InputError> {
         Self::open_with(options, Direct)
     }
@@ -374,8 +374,7 @@ fn convert_touch(event: &LibinputTouch) -> Option<TouchEvent> {
     };
 
     // And a frame is the end of a batch rather than one point, so it has no
-    // slot. The reference reports frame and cancel with a zero timestamp as
-    // well, which loses the one thing a frame does carry.
+    // slot, as the reference reports it.
     let slot = match event {
         LibinputTouch::Down(touch) => touch.slot(),
         LibinputTouch::Up(touch) => touch.slot(),

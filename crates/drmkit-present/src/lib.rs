@@ -3,7 +3,8 @@
 
 //! The present spine: getting rendered frames onto a display, repeatedly.
 //!
-//! Port of `src/present/` from drm-cxx @ `4a0b64a`, less the GPU producers.
+//! Port of `src/present/` from drm-cxx @ `4a0b64a`, less the GL and Vulkan
+//! producers.
 //!
 //! Where [`drmkit_scene`](https://docs.rs/drmkit-scene) answers "what goes on
 //! which plane this frame", this crate answers the questions around it: which
@@ -15,14 +16,14 @@
 //! A producer that renders on the GPU needs EGL or Vulkan; one that writes
 //! pixels with the CPU needs neither. Keeping the spine core-only means a
 //! GPU-less build — a kiosk, a test rig, an instrument panel — links no
-//! graphics stack at all. The producers that do live in their own crates and
-//! load their libraries at runtime.
+//! graphics stack at all. The device-facing half sits behind the `device`
+//! feature, and the GBM producer behind `gbm`, which opens libgbm.
 //!
 //! # Not here yet
 //!
-//! Being built up. [`BufferRing`], [`negotiate`] and [`FrameEconomy`] are in;
-//! `ScanoutBackend`, `DumbScanoutSink` and `DumbRingSource` follow, and the
-//! GBM, GL and Vulkan producers are separate crates after that.
+//! The GL and Vulkan producers. They will live in their own crates and load
+//! their libraries at runtime, plugging into `ScanoutBackend` through the
+//! `ScanoutProducer` trait the way the GBM producer does.
 
 #[cfg(feature = "device")]
 mod armed_flip;

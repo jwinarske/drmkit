@@ -72,6 +72,12 @@ minor version may break the API and a patch version does not.
 - `drmkit-cursor`: a hotspot on the frame's far edge is placed as the
   reference places it when the cursor is rotated in software. It was clamped
   to the sprite before the centering offset was added, one pixel off (P-93).
+- `drmkit-cursor`: a cursor file is read as the reference's libxcursor reads
+  it. A chunk's length and version fields are no longer checked, a chunk
+  must match its table-of-contents entry, more than 65,536 entries or a file
+  header under 16 bytes is refused, a requested size past `i32::MAX` is
+  refused, a tie between two sizes goes to the one listed first rather than
+  the smaller, and a nominal size of zero is never chosen (P-94).
 
 ## [0.1.2] - 2026-10-15
 

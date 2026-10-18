@@ -1259,6 +1259,24 @@ fn the_hotspot_turns_with_the_pixels() {
     assert_eq!((three.hotspot_x, three.hotspot_y), (0, 0));
 }
 
+/// A hotspot on the frame's far edge turns to one pixel before the sprite,
+/// as the reference computes it, and the centering offset carries it there.
+///
+/// Xcursor allows `xhot == width`, and both loaders accept it. The reference
+/// works in signed arithmetic, so `width - 1 - xhot` is -1; clamping that to
+/// zero before the offset is added puts the hotspot a pixel off from where
+/// the reference sends the pointer.
+#[test]
+fn a_hotspot_on_the_far_edge_turns_like_the_reference() {
+    let frame = coded_frame(16, 16, 16, 16);
+    let (_, quarter) = composed(&frame, Rotation::Quarter, 64, 64);
+    assert_eq!((quarter.hotspot_x, quarter.hotspot_y), (23, 40));
+    let (_, half) = composed(&frame, Rotation::Half, 64, 64);
+    assert_eq!((half.hotspot_x, half.hotspot_y), (23, 23));
+    let (_, three) = composed(&frame, Rotation::ThreeQuarter, 64, 64);
+    assert_eq!((three.hotspot_x, three.hotspot_y), (40, 23));
+}
+
 #[test]
 fn the_hotspot_is_offset_by_the_centring() {
     let frame = coded_frame(2, 2, 1, 1);

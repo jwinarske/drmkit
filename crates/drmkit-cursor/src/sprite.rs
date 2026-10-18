@@ -291,12 +291,19 @@ pub fn compose(
     }
 }
 
-/// Where the hotspot ends up after the same rotation, shrink and centring the
+/// Where the hotspot ends up after the same rotation, shrink and centering the
 /// pixels got.
 ///
 /// Scaling truncates here where the pixels round. That is the reference's
 /// behavior and it is the conservative direction: the hotspot stays inside
 /// the sprite rather than stepping one pixel past its edge.
+///
+/// Signed arithmetic until the offset is added, as the reference computes
+/// it. A hotspot on the far edge of the frame -- `xhot == width`, which the
+/// Xcursor format allows -- rotates to one pixel *before* the sprite, and the
+/// centering offset carries that into the buffer. Only a sprite filling its
+/// buffer has no offset to carry it, and there the reference's -1 is clamped
+/// to the buffer's edge.
 fn hotspot_in_buffer(
     frame: &Frame,
     rotation: Rotation,
@@ -305,23 +312,26 @@ fn hotspot_in_buffer(
     x_off: u32,
     y_off: u32,
 ) -> (u32, u32) {
+    let (w, h) = (i64::from(frame.width), i64::from(frame.height));
+    let (xhot, yhot) = (i64::from(frame.xhot), i64::from(frame.yhot));
     let (mut hx, mut hy) = match rotation {
-        Rotation::None => (frame.xhot, frame.yhot),
-        Rotation::Quarter => (frame.height.saturating_sub(1 + frame.yhot), frame.xhot),
-        Rotation::Half => (
-            frame.width.saturating_sub(1 + frame.xhot),
-            frame.height.saturating_sub(1 + frame.yhot),
-        ),
-        Rotation::ThreeQuarter => (frame.yhot, frame.width.saturating_sub(1 + frame.xhot)),
+        Rotation::None => (xhot, yhot),
+        Rotation::Quarter => (h - 1 - yhot, xhot),
+        Rotation::Half => (w - 1 - xhot, h - 1 - yhot),
+        Rotation::ThreeQuarter => (yhot, w - 1 - xhot),
     };
     let (rotated_w, rotated_h) = rotation.rotated_size(frame.width, frame.height);
 
+    // Truncating toward zero, as C++ integer division does.
     if blit_w != 0 && blit_w != rotated_w && rotated_w != 0 {
-        hx = u32::try_from(u64::from(hx) * u64::from(blit_w) / u64::from(rotated_w)).unwrap_or(0);
+        hx = hx * i64::from(blit_w) / i64::from(rotated_w);
     }
     if blit_h != 0 && blit_h != rotated_h && rotated_h != 0 {
-        hy = u32::try_from(u64::from(hy) * u64::from(blit_h) / u64::from(rotated_h)).unwrap_or(0);
+        hy = hy * i64::from(blit_h) / i64::from(rotated_h);
     }
 
-    (hx + x_off, hy + y_off)
+    let place = |hotspot: i64, offset: u32| {
+        u32::try_from((hotspot + i64::from(offset)).max(0)).unwrap_or(u32::MAX)
+    };
+    (place(hx, x_off), place(hy, y_off))
 }

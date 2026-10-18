@@ -32,6 +32,12 @@ minor version may break the API and a patch version does not.
   queries open. Each capture left one open per plane, pinning every buffer
   it had read until the descriptor closed. The reference has the same bug,
   filed as drm-cxx#373 (P-83).
+- `drmkit-cursor`: a cursor near the top or left edge commits. A negative
+  plane origin was written as a 32-bit two's complement, which the kernel
+  range-checks as a 64-bit signed value and refuses, so with a buffer of the
+  driver's size every commit within about half a buffer of either edge
+  failed with `EINVAL`. It is now sign-extended, as the reference does
+  (P-84).
 
 ## [0.1.2] - 2026-10-15
 

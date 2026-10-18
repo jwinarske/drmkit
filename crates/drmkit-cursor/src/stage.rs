@@ -131,10 +131,11 @@ pub fn stage(
 
     put("FB_ID", u64::from(placement.fb_id))?;
     put("CRTC_ID", u64::from(placement.crtc_id))?;
-    // Signed, carried in an unsigned slot as two's complement -- which is what
-    // the kernel reads back out of it.
-    put("CRTC_X", u64::from(x.cast_unsigned()))?;
-    put("CRTC_Y", u64::from(y.cast_unsigned()))?;
+    // Signed, carried in the unsigned slot as a 64-bit two's complement: the
+    // kernel range-checks the value as an `i64`, so a 32-bit one reads as a
+    // large positive number and the commit is refused.
+    put("CRTC_X", i64::from(x).cast_unsigned())?;
+    put("CRTC_Y", i64::from(y).cast_unsigned())?;
     put("CRTC_W", u64::from(placement.width))?;
     put("CRTC_H", u64::from(placement.height))?;
     put("SRC_X", 0)?;

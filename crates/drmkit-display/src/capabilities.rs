@@ -341,11 +341,9 @@ impl CrtcCapabilities {
     /// in.
     #[must_use]
     pub fn from_properties(properties: &PropertyStore, crtc_id: u32) -> Self {
-        // The size properties are what say how long a blob the driver wants.
-        // Their presence is what says the stage exists at all: a driver that
-        // exposes DEGAMMA_LUT without DEGAMMA_LUT_SIZE has told the caller
-        // nothing it can act on, since a LUT of unknown length cannot be
-        // built.
+        // A stage exists when its blob property does, as the reference
+        // decides it. The size properties only say how long a blob the driver
+        // wants, and read as zero where a driver leaves one out.
         let size = |name: &str| {
             properties
                 .property_value(crtc_id, name)

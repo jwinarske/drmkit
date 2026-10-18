@@ -58,6 +58,14 @@ const CASES: &[(&str, &str, u64, u64)] = &[
         px(0x4000, 0x4000, 0x4000, 0x1234),
         0x1234_27B9_27B9_27B9,
     ),
+    // One step off before P-77: the reference takes the difference of two
+    // table entries in `f32`, and widening them first rounds differently.
+    (
+        "up_f32_step",
+        "up",
+        px(0x4D75, 0x4D75, 0x4D75, 0xABCD),
+        0xABCD_3A2D_3A2D_3A2D,
+    ),
     (
         "up203_mid_gray",
         "up203",
@@ -120,7 +128,7 @@ const CASES: &[(&str, &str, u64, u64)] = &[
     ),
 ];
 
-/// Fifteen pixels, bit for bit against the reference.
+/// Sixteen pixels, bit for bit against the reference.
 #[test]
 fn the_tone_mapper_matches_drm_cxx() {
     let mut wrong = Vec::new();

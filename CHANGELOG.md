@@ -8,6 +8,14 @@ minor version may break the API and a patch version does not.
 
 ## [Unreleased]
 
+### Fixed
+
+- `drmkit-display`: `DriverProfile::vrr_capable` is true only when a
+  connected sink reports `vrr_capable`. It was true whenever a CRTC had
+  `VRR_ENABLED`, which the DRM core gives every CRTC of an atomic driver, so
+  `VrrPolicy::Auto` armed variable refresh on sinks that cannot do it. The
+  reference has the same bug, filed as drm-cxx#371 (P-76).
+
 ## [0.1.2] - 2026-10-15
 
 ### Added

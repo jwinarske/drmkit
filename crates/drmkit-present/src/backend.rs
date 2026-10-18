@@ -30,7 +30,8 @@ pub enum VrrPolicy {
     /// Never arm `VRR_ENABLED`.
     #[default]
     Off,
-    /// Arm it when the driver profile reports the CRTC capable.
+    /// Arm it when the driver profile reports a connected sink that can vary
+    /// its refresh.
     Auto,
     /// Arm it regardless -- a no-op on a CRTC that does not expose it.
     On,

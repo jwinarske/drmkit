@@ -107,7 +107,12 @@ pub struct DriverProfile {
     pub cursor_height: u64,
     /// At least one plane advertises `FB_DAMAGE_CLIPS`.
     pub fb_damage_clips: bool,
-    /// At least one CRTC exposes `VRR_ENABLED`.
+    /// A connected sink reports `vrr_capable`, and a CRTC exposes the
+    /// `VRR_ENABLED` that arms it.
+    ///
+    /// `VRR_ENABLED` alone says nothing: the DRM core attaches it to every
+    /// CRTC of an atomic driver, whether or not anything behind it can vary
+    /// its refresh. The sink's own property is what does.
     pub vrr_capable: bool,
     /// Whether a connected panel might self-refresh. Telemetry only.
     pub psr: PanelSelfRefresh,
@@ -164,13 +169,10 @@ impl DriverProfile {
         let crtcs = resources.as_ref().map_or(&[][..], |r| r.crtcs());
         let connectors = resources.as_ref().map_or(&[][..], |r| r.connectors());
 
-        let mut vrr_capable = false;
-        for crtc in crtcs {
-            if object_has_property(device, (*crtc).into(), ObjectType::Crtc, "VRR_ENABLED") {
-                vrr_capable = true;
-                break;
-            }
-        }
+        let vrr_armable = crtcs.iter().any(|crtc| {
+            object_has_property(device, (*crtc).into(), ObjectType::Crtc, "VRR_ENABLED")
+        });
+        let mut vrr_sink = false;
 
         // Unknown unless a connector is actually connected: an unplugged eDP
         // says nothing about what is on screen, because nothing is.
@@ -182,6 +184,7 @@ impl DriverProfile {
             if info.state() != drm::control::connector::State::Connected {
                 continue;
             }
+            vrr_sink = vrr_sink || connector_reports_vrr(device, (*handle).into());
             let internal = connector_type_self_refreshes(connector_type_code(info.interface()));
             psr = if internal {
                 PanelSelfRefresh::Possible
@@ -190,10 +193,8 @@ impl DriverProfile {
             } else {
                 psr
             };
-            if internal {
-                break;
-            }
         }
+        let vrr_capable = vrr_armable && vrr_sink;
 
         Ok(Self {
             name: driver.name().to_string_lossy().into_owned(),
@@ -237,6 +238,20 @@ pub(crate) const fn nonzero_or(reported: Option<u64>, fallback: u64) -> u64 {
 fn object_has_property(device: &Device, id: u32, kind: ObjectType, name: &str) -> bool {
     let mut store = PropertyStore::new();
     store.cache_properties(device, id, kind).is_ok() && store.property_id(id, name).is_ok()
+}
+
+/// Whether a connector's sink says it can vary its refresh.
+///
+/// `vrr_capable` is the driver's reading of the sink, and absent on a driver
+/// with no variable refresh at all; either absence or zero is a no.
+fn connector_reports_vrr(device: &Device, id: u32) -> bool {
+    let mut store = PropertyStore::new();
+    store
+        .cache_properties(device, id, ObjectType::Connector)
+        .is_ok()
+        && store
+            .property_value(id, "vrr_capable")
+            .is_ok_and(|value| value != 0)
 }
 
 /// The numeric connector type behind the `drm` crate's enum.

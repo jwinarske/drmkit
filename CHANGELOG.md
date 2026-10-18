@@ -82,6 +82,11 @@ minor version may break the API and a patch version does not.
   reference reads it. One that is not UTF-8, such as an older theme with a
   Latin-1 `Comment=`, lost its `Inherits=` line and resolved through the
   wrong theme (P-95).
+- `drmkit-capture`: a scaled plane is resampled as the reference's Blend2D
+  resamples it, bilinearly and to the bit, rather than nearest-neighbor.
+  One deliberate exception: a scaled `XRGB8888` plane stays opaque, where the
+  reference's alpha comes from the undefined top byte, filed as drm-cxx#376
+  (P-98).
 
 ## [0.1.2] - 2026-10-15
 

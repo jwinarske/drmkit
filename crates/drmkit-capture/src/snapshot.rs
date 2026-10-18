@@ -146,8 +146,10 @@ impl Drop for Mapping {
 ///
 /// Planes are composited bottom-up by `zpos`, `SRC_OVER`, as the display
 /// controller would for planes that are neither cropped nor scaled: the whole
-/// framebuffer is sampled, ignoring `SRC_*`, and scaling is nearest-neighbor,
-/// as in the reference.
+/// framebuffer is sampled, ignoring `SRC_*`, and a plane whose `CRTC_W`/`CRTC_H`
+/// differ from its framebuffer is scaled bilinearly, bit for bit as the
+/// reference's `Blend2D` does it -- which need not be what the display
+/// controller's own scaler does.
 ///
 /// **The atomic client cap must be enabled on `device` first.** Plane
 /// placement is read from `CRTC_X`/`CRTC_Y`/`CRTC_W`/`CRTC_H`, which the
@@ -466,11 +468,17 @@ fn compose(image: &mut Image, frame: &PlaneFrame) {
 
 /// Blend one plane's pixels into the output.
 ///
-/// Scaling is nearest-neighbor. The C++ reference resamples through `Blend2D`,
-/// so a *scaled* plane will not match it pixel for pixel; an unscaled one --
-/// which is what a screenshot of an ordinary desktop is made of -- matches
-/// exactly. Pinning a readback path to one particular resampler is not worth
-/// the coupling, and upstream is not expected to keep that resampler.
+/// An unscaled plane -- which is what a screenshot of an ordinary desktop is
+/// made of -- is copied pixel for pixel. A scaled one is resampled the way the
+/// C++ reference's `Blend2D` `blit_image` does it, bilinear filtering included,
+/// so that the two agree to the bit; see [`Axis`] for what that takes.
+///
+/// With one deliberate exception: a scaled `XRGB8888` plane is opaque here,
+/// as an unscaled one is in both. `Blend2D`'s JIT bilinear fetch skips the
+/// alpha fill its other `XRGB32` fetches do, so the reference interpolates the
+/// undefined top byte into its output alpha (drm-cxx#376); its own portable
+/// pipeline does not. Only the output's alpha differs, planes stacked above included: no
+/// color channel of `SRC_OVER` reads the destination's alpha.
 ///
 /// Anything landing outside the output is dropped rather than wrapped, which
 /// matters because a plane may legitimately start at a negative coordinate.
@@ -491,34 +499,33 @@ pub(crate) fn blit(image: &mut Image, src: &Blit<'_>) {
         return;
     }
 
+    if dst_w == src.width && dst_h == src.height {
+        blit_unscaled(image, src);
+    } else {
+        blit_scaled(image, src, dst_w, dst_h);
+    }
+}
+
+/// The destination coordinates `start..start + len` that land on an output
+/// `size` across, each paired with its offset from `start`.
+///
+/// `start` is signed, because a plane may begin above or left of the output.
+fn visible(start: i32, len: u32, size: u32) -> impl Iterator<Item = (u32, u32)> {
+    (0..len).filter_map(move |offset| {
+        let at = u32::try_from(start.checked_add_unsigned(offset)?).ok()?;
+        (at < size).then_some((offset, at))
+    })
+}
+
+/// A 1:1 plane: every framebuffer pixel lands on exactly one output pixel.
+fn blit_unscaled(image: &mut Image, src: &Blit<'_>) {
     let out_w = image.width();
     let out_h = image.height();
+    let bpp = src.format.bytes();
 
-    for dy in 0..dst_h {
-        // Signed, because a plane may start above the top edge.
-        let Some(y) = src.crtc_y.checked_add_unsigned(dy) else {
-            continue;
-        };
-        if y < 0 || y.cast_unsigned() >= out_h {
-            continue;
-        }
-        // `dy < dst_h`, so the quotient is strictly below `height` and fits;
-        // the fallback clamps to the last row rather than wrapping to the
-        // first, which would be a visible tear rather than a missing one.
-        let src_y = u32::try_from(u64::from(dy) * u64::from(src.height) / u64::from(dst_h))
-            .unwrap_or(src.height.saturating_sub(1));
+    for (src_y, y) in visible(src.crtc_y, src.height, out_h) {
         let row = src_y as usize * src.pitch as usize;
-
-        for dx in 0..dst_w {
-            let Some(x) = src.crtc_x.checked_add_unsigned(dx) else {
-                continue;
-            };
-            if x < 0 || x.cast_unsigned() >= out_w {
-                continue;
-            }
-            let src_x = u32::try_from(u64::from(dx) * u64::from(src.width) / u64::from(dst_w))
-                .unwrap_or(src.width.saturating_sub(1));
-            let bpp = src.format.bytes();
+        for (src_x, x) in visible(src.crtc_x, src.width, out_w) {
             let at = row + src_x as usize * bpp;
             let Some(chunk) = src.bytes.get(at..at + bpp) else {
                 // A framebuffer whose stride and height disagree with its
@@ -526,7 +533,147 @@ pub(crate) fn blit(image: &mut Image, src: &Blit<'_>) {
                 continue;
             };
             let pixel = src.format.read(chunk);
-            let index = y.cast_unsigned() as usize * out_w as usize + x.cast_unsigned() as usize;
+            let index = y as usize * out_w as usize + x as usize;
+            let pixels = image.pixels_mut();
+            pixels[index] = src_over(pixels[index], pixel);
+        }
+    }
+}
+
+/// One axis of `Blend2D`'s bilinear affine pattern fetch, which is what its
+/// `blit_image` into a rectangle of a different size runs.
+///
+/// Matching it to the bit means matching its arithmetic rather than bilinear
+/// filtering in general:
+///
+/// - The inverse transform is computed in `f64` the way `Blend2D` inverts the
+///   scale matrix -- through the determinant, so the reciprocal scale is
+///   `sy / (sx * sy)` and not `1 / sx` -- then floored into 32.32 fixed point.
+/// - Pixel centers sit at `.5` on both sides: the start is
+///   `-origin / scale + 0.5 / scale - 0.5`, and each output pixel steps
+///   `1 / scale` from there, in fixed point, from output coordinate zero.
+/// - The weight is the top eight bits of the fraction: the far tap gets `w`
+///   of 256 and the near one `256 - w`.
+/// - Past the source edge, `blit_image` reflects rather than pads. Bilinear
+///   only ever overreaches by one tap, where the two agree, but the index
+///   arithmetic is kept as `Blend2D` has it so that they agree everywhere.
+struct Axis {
+    /// The source position of output coordinate zero, 32.32.
+    start: i64,
+    /// The source distance between adjacent output pixels, 32.32.
+    step: i64,
+    /// The source length, in pixels.
+    len: u32,
+}
+
+/// One output coordinate's two source taps and the far tap's weight.
+#[derive(Clone, Copy)]
+struct Taps {
+    near: usize,
+    far: usize,
+    weight: u32,
+}
+
+impl Axis {
+    /// `inverse` is the reciprocal scale as `Blend2D` computes it.
+    fn new(len: u32, inverse: f64, origin: i32) -> Self {
+        const ONE: f64 = 4_294_967_296.0;
+        // The reflect period is twice the length, and `%` is C's `fmod`.
+        let period = f64::from(len) * 2.0;
+        let translate = -(f64::from(origin) * inverse);
+        let start = ((translate + 0.5 * inverse) - 0.5) % period;
+        // Saturating, where `Blend2D` would zero the transform instead; both
+        // take a plane millions of pixels across to reach.
+        #[allow(clippy::cast_possible_truncation)]
+        Self {
+            start: (start * ONE).floor() as i64,
+            step: (inverse * ONE).floor() as i64,
+            len,
+        }
+    }
+
+    /// The taps for output coordinate `at`.
+    fn taps(&self, at: u32) -> Taps {
+        let position = i128::from(self.start) + i128::from(at) * i128::from(self.step);
+        let len = i128::from(self.len);
+        // Into [-len, len), where a negative index reflects to `-index - 1`.
+        let mut whole = (position >> 32).rem_euclid(len * 2);
+        if whole >= len {
+            whole -= len * 2;
+        }
+        // In [0, len) either way, and `len` came from a `u32`.
+        let reflect = |index: i128| usize::try_from(if index < 0 { -index - 1 } else { index });
+        Taps {
+            near: reflect(whole).unwrap_or(0),
+            far: reflect((whole + 1).min(len - 1)).unwrap_or(0),
+            // Masked to eight bits, so neither truncates nor loses a sign.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            weight: ((position >> 24) & 0xff) as u32,
+        }
+    }
+}
+
+/// Mix two premultiplied pixels channel by channel, `far` weighted `weight`
+/// of 256, truncating: `Blend2D`'s `(a * (256 - w) + b * w) >> 8`.
+const fn lerp(near: u32, far: u32, weight: u32) -> u32 {
+    let mut out = 0;
+    let mut shift = 0;
+    while shift < 32 {
+        let a = (near >> shift) & 0xff;
+        let b = (far >> shift) & 0xff;
+        out |= ((a * (256 - weight) + b * weight) >> 8) << shift;
+        shift += 8;
+    }
+    out
+}
+
+/// A plane whose destination size differs from its framebuffer's.
+fn blit_scaled(image: &mut Image, src: &Blit<'_>, dst_w: u32, dst_h: u32) {
+    let out_w = image.width();
+    let out_h = image.height();
+    let bpp = src.format.bytes();
+
+    let scale_x = f64::from(dst_w) / f64::from(src.width);
+    let scale_y = f64::from(dst_h) / f64::from(src.height);
+    let det = scale_x * scale_y;
+    let x_axis = Axis::new(src.width, scale_y / det, src.crtc_x);
+    let y_axis = Axis::new(src.height, scale_x / det, src.crtc_y);
+
+    // The taps depend only on the output column, so work them out once rather
+    // than once per row.
+    let columns: Vec<(u32, Taps)> = visible(src.crtc_x, dst_w, out_w)
+        .map(|(_, x)| (x, x_axis.taps(x)))
+        .collect();
+
+    // A framebuffer whose stride and height disagree with its mapping is a
+    // driver bug, not a reason to abandon the frame: a pixel with a tap past
+    // the end is skipped.
+    let read = |row: usize, column: usize| {
+        let at = row * src.pitch as usize + column * bpp;
+        src.bytes
+            .get(at..at + bpp)
+            .map(|chunk| src.format.read(chunk))
+    };
+
+    for (_, y) in visible(src.crtc_y, dst_h, out_h) {
+        let rows = y_axis.taps(y);
+        for &(x, cols) in &columns {
+            let (Some(top_near), Some(top_far), Some(bottom_near), Some(bottom_far)) = (
+                read(rows.near, cols.near),
+                read(rows.near, cols.far),
+                read(rows.far, cols.near),
+                read(rows.far, cols.far),
+            ) else {
+                continue;
+            };
+            // Down each column first, then across: the order `Blend2D`
+            // truncates in.
+            let pixel = lerp(
+                lerp(top_near, bottom_near, rows.weight),
+                lerp(top_far, bottom_far, rows.weight),
+                cols.weight,
+            );
+            let index = y as usize * out_w as usize + x as usize;
             let pixels = image.pixels_mut();
             pixels[index] = src_over(pixels[index], pixel);
         }

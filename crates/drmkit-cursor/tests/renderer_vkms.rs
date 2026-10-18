@@ -228,14 +228,14 @@ fn a_cursor_is_drawn_and_staged_vkms() {
     let centring = i64::from(buffer_w - 16) / 2;
     let expected_x = 100 - (8 + centring);
     let expected_y = 200 - (8 + centring);
-    // CRTC_X/Y are signed *32-bit* properties, so a negative coordinate is a
-    // 32-bit two's complement widened to the property's u64 slot -- not a
-    // 64-bit one. The distinction was invisible while the cursor was 64px:
-    // centring kept the coordinate positive and both encodings agreed. At the
-    // driver's real cursor size it goes negative and they do not.
+    // CRTC_X/Y are signed-range properties, which the kernel checks as an
+    // `i64`, so a negative coordinate is a 64-bit two's complement in the
+    // property's u64 slot. The encoding was invisible while the cursor was
+    // 64px: centering kept the coordinate positive. At the driver's real cursor
+    // size it goes negative, and a 32-bit encoding is refused (P-84).
     // `a_negative_position_is_written_as_twos_complement_vkms` pins the
     // encoding itself.
-    let as_property = |v: i64| Some(u64::from(i32::try_from(v).expect("fits").cast_unsigned()));
+    let as_property = |v: i64| Some(v.cast_unsigned());
     assert_eq!(value("CRTC_X"), as_property(expected_x));
     assert_eq!(value("CRTC_Y"), as_property(expected_y));
     assert_ne!(value("FB_ID"), Some(0), "a visible cursor names a buffer");
@@ -709,4 +709,72 @@ fn a_preferred_legacy_cursor_reserves_the_cursor_plane_vkms() {
     renderer.set_visible(false);
     renderer.commit().expect("hide");
     assert!(lit, "the legacy cursor did not land on the cursor plane");
+}
+
+/// A cursor whose buffer hangs off the top-left corner still commits.
+///
+/// `CRTC_X` and `CRTC_Y` are signed-range properties, and the kernel range
+/// checks the value as a 64-bit signed integer. A negative origin therefore
+/// has to be sign-extended into the property's slot: written as a 32-bit
+/// two's complement it reads as about four billion, past `INT_MAX`, and the
+/// whole commit is refused with `EINVAL`. With a buffer the driver's size, the
+/// origin is negative anywhere within half a buffer of the edge, so staging
+/// alone cannot show it -- the kernel has to see it.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn a_cursor_off_the_top_left_corner_commits_vkms() {
+    use drm::control::Device as _;
+
+    let _guard = card_guard();
+    let Some((device, registry, crtc_id, crtc_index)) = fixture() else {
+        return;
+    };
+
+    // Light the CRTC first, so the cursor has an output to sit on.
+    let resources = device.resource_handles().expect("resources");
+    let crtc = resources.crtcs()[crtc_index as usize];
+    let Some((connector, mode)) = resources.connectors().iter().find_map(|handle| {
+        let info = device.get_connector(*handle, false).ok()?;
+        if info.state() != drm::control::connector::State::Connected {
+            return None;
+        }
+        Some((*handle, *info.modes().first()?))
+    }) else {
+        drmkit_testkit::skipped("no connected connector");
+        return;
+    };
+    let (width, height) = (u32::from(mode.size().0), u32::from(mode.size().1));
+    let primary = drmkit_dumb::Buffer::create(
+        &device,
+        &drmkit_dumb::Config {
+            width,
+            height,
+            fourcc: drmkit_fmt::fourcc::XRGB8888,
+            bpp: 32,
+            add_fb: true,
+        },
+    )
+    .expect("primary buffer");
+    let fb = drm::control::framebuffer::Handle::from(
+        core::num::NonZeroU32::new(primary.fb_id().expect("framebuffer")).expect("non-zero"),
+    );
+    device
+        .set_crtc(crtc, Some(fb), (0, 0), &[connector], Some(mode))
+        .expect("light the output");
+
+    let result = (|| {
+        let mut renderer =
+            Renderer::create(&device, &registry, &config(crtc_id, crtc_index)).ok()?;
+        renderer.set_cursor(square()).expect("set cursor");
+        renderer.move_to(1, 1);
+        Some(renderer.commit())
+    })();
+
+    let _ = device.set_crtc(crtc, None, (0, 0), &[], None);
+    drop(primary);
+
+    match result {
+        None => drmkit_testkit::skipped("no usable cursor path here"),
+        Some(result) => result.expect("a cursor hanging off the corner commits"),
+    }
 }

@@ -138,9 +138,11 @@ fn the_position_is_offset_by_the_hotspot_vkms() {
 #[test]
 #[ignore = "needs a DRM device"]
 fn a_negative_position_is_written_as_twos_complement_vkms() {
-    // CRTC_X is signed and carried in an unsigned slot. A cursor at the top
-    // left corner has its buffer hanging off the edge, and the kernel reads
-    // the value back as the negative it is.
+    // CRTC_X is signed and carried in an unsigned slot as a 64-bit two's
+    // complement, which is how the kernel range-checks it. A cursor at the
+    // top left corner has its buffer hanging off the edge; a 32-bit encoding
+    // reads as a large positive number and the commit is refused.
+    // `a_cursor_off_the_top_left_corner_commits_vkms` has the kernel check it.
     let _guard = card_guard();
     let Some((_device, props, plane)) = fixture() else {
         return;
@@ -154,7 +156,7 @@ fn a_negative_position_is_written_as_twos_complement_vkms() {
 
     let x = written(&request, &props, plane, "CRTC_X").expect("CRTC_X");
     assert_eq!(
-        u32::try_from(x).expect("fits").cast_signed(),
+        x.cast_signed(),
         -3,
         "written as {x:#x}, which should read back as -3"
     );

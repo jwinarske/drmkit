@@ -23,6 +23,8 @@ minor version may break the API and a patch version does not.
   direction does not use, as the reference does: `target_max_nits` on a
   mapper up to PQ, `sdr_white_nits` on one down to SDR. It reported 100
   (P-78).
+- `drmkit-display`: `curves::bt1886_oetf` returns NaN for NaN, as the
+  reference does, rather than 0.0 (P-79).
 
 ## [0.1.2] - 2026-10-15
 

@@ -85,7 +85,10 @@ pub fn srgb_oetf(linear: f64) -> f64 {
 /// segment sRGB adds is an encoding convenience, not a display behavior.
 #[must_use]
 pub fn bt1886_oetf(linear: f64) -> f64 {
-    linear.max(0.0).powf(1.0 / 2.4)
+    // Not `f64::max`, which turns NaN into 0.0: the reference's `std::max`
+    // keeps it, and so does this.
+    let clamped = if linear < 0.0 { 0.0 } else { linear };
+    clamped.powf(1.0 / 2.4)
 }
 
 // ── Kernel blob shapes ──────────────────────────────────────────────

@@ -835,6 +835,19 @@ mod pipeline_curves {
         );
     }
 
+    /// BT.1886 clamps negative light to black, and leaves NaN as NaN, as the
+    /// reference's `std::max(linear, 0.0)` does. `f64::max` would return 0.0
+    /// for it and hand a caller black where the reference hands back the
+    /// NaN it was given.
+    #[test]
+    fn bt1886_clamps_negatives_and_keeps_nan() {
+        use crate::curves::bt1886_oetf;
+
+        assert_eq!(bt1886_oetf(-0.25).to_bits(), 0.0_f64.to_bits());
+        assert_eq!(bt1886_oetf(1.0).to_bits(), 1.0_f64.to_bits());
+        assert!(bt1886_oetf(f64::NAN).is_nan(), "NaN in, NaN out");
+    }
+
     #[test]
     fn the_lut_quantizer_clamps_at_both_ends() {
         // A curve that overshoots by a hair at the top -- which floating

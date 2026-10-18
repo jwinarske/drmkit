@@ -24,7 +24,7 @@ drmkit-core = { workspace = true }
 drmkit-fmt = { workspace = true }
 drmkit-log = { workspace = true }
 drm = { workspace = true }
-rustix = { workspace = true, features = ["mm", "std"] }
+rustix = { workspace = true, features = ["fs", "mm", "std"] }
 thiserror = { workspace = true, features = ["std"] }
 
 # For the encoder. The crate carries a decoder too, which nothing here uses.

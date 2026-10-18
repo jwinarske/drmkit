@@ -48,6 +48,9 @@ minor version may break the API and a patch version does not.
   framebuffer's offset, so a framebuffer starting partway in came out shifted
   and short of its last rows. The reference has the same bug, filed as
   drm-cxx#374 (P-86).
+- `drmkit-capture`: `snapshot` exports each plane's buffer close-on-exec, as
+  the reference does, so a child spawned on another thread during a capture
+  does not inherit the descriptor (P-87).
 
 ## [0.1.2] - 2026-10-15
 

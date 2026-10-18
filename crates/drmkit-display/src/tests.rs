@@ -145,6 +145,23 @@ fn the_tone_mapper_matches_drm_cxx() {
     );
 }
 
+/// Each mapper reads back the parameter it was built with, and zero for the
+/// one its direction has no use for, as the reference's factories store it.
+#[test]
+fn a_mapper_reports_zero_for_the_parameter_it_does_not_use() {
+    let up = ToneMapper::bt709_to_bt2020_pq(203.0);
+    assert_eq!((up.sdr_white_nits(), up.target_max_nits()), (203.0, 0.0));
+
+    let down = ToneMapper::bt2020_pq_to_bt709(400.0, ToneMapCurve::Hable);
+    assert_eq!(
+        (down.sdr_white_nits(), down.target_max_nits()),
+        (0.0, 400.0)
+    );
+
+    let hlg = ToneMapper::hlg_to_bt709(300.0);
+    assert_eq!((hlg.sdr_white_nits(), hlg.target_max_nits()), (0.0, 300.0));
+}
+
 /// Alpha is carried through untouched.
 ///
 /// Tone mapping is a color operation and has no opinion about coverage.

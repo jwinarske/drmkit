@@ -19,6 +19,10 @@ minor version may break the API and a patch version does not.
   does, taking the difference of two entries in `f32` before widening it.
   Widening first left some 16-bit pixels one step higher than the
   reference's (P-77).
+- `drmkit-display`: a `ToneMapper` reports zero for the parameter its
+  direction does not use, as the reference does: `target_max_nits` on a
+  mapper up to PQ, `sdr_white_nits` on one down to SDR. It reported 100
+  (P-78).
 
 ## [0.1.2] - 2026-10-15
 

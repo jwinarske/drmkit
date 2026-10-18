@@ -28,6 +28,10 @@ minor version may break the API and a patch version does not.
 - `drmkit-display`: the hotplug monitor reads the kernel's `CONNECTOR=` hint
   as digits only, as the reference does, so a leading `+` means
   re-enumerate rather than a connector id (P-80).
+- `drmkit-capture`: `snapshot` closes the GEM handles its framebuffer
+  queries open. Each capture left one open per plane, pinning every buffer
+  it had read until the descriptor closed. The reference has the same bug,
+  filed as drm-cxx#373 (P-83).
 
 ## [0.1.2] - 2026-10-15
 

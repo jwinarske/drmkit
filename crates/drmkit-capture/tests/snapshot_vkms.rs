@@ -316,3 +316,48 @@ fn without_the_atomic_cap_there_is_nothing_to_read_vkms() {
         );
     }
 }
+
+/// A snapshot closes the GEM handles its framebuffer queries open.
+///
+/// GETFB2 opens a handle on the caller's descriptor for each buffer object,
+/// and each one keeps the object alive until it is closed, so a recorder that
+/// left them open would pin every buffer it ever captured. Handles are
+/// numbered lowest-free, so the next one the kernel hands out counts what is
+/// still open: the same number before and after means nothing leaked.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn a_snapshot_leaves_no_handle_open_vkms() {
+    let _guard = card_guard();
+    let Some(device) = ready() else { return };
+    let Some(output) = paint(&device) else {
+        drmkit_testkit::skipped("no connected connector with a usable CRTC");
+        return;
+    };
+    let fb = device
+        .get_crtc(output.crtc)
+        .expect("crtc")
+        .framebuffer()
+        .expect("the painted framebuffer is bound");
+
+    // Open a handle the way GETFB2 does, note its number, and close it.
+    let next_handle = || {
+        let info = device.get_planar_framebuffer(fb).expect("GETFB2");
+        let handle = info.buffers()[0].expect("a buffer object");
+        device
+            .close_buffer(handle)
+            .expect("close the probe's handle");
+        u32::from(handle)
+    };
+
+    let before = next_handle();
+    for _ in 0..3 {
+        snapshot(&device, output.crtc_id).expect("snapshot");
+    }
+    let after = next_handle();
+    assert_eq!(
+        after,
+        before,
+        "three snapshots left {} GEM handles open",
+        after.saturating_sub(before)
+    );
+}

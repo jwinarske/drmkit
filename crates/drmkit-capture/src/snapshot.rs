@@ -274,6 +274,11 @@ fn map_plane(
     let fb = device
         .get_planar_framebuffer(fb)
         .map_err(|e| format!("framebuffer query failed: {e}"))?;
+    // GETFB2 opened a GEM handle on this descriptor for each buffer object,
+    // and each one holds the object alive until it is closed. The mapping
+    // below keeps its own reference through the dma-buf, so they close on
+    // every way out of here.
+    let _handles = FramebufferHandles::new(device, &fb.buffers());
 
     let modifier = fb.modifier().map_or(0, u64::from);
     // `None` is DRM_FORMAT_MOD_INVALID, which means "unstated", and an
@@ -343,6 +348,31 @@ fn map_plane(
         zpos,
         mapping,
     })
+}
+
+/// The GEM handles a framebuffer query opened, closed on drop.
+///
+/// Closed once each: planes of one object share its handle.
+struct FramebufferHandles<'a> {
+    device: &'a Device,
+    handles: Vec<drm::buffer::Handle>,
+}
+
+impl<'a> FramebufferHandles<'a> {
+    fn new(device: &'a Device, buffers: &[Option<drm::buffer::Handle>]) -> Self {
+        let mut handles: Vec<_> = buffers.iter().flatten().copied().collect();
+        handles.sort_unstable_by_key(|h| u32::from(*h));
+        handles.dedup();
+        Self { device, handles }
+    }
+}
+
+impl Drop for FramebufferHandles<'_> {
+    fn drop(&mut self) {
+        for handle in self.handles.drain(..) {
+            let _ = self.device.close_buffer(handle);
+        }
+    }
 }
 
 /// Export a GEM handle as a dma-buf and map it read-only.

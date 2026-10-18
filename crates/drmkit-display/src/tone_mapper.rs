@@ -200,7 +200,7 @@ impl ToneMapper {
         Self::new(
             Direction::Bt709ToBt2020Pq,
             sdr_white_nits,
-            100.0,
+            0.0,
             ToneMapCurve::None,
         )
     }
@@ -212,7 +212,7 @@ impl ToneMapper {
     /// clipping.
     #[must_use]
     pub fn bt2020_pq_to_bt709(target_max_nits: f32, curve: ToneMapCurve) -> Self {
-        Self::new(Direction::Bt2020PqToBt709, 100.0, target_max_nits, curve)
+        Self::new(Direction::Bt2020PqToBt709, 0.0, target_max_nits, curve)
     }
 
     /// HLG down to an SDR display.
@@ -224,7 +224,7 @@ impl ToneMapper {
     pub fn hlg_to_bt709(target_max_nits: f32) -> Self {
         Self::new(
             Direction::HlgToBt709,
-            100.0,
+            0.0,
             target_max_nits,
             ToneMapCurve::Reinhard,
         )
@@ -280,12 +280,18 @@ impl ToneMapper {
     }
 
     /// Where SDR white lands, in nits.
+    ///
+    /// Zero on a mapper down to SDR, which has no use for it, as the
+    /// reference reports it.
     #[must_use]
     pub const fn sdr_white_nits(&self) -> f32 {
         self.sdr_white_nits
     }
 
     /// What SDR `1.0` represents, in nits.
+    ///
+    /// Zero on a mapper up to PQ, which has no use for it, as the reference
+    /// reports it.
     #[must_use]
     pub const fn target_max_nits(&self) -> f32 {
         self.target_max_nits

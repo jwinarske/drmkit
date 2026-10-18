@@ -96,6 +96,9 @@ struct PlaneFrame {
     height: u32,
     /// Framebuffer stride in bytes.
     pitch: u32,
+    /// Where the image starts in the mapping: the framebuffer's
+    /// `offsets[0]`, which need not be zero.
+    offset: usize,
     format: SourceFormat,
     /// Where the plane sits on the CRTC. `x` and `y` are signed: a plane may
     /// hang off the top or left edge.
@@ -332,7 +335,10 @@ fn map_plane(
         .property_value(plane_id, "zpos")
         .map_or(0, |z| z as i64);
 
-    let len = pitch as usize * height as usize;
+    // The image starts at the framebuffer's offset into the buffer object,
+    // so the mapping runs from the object's start to the image's end.
+    let offset = fb.offsets()[0] as usize;
+    let len = offset + pitch as usize * height as usize;
     let mapping = map_buffer(device, buffer, len)?;
 
     Ok(PlaneFrame {
@@ -340,6 +346,7 @@ fn map_plane(
         width,
         height,
         pitch,
+        offset,
         format,
         crtc_x,
         crtc_y,
@@ -416,7 +423,11 @@ fn compose(image: &mut Image, frame: &PlaneFrame) {
     blit(
         image,
         &Blit {
-            bytes: frame.mapping.bytes(),
+            bytes: frame
+                .mapping
+                .bytes()
+                .get(frame.offset..)
+                .unwrap_or_default(),
             width: frame.width,
             height: frame.height,
             pitch: frame.pitch,

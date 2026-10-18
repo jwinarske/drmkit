@@ -25,6 +25,9 @@ minor version may break the API and a patch version does not.
   (P-78).
 - `drmkit-display`: `curves::bt1886_oetf` returns NaN for NaN, as the
   reference does, rather than 0.0 (P-79).
+- `drmkit-display`: the hotplug monitor reads the kernel's `CONNECTOR=` hint
+  as digits only, as the reference does, so a leading `+` means
+  re-enumerate rather than a connector id (P-80).
 
 ## [0.1.2] - 2026-10-15
 

@@ -142,7 +142,13 @@ fn is_hotplug(event_type: EventType, hotplug: Option<&str>) -> bool {
 /// wrong id means looking at a connector that did not change and missing the
 /// one that did.
 fn parse_connector_id(value: Option<&str>) -> Option<u32> {
-    value?.parse().ok()
+    let value = value?;
+    // Digits only, as the reference's `std::from_chars` reads them: `parse`
+    // would also take a leading `+`.
+    if !value.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    value.parse().ok()
 }
 
 fn io_errno(error: &std::io::Error) -> rustix::io::Errno {
@@ -192,6 +198,11 @@ mod tests {
         assert_eq!(parse_connector_id(Some("")), None);
         assert_eq!(parse_connector_id(Some("393x")), None);
         assert_eq!(parse_connector_id(Some("-1")), None);
+        assert_eq!(
+            parse_connector_id(Some("+393")),
+            None,
+            "no sign, either way"
+        );
         assert_eq!(parse_connector_id(Some("4294967296")), None);
     }
 }

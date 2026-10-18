@@ -178,11 +178,16 @@ impl Drop for Mapping {
 /// - [`CaptureError::Io`] if the CRTC -- an unknown `crtc_id` included -- or
 ///   the plane list cannot be queried.
 pub fn snapshot(device: &Device, crtc_id: u32) -> Result<Image, CaptureError> {
-    let crtc = device
-        .get_crtc(drm::control::crtc::Handle::from(
-            core::num::NonZeroU32::new(crtc_id).ok_or(CaptureError::NoMode)?,
+    // Id 0 names no object, and the kernel says so with ENOENT, as the
+    // reference reports it; the errno is kept rather than turned into text.
+    let handle = core::num::NonZeroU32::new(crtc_id).ok_or_else(|| {
+        CaptureError::Io(std::io::Error::from_raw_os_error(
+            rustix::io::Errno::NOENT.raw_os_error(),
         ))
-        .map_err(|e| CaptureError::Io(std::io::Error::other(e.to_string())))?;
+    })?;
+    let crtc = device
+        .get_crtc(drm::control::crtc::Handle::from(handle))
+        .map_err(CaptureError::Io)?;
 
     let Some(mode) = crtc.mode() else {
         drmkit_log::log_warn!("capture: crtc {crtc_id} is not driving a mode; nothing to snapshot");
@@ -231,9 +236,7 @@ struct Collected {
 
 /// Map every readable plane bound to `crtc_id`.
 fn collect_planes(device: &Device, crtc_id: u32) -> Result<Collected, CaptureError> {
-    let handles = device
-        .plane_handles()
-        .map_err(|e| CaptureError::Io(std::io::Error::other(e.to_string())))?;
+    let handles = device.plane_handles().map_err(CaptureError::Io)?;
 
     let enumerated = handles.len();
     let mut unbound = 0;

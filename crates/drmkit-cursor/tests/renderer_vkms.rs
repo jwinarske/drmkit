@@ -832,3 +832,65 @@ fn dropping_a_legacy_renderer_takes_its_cursor_off_vkms() {
     drop(renderer);
     assert!(!shown(&device), "the sprite outlived its renderer");
 }
+
+/// A new cursor shape on the legacy path is handed to the CRTC again, as the
+/// reference re-installs it, rather than only moved.
+///
+/// Whether a driver picks up new pixels in a buffer it already has is the
+/// driver's business: some upload the sprite only when `drmModeSetCursor`
+/// gives them a buffer, and keep showing the old shape after a move. Each
+/// install makes the kernel a new framebuffer for the cursor plane, so a
+/// framebuffer that does not change says the new shape was never handed over.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn a_new_legacy_cursor_is_installed_again_vkms() {
+    use drm::control::Device as _;
+
+    let _guard = card_guard();
+    let Some((device, registry, crtc_id, crtc_index)) = fixture() else {
+        return;
+    };
+    let Some(cursor_plane) = registry
+        .all()
+        .iter()
+        .find(|p| p.plane_type == PlaneType::Cursor && p.possible_crtcs & (1 << crtc_index) != 0)
+        .map(|p| p.id)
+    else {
+        drmkit_testkit::skipped("no cursor plane to watch");
+        return;
+    };
+    let legacy_only = primary_only(&registry, crtc_index);
+    let Ok(mut renderer) = Renderer::create(&device, &legacy_only, &config(crtc_id, crtc_index))
+    else {
+        drmkit_testkit::skipped("this driver has no legacy cursor");
+        return;
+    };
+    let framebuffer = |device: &Device| {
+        let handle = drm::control::plane::Handle::from(
+            core::num::NonZeroU32::new(cursor_plane).expect("non-zero"),
+        );
+        device.get_plane(handle).expect("plane").framebuffer()
+    };
+
+    renderer.set_cursor(square()).expect("set cursor");
+    renderer.move_to(10, 10);
+    renderer.commit().expect("install");
+    let first = framebuffer(&device);
+    assert!(
+        first.is_some(),
+        "the install put a sprite on the cursor plane"
+    );
+
+    let other = Cursor::from_argb(&vec![0xff00_ff00; 16 * 16], 16, 16, 2, 2).expect("cursor");
+    renderer.set_cursor(other).expect("set another cursor");
+    renderer.move_to(20, 20);
+    renderer.commit().expect("move with the new shape");
+    assert_ne!(
+        framebuffer(&device),
+        first,
+        "the new shape was only moved, never handed to the CRTC"
+    );
+
+    renderer.set_visible(false);
+    renderer.commit().expect("hide");
+}

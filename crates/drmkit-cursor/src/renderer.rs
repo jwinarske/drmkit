@@ -394,6 +394,10 @@ impl<'a> Renderer<'a> {
     pub fn set_cursor(&mut self, cursor: Cursor) -> Result<(), CursorError> {
         self.cursor = Some(cursor);
         self.drawn_frame = None;
+        // The next commit installs again, as the reference's does: on the
+        // legacy path a driver may upload the sprite only when handed a
+        // buffer, and a move alone would leave the old shape showing.
+        self.installed = false;
         self.draw(0)
     }
 

@@ -62,6 +62,10 @@ minor version may break the API and a patch version does not.
   the reference's destructor does. On the legacy path the sprite stayed on
   screen after the renderer was gone, since the kernel holds its own
   reference to the cursor's framebuffer (P-90).
+- `drmkit-cursor`: `Renderer::set_cursor` makes the next commit hand the
+  buffer to the CRTC again, as the reference does. On the legacy path a new
+  shape was only moved, which leaves the old one showing on a driver that
+  uploads the sprite only when given a buffer (P-91).
 
 ## [0.1.2] - 2026-10-15
 

@@ -55,6 +55,9 @@ minor version may break the API and a patch version does not.
   `CaptureError::Io` carrying `ENOENT`, as the reference does. Id 0 was
   reported as `NoMode`, and an unknown id as an I/O error with its errno
   turned into text (P-88).
+- `drmkit-capture`: `write_jpg` averages chroma over each two-by-two block,
+  as the reference's libjpeg does. The encoder took one pixel of each block,
+  so one-pixel color detail decoded in the wrong hue (P-89).
 
 ## [0.1.2] - 2026-10-15
 

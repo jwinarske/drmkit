@@ -822,6 +822,46 @@ mod jpeg {
         assert!(decoded[2].abs_diff(0x20) < 8, "blue");
     }
 
+    /// Chroma is averaged over each two-by-two block, as libjpeg's 4:2:0
+    /// downsampling does, rather than taken from one pixel of it.
+    ///
+    /// Alternating one-pixel red and blue columns share every chroma block,
+    /// so both decode to the same hue -- purple, with red and blue near
+    /// equal. Point-sampling keeps only the red column's chroma, and the blue
+    /// columns come back red.
+    #[test]
+    fn chroma_is_averaged_over_each_block() {
+        let scratch = Scratch::new("chroma-average");
+        let (width, height) = (64, 64);
+        let mut image = Image::new(width, height);
+        for (index, pixel) in image.pixels_mut().iter_mut().enumerate() {
+            *pixel = if index % 2 == 0 {
+                0xFFFF_0000
+            } else {
+                0xFF00_00FF
+            };
+        }
+        write_jpg(&image, scratch.path(), 90).expect("encode");
+
+        let bytes = scratch.bytes();
+        let decoded = zune_jpeg::JpegDecoder::new(std::io::Cursor::new(&bytes))
+            .decode()
+            .expect("decodable");
+        // Two columns from the middle, away from the edges.
+        let at = |x: usize| {
+            let i = (32 * width as usize + x) * 3;
+            (decoded[i], decoded[i + 1], decoded[i + 2])
+        };
+        for x in [32, 33] {
+            let (r, _, b) = at(x);
+            assert!(
+                r.abs_diff(b) < 16,
+                "column {x} came back as {:?}; averaged chroma makes red and blue equal",
+                at(x)
+            );
+        }
+    }
+
     /// Premultiplied color is undone before encoding.
     ///
     /// JPEG has no alpha, so a half-covered pixel's color has to be recovered

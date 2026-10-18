@@ -58,6 +58,10 @@ minor version may break the API and a patch version does not.
 - `drmkit-capture`: `write_jpg` averages chroma over each two-by-two block,
   as the reference's libjpeg does. The encoder took one pixel of each block,
   so one-pixel color detail decoded in the wrong hue (P-89).
+- `drmkit-cursor`: dropping a `Renderer` takes its cursor off the CRTC, as
+  the reference's destructor does. On the legacy path the sprite stayed on
+  screen after the renderer was gone, since the kernel holds its own
+  reference to the cursor's framebuffer (P-90).
 
 ## [0.1.2] - 2026-10-15
 

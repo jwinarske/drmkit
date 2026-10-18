@@ -15,6 +15,10 @@ minor version may break the API and a patch version does not.
   `VRR_ENABLED`, which the DRM core gives every CRTC of an atomic driver, so
   `VrrPolicy::Auto` armed variable refresh on sinks that cannot do it. The
   reference has the same bug, filed as drm-cxx#371 (P-76).
+- `drmkit-display`: `ToneMapper` interpolates its tables as the reference
+  does, taking the difference of two entries in `f32` before widening it.
+  Widening first left some 16-bit pixels one step higher than the
+  reference's (P-77).
 
 ## [0.1.2] - 2026-10-15
 

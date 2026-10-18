@@ -137,9 +137,9 @@ fn matrix_mul(m: &[f64; 9], v: [f64; 3]) -> [f64; 3] {
 fn sample_input(lut: &[f32; LUT_SIZE], encoded: u16) -> f64 {
     let idx = (encoded >> INPUT_INDEX_SHIFT) as usize;
     let frac = f64::from(encoded & 0x3F) / INPUT_FRAC_DIV;
-    let lo = f64::from(lut[idx]);
-    let hi = f64::from(lut[idx + 1]);
-    lo + (frac * (hi - lo))
+    // The difference in `f32`, then widened, as the reference computes it:
+    // widening both entries first rounds differently, a step off in `u16`.
+    f64::from(lut[idx]) + (frac * f64::from(lut[idx + 1] - lut[idx]))
 }
 
 /// Sample the linear-to-encoded table.
@@ -159,9 +159,9 @@ fn sample_output(lut: &[f32; LUT_SIZE], linear: f64) -> f64 {
         return f64::from(lut[LUT_BUCKETS]);
     }
     let frac = scaled - f64::from(u32::try_from(idx).unwrap_or(u32::MAX));
-    let lo = f64::from(lut[idx]);
-    let hi = f64::from(lut[idx + 1]);
-    lo + (frac * (hi - lo))
+    // The difference in `f32`, then widened, as the reference computes it:
+    // widening both entries first rounds differently, a step off in `u16`.
+    f64::from(lut[idx]) + (frac * f64::from(lut[idx + 1] - lut[idx]))
 }
 
 /// A configured tone-mapping transform.

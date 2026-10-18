@@ -660,6 +660,62 @@ mod profile_vkms {
         );
     }
 
+    /// Variable refresh is the sink's to report, not the CRTC's.
+    ///
+    /// The DRM core gives every CRTC of an atomic driver `VRR_ENABLED`, so its
+    /// presence cannot be the answer: vkms has it and cannot vary anything,
+    /// and amdgpu has it on every CRTC whether or not the monitor can. What
+    /// does answer is a connected connector's `vrr_capable`. With none of them
+    /// reporting it, `Auto` must not arm variable refresh.
+    #[test]
+    #[ignore = "needs a DRM device"]
+    fn variable_refresh_needs_a_sink_that_reports_it_vkms() {
+        use drm::control::Device as _;
+        use drmkit_core::{ObjectType, PropertyStore};
+
+        let Some(device) = open_card_or_skip() else {
+            return;
+        };
+        let _ = device.enable_universal_planes();
+        let _ = device.enable_atomic();
+        let resources = device.resource_handles().expect("a KMS node has resources");
+
+        let mut store = PropertyStore::new();
+        let crtc_has_it = resources.crtcs().iter().any(|crtc| {
+            let id = (*crtc).into();
+            store
+                .cache_properties(&device, id, ObjectType::Crtc)
+                .is_ok()
+                && store.property_id(id, "VRR_ENABLED").is_ok()
+        });
+        let sink_reports_it = resources.connectors().iter().any(|connector| {
+            let id = (*connector).into();
+            device
+                .get_connector(*connector, false)
+                .is_ok_and(|info| info.state() == drm::control::connector::State::Connected)
+                && store
+                    .cache_properties(&device, id, ObjectType::Connector)
+                    .is_ok()
+                && store
+                    .property_value(id, "vrr_capable")
+                    .is_ok_and(|v| v != 0)
+        });
+        if !crtc_has_it || sink_reports_it {
+            println!(
+                "note: skipped -- needs VRR_ENABLED on a CRTC and no sink reporting \
+                 vrr_capable (CRTC {crtc_has_it}, sink {sink_reports_it})"
+            );
+            return;
+        }
+
+        let profile = DriverProfile::probe(&device).expect("probe a KMS node");
+        assert!(
+            !profile.vrr_capable,
+            "a CRTC exposes VRR_ENABLED but no connected sink reports vrr_capable, \
+             and the profile still says variable refresh is drivable"
+        );
+    }
+
     /// The probe turns universal planes on before it scans, as the reference
     /// does, so it sees the primary and cursor planes a fresh descriptor is
     /// not shown. Without that a driver's `FB_DAMAGE_CLIPS` on its primary --

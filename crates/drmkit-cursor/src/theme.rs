@@ -420,10 +420,16 @@ pub fn default_search_paths() -> Vec<PathBuf> {
 /// than a dependency. Returns empty for a missing or unreadable file, which is
 /// the same as a theme that inherits nothing -- there is no useful difference
 /// to a caller.
+///
+/// Read as bytes, as the reference reads it, and not as UTF-8: older themes
+/// carry a translated `Comment=` in Latin-1, and refusing the file for it
+/// would lose the theme's parents. The keys and theme names are ASCII, so a
+/// lossy conversion leaves everything this reads intact.
 fn parse_inherits(path: &Path) -> Vec<String> {
-    let Ok(text) = std::fs::read_to_string(path) else {
+    let Ok(bytes) = std::fs::read(path) else {
         return Vec::new();
     };
+    let text = String::from_utf8_lossy(&bytes);
 
     let mut in_icon_theme = false;
     for line in text.lines() {

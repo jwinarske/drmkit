@@ -78,6 +78,10 @@ minor version may break the API and a patch version does not.
   header under 16 bytes is refused, a requested size past `i32::MAX` is
   refused, a tie between two sizes goes to the one listed first rather than
   the smaller, and a nominal size of zero is never chosen (P-94).
+- `drmkit-cursor`: a theme's `index.theme` is read as bytes, as the
+  reference reads it. One that is not UTF-8, such as an older theme with a
+  Latin-1 `Comment=`, lost its `Inherits=` line and resolved through the
+  wrong theme (P-95).
 
 ## [0.1.2] - 2026-10-15
 

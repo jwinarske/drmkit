@@ -170,8 +170,7 @@ impl<'a> Renderer<'a> {
         config: &RendererConfig,
     ) -> Result<Self, CursorError> {
         let forced = (config.forced_plane_id != 0).then_some(config.forced_plane_id);
-        let bound_elsewhere =
-            |plane_id: u32| plane_bound_elsewhere(device, plane_id, config.crtc_id);
+        let bound_elsewhere = |plane_id: u32| plane_in_use(device, plane_id);
         let plane = select_plane(
             registry,
             config.crtc_index,
@@ -748,8 +747,13 @@ fn test_plane(
     request.test(device, AtomicCommitFlags::empty()).is_ok()
 }
 
-/// Whether a plane is currently feeding some CRTC other than `crtc_id`.
-fn plane_bound_elsewhere(device: &Device, plane_id: u32, crtc_id: u32) -> bool {
+/// Whether a plane is driving a CRTC at all -- this one included.
+///
+/// As the reference decides it: an overlay this CRTC is already showing is
+/// the compositor's layer, and taking it for the cursor costs that layer just
+/// as surely as taking one from another output would. Its comment says
+/// "another CRTC"; its code tests for any, which is the better reading.
+fn plane_in_use(device: &Device, plane_id: u32) -> bool {
     use drm::control::Device as _;
 
     let Some(handle) = core::num::NonZeroU32::new(plane_id) else {
@@ -759,7 +763,7 @@ fn plane_bound_elsewhere(device: &Device, plane_id: u32, crtc_id: u32) -> bool {
         .get_plane(drm::control::plane::Handle::from(handle))
         .ok()
         .and_then(|info| info.crtc())
-        .is_some_and(|bound| u32::from(bound) != crtc_id)
+        .is_some()
 }
 
 /// A cursor renderer whose device has gone away.

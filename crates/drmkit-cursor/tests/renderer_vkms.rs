@@ -894,3 +894,111 @@ fn a_new_legacy_cursor_is_installed_again_vkms() {
     renderer.set_visible(false);
     renderer.commit().expect("hide");
 }
+
+/// The cursor does not take an overlay this CRTC is already showing.
+///
+/// Without a cursor plane the cursor falls back to an overlay, preferring one
+/// nothing is using, as the reference does. An overlay already lit on this
+/// CRTC is the compositor's own layer: taking it would cost that layer just as
+/// taking one from another output would.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn the_cursor_leaves_an_overlay_this_crtc_shows_vkms() {
+    use drm::control::Device as _;
+
+    let _guard = card_guard();
+    let Some((device, registry, crtc_id, crtc_index)) = fixture() else {
+        return;
+    };
+    let on_crtc = |p: &&PlaneCapabilities| p.possible_crtcs & (1 << crtc_index) != 0;
+    let overlays: Vec<u32> = registry
+        .all()
+        .iter()
+        .filter(on_crtc)
+        .filter(|p| p.plane_type == PlaneType::Overlay)
+        .map(|p| p.id)
+        .collect();
+    if overlays.len() < 2 {
+        drmkit_testkit::skipped("needs two overlays on this CRTC");
+        return;
+    }
+    // No cursor plane, so the cursor has to choose an overlay.
+    let without_cursor = PlaneRegistry::from_capabilities(
+        registry
+            .all()
+            .iter()
+            .filter(|p| p.plane_type != PlaneType::Cursor)
+            .cloned()
+            .collect(),
+    );
+
+    // Light the output, then show something on the first overlay -- the one
+    // the cursor would take first.
+    let resources = device.resource_handles().expect("resources");
+    let crtc = resources.crtcs()[crtc_index as usize];
+    let Some((connector, mode)) = resources.connectors().iter().find_map(|handle| {
+        let info = device.get_connector(*handle, false).ok()?;
+        (info.state() == drm::control::connector::State::Connected)
+            .then(|| Some((*handle, *info.modes().first()?)))
+            .flatten()
+    }) else {
+        drmkit_testkit::skipped("no connected connector");
+        return;
+    };
+    let (width, height) = (u32::from(mode.size().0), u32::from(mode.size().1));
+    let buffer = |w: u32, h: u32, fourcc: u32| {
+        drmkit_dumb::Buffer::create(
+            &device,
+            &drmkit_dumb::Config {
+                width: w,
+                height: h,
+                fourcc,
+                bpp: 32,
+                add_fb: true,
+            },
+        )
+        .expect("buffer")
+    };
+    let fb_of = |b: &drmkit_dumb::Buffer| {
+        drm::control::framebuffer::Handle::from(
+            core::num::NonZeroU32::new(b.fb_id().expect("framebuffer")).expect("non-zero"),
+        )
+    };
+    let primary = buffer(width, height, drmkit_fmt::fourcc::XRGB8888);
+    let layer = buffer(64, 64, drmkit_fmt::fourcc::ARGB8888);
+    device
+        .set_crtc(
+            crtc,
+            Some(fb_of(&primary)),
+            (0, 0),
+            &[connector],
+            Some(mode),
+        )
+        .expect("light the output");
+    let shown = drm::control::plane::Handle::from(
+        core::num::NonZeroU32::new(overlays[0]).expect("non-zero"),
+    );
+    device
+        .set_plane(
+            shown,
+            crtc,
+            Some(fb_of(&layer)),
+            0,
+            (0, 0, 64, 64),
+            (0, 0, 64 << 16, 64 << 16),
+        )
+        .expect("show a layer on the first overlay");
+
+    let chosen = Renderer::create(&device, &without_cursor, &config(crtc_id, crtc_index))
+        .map(|renderer| renderer.plane().plane_id);
+
+    let _ = device.set_plane(shown, crtc, None, 0, (0, 0, 0, 0), (0, 0, 0, 0));
+    let _ = device.set_crtc(crtc, None, (0, 0), &[], None);
+    drop((primary, layer));
+
+    let chosen = chosen.expect("a free overlay is there to take");
+    assert_ne!(
+        chosen, overlays[0],
+        "the cursor took the overlay this CRTC was showing"
+    );
+}

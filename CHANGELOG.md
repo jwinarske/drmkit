@@ -66,6 +66,9 @@ minor version may break the API and a patch version does not.
   buffer to the CRTC again, as the reference does. On the legacy path a new
   shape was only moved, which leaves the old one showing on a driver that
   uploads the sprite only when given a buffer (P-91).
+- `drmkit-cursor`: a cursor falling back to an overlay passes over one this
+  CRTC is already showing, as the reference does. It treated only an overlay
+  on another CRTC as taken, and could take the compositor's own layer (P-92).
 
 ## [0.1.2] - 2026-10-15
 

@@ -101,10 +101,11 @@ fn usable(plane: &PlaneCapabilities) -> Option<u32> {
 /// the call fails. That is a caller overriding policy, and silently ignoring
 /// an override is worse than refusing it.
 ///
-/// `bound_elsewhere` answers whether a plane is currently driving some other
-/// CRTC. Overlays are shared on many parts, and taking one that another output
-/// is using costs that output a layer; the search prefers a free one but will
-/// take a busy one rather than fall back to legacy.
+/// `bound_elsewhere` answers whether a plane is currently driving a CRTC --
+/// any, this one included, as the reference asks. Taking an overlay that is
+/// showing something costs whoever put it there a layer, on this output or
+/// another; the search prefers a free one but will take a busy one rather
+/// than fall back to legacy.
 ///
 /// `prefer_legacy` takes the legacy path over a cursor plane that can carry
 /// `ARGB8888`, which is the plane the legacy ioctls then drive. It needs

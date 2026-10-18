@@ -831,6 +831,15 @@ fn a_negative_destination_position_round_trips() {
     let rect = plane_layer.crtc_rect();
     assert_eq!(rect.x, -64, "a plane may extend off the left edge");
     assert_eq!(rect.y, -32);
+    // Sign-extended to 64 bits, which is how the kernel range-checks it.
+    assert_eq!(
+        plane_layer.property(PropTag::CrtcX),
+        Some((-64_i64).cast_unsigned())
+    );
+    assert_eq!(
+        plane_layer.property(PropTag::CrtcY),
+        Some((-32_i64).cast_unsigned())
+    );
 }
 
 /// A lowered layer must be scale-detectable: the allocator screens planes on

@@ -38,6 +38,11 @@ minor version may break the API and a patch version does not.
   driver's size every commit within about half a buffer of either edge
   failed with `EINVAL`. It is now sign-extended, as the reference does
   (P-84).
+- `drmkit-scene`: a layer partly off the top or left edge is placed on a
+  plane. Its negative position was written as a 32-bit two's complement,
+  which the kernel range-checks as a 64-bit signed value and refuses, so the
+  layer was left unassigned and did not appear. It is now sign-extended, as
+  the reference does (P-85).
 
 ## [0.1.2] - 2026-10-15
 

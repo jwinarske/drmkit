@@ -75,14 +75,17 @@ pub fn lower_layer(input: &LoweringInput, dst: &mut PlaneLayer) {
 
     dst.set_property(PropTag::CrtcId, u64::from(input.crtc_id));
 
-    // Destination is whole signed pixels; source is 16.16 fixed point.
+    // Destination is whole signed pixels; source is 16.16 fixed point. The
+    // position is sign-extended, as the reference's `static_cast` does: the
+    // kernel range-checks a signed property as an `i64`, so a 32-bit two's
+    // complement would read as a large positive number and be refused.
     dst.set_property(
         PropTag::CrtcX,
-        u64::from(display.dst_rect.x.cast_unsigned()),
+        i64::from(display.dst_rect.x).cast_unsigned(),
     );
     dst.set_property(
         PropTag::CrtcY,
-        u64::from(display.dst_rect.y.cast_unsigned()),
+        i64::from(display.dst_rect.y).cast_unsigned(),
     );
     dst.set_property(PropTag::CrtcW, u64::from(display.dst_rect.w));
     dst.set_property(PropTag::CrtcH, u64::from(display.dst_rect.h));

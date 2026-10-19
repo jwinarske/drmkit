@@ -77,18 +77,89 @@ pub fn write_jpg(image: &Image, path: impl AsRef<Path>, quality: u8) -> Result<(
     }
     let (width, height) = dimensions(image.width(), image.height())?;
 
-    // Three channels, not four: JPEG has no alpha, so the fourth is dropped
-    // here rather than encoded and ignored.
-    let mut rgb = Vec::with_capacity(image.pixels().len() * 3);
-    for pixel in image.pixels() {
-        let [r, g, b, _] = unpremultiply(*pixel);
-        rgb.extend_from_slice(&[r, g, b]);
-    }
+    let ycbcr = averaged_ycbcr(image);
 
     let file = std::fs::File::create(path).map_err(CaptureError::Io)?;
     encoder(file, quality)
-        .encode(&rgb, width, height, jpeg_encoder::ColorType::Rgb)
+        .encode(&ycbcr, width, height, jpeg_encoder::ColorType::Ycbcr)
         .map_err(|error| CaptureError::Io(std::io::Error::other(error)))
+}
+
+/// libjpeg's fixed-point scale for color conversion (`SCALEBITS`).
+const SCALE_BITS: u32 = 16;
+/// One half at that scale, for rounding (`ONE_HALF`).
+const ONE_HALF: i32 = 1 << (SCALE_BITS - 1);
+/// The chroma offset, 128 at that scale (`CBCR_OFFSET`).
+const CBCR_OFFSET: i32 = 128 << SCALE_BITS;
+
+/// A coefficient at libjpeg's fixed-point scale (`FIX`).
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "every coefficient is below 1.0, so the scaled value fits"
+)]
+const fn fix(value: f64) -> i32 {
+    (value * (1 << SCALE_BITS) as f64 + 0.5) as i32
+}
+
+/// One pixel to `YCbCr`, exactly as libjpeg's `rgb_ycc_convert` computes it.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the coefficients of each row sum to at most one, so every \
+              result is in 0..=255 by construction, as in libjpeg"
+)]
+fn ycbcr(r: u8, g: u8, b: u8) -> [u8; 3] {
+    let (r, g, b) = (i32::from(r), i32::from(g), i32::from(b));
+    let y = (fix(0.299) * r + fix(0.587) * g + fix(0.114) * b + ONE_HALF) >> SCALE_BITS;
+    let cb = (-fix(0.168_74) * r - fix(0.331_26) * g + fix(0.5) * b + CBCR_OFFSET + ONE_HALF - 1)
+        >> SCALE_BITS;
+    let cr = (fix(0.5) * r - fix(0.418_69) * g - fix(0.081_31) * b + CBCR_OFFSET + ONE_HALF - 1)
+        >> SCALE_BITS;
+    [y as u8, cb as u8, cr as u8]
+}
+
+/// The image as interleaved `YCbCr`, each chroma sample the average of the
+/// two-by-two block it covers, as libjpeg's 4:2:0 downsampling makes it.
+///
+/// The encoder subsamples chroma by taking one pixel of each block, which
+/// throws away three samples in four: one-pixel detail in color comes out in
+/// the wrong hue. Averaging here first, and repeating the average across the
+/// block, leaves the encoder nothing to lose. libjpeg's rounding is kept too:
+/// a bias that alternates 1, 2 across each row of blocks, and a block at an
+/// odd right or bottom edge padded by repeating its last column or row.
+///
+/// JPEG has no alpha, so the pixels are un-premultiplied and the fourth
+/// channel dropped here rather than encoded and ignored.
+fn averaged_ycbcr(image: &Image) -> Vec<u8> {
+    let (width, height) = (image.width() as usize, image.height() as usize);
+    let full: Vec<[u8; 3]> = image
+        .pixels()
+        .iter()
+        .map(|pixel| {
+            let [r, g, b, _] = unpremultiply(*pixel);
+            ycbcr(r, g, b)
+        })
+        .collect();
+
+    let mut out = Vec::with_capacity(width * height * 3);
+    for y in 0..height {
+        let top = y & !1;
+        let bottom = (top + 1).min(height - 1);
+        for x in 0..width {
+            let left = x & !1;
+            let right = (left + 1).min(width - 1);
+            let bias = 1 + u32::from((x / 2) % 2 == 1);
+            let average = |channel: usize| {
+                let sum = [(top, left), (top, right), (bottom, left), (bottom, right)]
+                    .iter()
+                    .map(|&(row, col)| u32::from(full[row * width + col][channel]))
+                    .sum::<u32>();
+                u8::try_from((sum + bias) >> 2).unwrap_or(u8::MAX)
+            };
+            out.extend_from_slice(&[full[y * width + x][0], average(1), average(2)]);
+        }
+    }
+    out
 }
 
 /// One `NV12` frame, as a camera or decoder hands it over.

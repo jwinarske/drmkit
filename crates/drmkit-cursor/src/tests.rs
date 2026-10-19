@@ -771,15 +771,159 @@ fn the_nearest_size_is_chosen() {
 }
 
 #[test]
-fn a_tie_on_size_goes_to_the_smaller() {
-    // 24 is equidistant from 16 and 32. The smaller one sits inside the
-    // plane; the larger has to be cropped or scaled.
+fn a_tie_on_size_goes_to_the_size_listed_first() {
+    // 24 is equidistant from 16 and 32, and libxcursor keeps whichever it met
+    // first. Listed 32 then 16, the 32 is shown.
     let bytes = FileBuilder::new()
-        .image(ImageSpec::new(16, 2, 2).fill(16))
         .image(ImageSpec::new(32, 2, 2).fill(32))
+        .image(ImageSpec::new(16, 2, 2).fill(16))
         .build();
     let cursor = Cursor::from_bytes(&bytes, 24).expect("load");
-    assert_eq!(cursor.first().pixels[0], 16);
+    assert_eq!(cursor.first().pixels[0], 32);
+}
+
+/// One image chunk as the format lays it out, with every header field the
+/// caller's to set, for the files libxcursor and a stricter parser disagree
+/// on.
+struct RawChunk {
+    listed_size: u32,
+    header_len: u32,
+    chunk_type: u32,
+    chunk_size: u32,
+    version: u32,
+    fill: u32,
+}
+
+impl RawChunk {
+    const fn image(size: u32) -> Self {
+        Self {
+            listed_size: size,
+            header_len: 36,
+            chunk_type: 0xfffd_0002,
+            chunk_size: size,
+            version: 1,
+            fill: size,
+        }
+    }
+}
+
+/// A two-by-two image per chunk, behind a file header `file_header_len` long
+/// that declares `entries` table-of-contents entries.
+fn raw_cursor(chunks: &[RawChunk], file_header_len: u32, entries: u32) -> Vec<u8> {
+    let toc_start = file_header_len as usize;
+    let body_start = toc_start + chunks.len() * 12;
+    let mut body = Vec::new();
+    let mut toc = Vec::new();
+    for chunk in chunks {
+        let at = u32::try_from(body_start + body.len()).expect("small");
+        for value in [0xfffd_0002, chunk.listed_size, at] {
+            toc.extend_from_slice(&u32::to_le_bytes(value));
+        }
+        for value in [
+            chunk.header_len,
+            chunk.chunk_type,
+            chunk.chunk_size,
+            chunk.version,
+            2,
+            2,
+            0,
+            0,
+            0,
+        ] {
+            body.extend_from_slice(&u32::to_le_bytes(value));
+        }
+        for _ in 0..4 {
+            body.extend_from_slice(&chunk.fill.to_le_bytes());
+        }
+    }
+    let mut out = b"Xcur".to_vec();
+    for value in [file_header_len, 0x1_0000, entries] {
+        out.extend_from_slice(&u32::to_le_bytes(value));
+    }
+    out.resize(toc_start, 0);
+    out.extend_from_slice(&toc);
+    out.extend_from_slice(&body);
+    out
+}
+
+#[test]
+fn a_chunks_length_and_version_fields_are_not_checked() {
+    // libxcursor reads neither, so a writer that bumps them still produces a
+    // cursor it shows.
+    let chunk = RawChunk {
+        header_len: 40,
+        version: 2,
+        ..RawChunk::image(24)
+    };
+    let cursor = Cursor::from_bytes(&raw_cursor(&[chunk], 16, 1), 24).expect("load");
+    assert_eq!(cursor.first().pixels[0], 24);
+}
+
+#[test]
+fn a_chunk_filed_under_another_size_is_refused() {
+    // The one check libxcursor makes of a chunk: that it is the image its
+    // table-of-contents entry said it was.
+    let chunk = RawChunk {
+        chunk_size: 32,
+        ..RawChunk::image(24)
+    };
+    assert!(matches!(
+        Cursor::from_bytes(&raw_cursor(&[chunk], 16, 1), 24),
+        Err(CursorError::Malformed)
+    ));
+}
+
+#[test]
+fn a_nominal_size_of_zero_is_never_chosen() {
+    // libxcursor's search uses zero for "nothing chosen yet": any other size
+    // displaces it, however far, and a file offering only zero has nothing.
+    let both = raw_cursor(&[RawChunk::image(0), RawChunk::image(100)], 16, 2);
+    for requested in [1, 24] {
+        let cursor = Cursor::from_bytes(&both, requested).expect("load");
+        assert_eq!(cursor.first().pixels[0], 100, "asked for {requested}");
+    }
+    assert!(matches!(
+        Cursor::from_bytes(&raw_cursor(&[RawChunk::image(0)], 16, 1), 24),
+        Err(CursorError::NoImages)
+    ));
+}
+
+#[test]
+fn more_entries_than_libxcursor_reads_are_refused() {
+    // Its cap, whatever room the file has for them.
+    let mut bytes = raw_cursor(&[RawChunk::image(24)], 16, 0x1_0001);
+    bytes.resize(bytes.len() + 0x1_0001 * 12, 0);
+    assert!(matches!(
+        Cursor::from_bytes(&bytes, 24),
+        Err(CursorError::Malformed)
+    ));
+}
+
+#[test]
+fn a_file_header_shorter_than_its_fields_is_refused() {
+    let bytes = raw_cursor(&[RawChunk::image(24)], 16, 1);
+    let mut short = bytes.clone();
+    short[4..8].copy_from_slice(&12u32.to_le_bytes());
+    assert!(matches!(
+        Cursor::from_bytes(&short, 24),
+        Err(CursorError::Malformed)
+    ));
+}
+
+#[test]
+fn a_size_past_what_libxcursor_takes_is_refused() {
+    // libxcursor takes the size as a signed int and refuses a negative one,
+    // which is what the reference's cast makes of these.
+    let bytes = raw_cursor(&[RawChunk::image(24)], 16, 1);
+    for requested in [0x8000_0000, u32::MAX] {
+        assert!(
+            matches!(
+                Cursor::from_bytes(&bytes, requested),
+                Err(CursorError::NoImages)
+            ),
+            "asked for {requested:#x}"
+        );
+    }
 }
 
 #[test]

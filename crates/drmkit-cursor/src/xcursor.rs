@@ -94,10 +94,10 @@ pub(crate) struct RawImage {
 const MAGIC: &[u8; 4] = b"Xcur";
 /// The table-of-contents type marking an image chunk.
 const CHUNK_IMAGE: u32 = 0xfffd_0002;
-/// Bytes in an image chunk's own header.
-const IMAGE_HEADER_LEN: u32 = 0x24;
-/// The only image chunk version there is.
-const IMAGE_VERSION: u32 = 1;
+/// Bytes in the file header: magic, header length, version, entry count.
+const FILE_HEADER_LEN: u32 = 16;
+/// The most table-of-contents entries libxcursor will read.
+const MAX_ENTRIES: u32 = 0x1_0000;
 /// Bytes per table-of-contents entry.
 const TOC_ENTRY_LEN: usize = 12;
 
@@ -171,11 +171,25 @@ pub(crate) fn parse(
     limits: Limits,
     requested: u32,
 ) -> Result<Vec<RawImage>, CursorError> {
+    // libxcursor takes the size as a signed `int` and refuses a negative one,
+    // which is what the reference's cast makes of anything past `i32::MAX`.
+    if i32::try_from(requested).is_err() {
+        return Err(CursorError::NoImages);
+    }
+
     let mut reader = Reader::new(bytes);
     reader.tag(*MAGIC)?;
     let header_len = reader.u32_le()?;
+    // A header shorter than its own four fields would put the table of
+    // contents inside them; libxcursor refuses it, and so does this.
+    if header_len < FILE_HEADER_LEN {
+        return Err(CursorError::Malformed);
+    }
     let _version = reader.u32_le()?;
     let entry_count = reader.u32_le()?;
+    if entry_count > MAX_ENTRIES {
+        return Err(CursorError::Malformed);
+    }
 
     // The count is file-declared, so cap it against what the file could
     // actually hold before it is used to size anything. Each entry is 12
@@ -214,21 +228,27 @@ pub(crate) fn parse(
     let mut images = Vec::with_capacity(offsets.len());
     for offset in offsets {
         reader.seek(offset as usize)?;
-        images.push(parse_image(&mut reader, limits)?);
+        images.push(parse_image(&mut reader, chosen, limits)?);
     }
     Ok(images)
 }
 
 /// Parse one image chunk, the reader positioned at its start.
-fn parse_image(reader: &mut Reader<'_>, limits: Limits) -> Result<RawImage, CursorError> {
-    if reader.u32_le()? != IMAGE_HEADER_LEN {
-        return Err(CursorError::Malformed);
-    }
-    if reader.u32_le()? != CHUNK_IMAGE {
-        return Err(CursorError::Malformed);
-    }
+///
+/// The chunk must be what its table-of-contents entry said it was -- an image
+/// filed under `listed_size` -- which is the one check libxcursor makes of the
+/// chunk header. Its length and version fields go unread, as there: a writer
+/// that bumps either still produces a cursor libxcursor shows.
+fn parse_image(
+    reader: &mut Reader<'_>,
+    listed_size: u32,
+    limits: Limits,
+) -> Result<RawImage, CursorError> {
+    let _header_len = reader.u32_le()?;
+    let chunk_type = reader.u32_le()?;
     let nominal_size = reader.u32_le()?;
-    if reader.u32_le()? != IMAGE_VERSION {
+    let _version = reader.u32_le()?;
+    if chunk_type != CHUNK_IMAGE || nominal_size != listed_size {
         return Err(CursorError::Malformed);
     }
     let width = reader.u32_le()?;
@@ -272,11 +292,19 @@ fn parse_image(reader: &mut Reader<'_>, limits: Limits) -> Result<RawImage, Curs
     })
 }
 
-/// The nominal size in `sizes` closest to `requested`.
+/// The nominal size in `sizes` closest to `requested`, as libxcursor's
+/// `_XcursorFindBestSize` picks it.
 ///
-/// Cursor files are multi-resolution packs. Ties go to the smaller size: a
-/// cursor slightly too small sits inside the plane, where one slightly too
-/// large has to be cropped or scaled.
+/// Cursor files are multi-resolution packs. On a tie the size listed first
+/// wins. A nominal size of zero stands for "none chosen yet" in libxcursor's
+/// loop, so any other size displaces it, and a file listing only zero has no
+/// size to offer at all.
 fn nearest_size(sizes: impl Iterator<Item = u32>, requested: u32) -> Option<u32> {
-    sizes.min_by_key(|size| (size.abs_diff(requested), *size))
+    let mut best: u32 = 0;
+    for size in sizes {
+        if best == 0 || size.abs_diff(requested) < best.abs_diff(requested) {
+            best = size;
+        }
+    }
+    (best != 0).then_some(best)
 }

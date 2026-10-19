@@ -385,7 +385,7 @@
   "a_theme_with_no_shadow_still_draws_its_panel": "ran",
   "a_tick_past_the_duration_clamps_to_the_target": "ran",
   "a_tie_goes_to_the_earlier_connector": "ran",
-  "a_tie_on_size_goes_to_the_smaller": "ran",
+  "a_tie_on_size_goes_to_the_size_listed_first": "ran",
   "a_toc_count_larger_than_the_file_is_refused": "ran",
   "a_translated_layer_writes_its_rectangle_and_its_fb_vkms": "ran",
   "a_translucent_plane_lets_the_one_beneath_through": "ran",

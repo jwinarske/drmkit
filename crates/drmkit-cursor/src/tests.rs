@@ -1448,7 +1448,7 @@ fn a_hotspot_on_the_far_edge_turns_like_the_reference() {
 }
 
 #[test]
-fn the_hotspot_is_offset_by_the_centring() {
+fn the_hotspot_is_offset_by_the_centering() {
     let frame = coded_frame(2, 2, 1, 1);
     let (_, placement) = composed(&frame, Rotation::None, 8, 8);
     assert_eq!((placement.x, placement.y), (3, 3));

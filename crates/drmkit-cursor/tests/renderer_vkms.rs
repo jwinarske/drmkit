@@ -206,7 +206,7 @@ fn a_cursor_is_drawn_and_staged_vkms() {
     // (100, 200) puts the buffer's corner at (68, 168).
     //
     // Getting this wrong by using the frame's hotspot gives (92, 192): off by
-    // exactly the centring offset, which is invisible until the cursor is
+    // exactly the centering offset, which is invisible until the cursor is
     // near a screen edge or someone clicks.
     let plane_id = renderer.plane().plane_id;
     let store = {
@@ -225,9 +225,9 @@ fn a_cursor_is_drawn_and_staged_vkms() {
             .map(|w| w.value)
     };
     let (buffer_w, _) = renderer.size();
-    let centring = i64::from(buffer_w - 16) / 2;
-    let expected_x = 100 - (8 + centring);
-    let expected_y = 200 - (8 + centring);
+    let centering = i64::from(buffer_w - 16) / 2;
+    let expected_x = 100 - (8 + centering);
+    let expected_y = 200 - (8 + centering);
     // CRTC_X/Y are signed-range properties, which the kernel checks as an
     // `i64`, so a negative coordinate is a 64-bit two's complement in the
     // property's u64 slot. The encoding was invisible while the cursor was

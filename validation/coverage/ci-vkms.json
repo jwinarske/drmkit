@@ -1108,7 +1108,7 @@
   "the_hint_accessors_read_back_what_was_set": "ran",
   "the_hlg_lut_lands_where_the_spec_says": "ran",
   "the_hotspot_is_left_alone_until_something_is_drawn_vkms": "no HOTSPOT_X (expected: not a virtualized driver)",
-  "the_hotspot_is_offset_by_the_centring": "ran",
+  "the_hotspot_is_offset_by_the_centering": "ran",
   "the_hotspot_turns_with_the_pixels": "ran",
   "the_inherits_parser_ignores_comments_and_other_sections": "ran",
   "the_inherits_parser_takes_a_semicolon": "ran",

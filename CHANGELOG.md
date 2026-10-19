@@ -69,6 +69,9 @@ minor version may break the API and a patch version does not.
 - `drmkit-cursor`: a cursor falling back to an overlay passes over one this
   CRTC is already showing, as the reference does. It treated only an overlay
   on another CRTC as taken, and could take the compositor's own layer (P-92).
+- `drmkit-cursor`: a hotspot on the frame's far edge is placed as the
+  reference places it when the cursor is rotated in software. It was clamped
+  to the sprite before the centering offset was added, one pixel off (P-93).
 
 ## [0.1.2] - 2026-10-15
 

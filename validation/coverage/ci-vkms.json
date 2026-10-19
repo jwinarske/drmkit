@@ -987,7 +987,7 @@
   "sand_match_is_vendor_and_code_gated": "ran",
   "scaling_down_samples_without_reading_out_of_bounds": "ran",
   "scaling_requires_a_scaling_plane": "ran",
-  "scaling_up_repeats_source_pixels": "ran",
+  "scaling_up_filters_bilinearly_as_blend2d_does": "ran",
   "scores_never_change_cardinality": "ran",
   "select_mode_falls_back_to_the_closest_resolution": "ran",
   "select_mode_finds_an_exact_match": "ran",

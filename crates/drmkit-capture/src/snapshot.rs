@@ -382,6 +382,18 @@ impl Drop for FramebufferHandles<'_> {
     }
 }
 
+/// Export a GEM handle as a dma-buf, close-on-exec as the reference exports
+/// it, so a child another thread spawns mid-capture does not inherit the
+/// descriptor and keep the scanout buffer alive.
+pub(crate) fn export(
+    device: &Device,
+    buffer: drm::buffer::Handle,
+) -> Result<std::os::fd::OwnedFd, Skipped> {
+    device
+        .buffer_to_prime_fd(buffer, rustix::fs::OFlags::CLOEXEC.bits())
+        .map_err(|e| format!("dma-buf export failed: {e}"))
+}
+
 /// Export a GEM handle as a dma-buf and map it read-only.
 fn map_buffer(
     device: &Device,
@@ -391,9 +403,7 @@ fn map_buffer(
     let Some(len) = NonZeroUsize::new(len) else {
         return Err("framebuffer has zero size".to_owned());
     };
-    let dmabuf = device
-        .buffer_to_prime_fd(buffer, 0)
-        .map_err(|e| format!("dma-buf export failed: {e}"))?;
+    let dmabuf = export(device, buffer)?;
 
     // SAFETY: `mmap` with a null hint asks the kernel to choose the address,
     // which is the only requirement the call has of the caller. The length is

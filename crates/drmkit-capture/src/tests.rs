@@ -1014,3 +1014,30 @@ mod jpeg {
         }
     }
 }
+
+/// A plane's buffer is exported close-on-exec, as the reference exports it.
+///
+/// The descriptor lives only for the length of a capture, but a fork and
+/// exec on another thread in that window would hand the child a reference
+/// to the scanout buffer it keeps until it exits.
+#[test]
+#[ignore = "needs a DRM device"]
+fn a_captured_buffer_is_exported_close_on_exec_vkms() {
+    use drm::control::Device as _;
+
+    let path = std::env::var("DRMKIT_TEST_CARD").unwrap_or_else(|_| "/dev/dri/card0".to_owned());
+    let Ok(device) = drmkit_core::Device::open(&path) else {
+        println!("note: skipped -- {path} did not open");
+        return;
+    };
+    let buffer = device
+        .create_dumb_buffer((16, 16), drm::buffer::DrmFourcc::Xrgb8888, 32)
+        .expect("dumb buffer");
+
+    let exported = crate::snapshot::export(&device, drm::buffer::Buffer::handle(&buffer));
+    let _ = device.destroy_dumb_buffer(buffer);
+
+    let fd = exported.expect("export");
+    let flags = rustix::io::fcntl_getfd(&fd).expect("fcntl");
+    assert!(flags.contains(rustix::io::FdFlags::CLOEXEC));
+}

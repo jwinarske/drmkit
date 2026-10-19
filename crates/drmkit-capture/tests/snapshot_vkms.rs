@@ -472,3 +472,22 @@ fn the_image_starts_at_the_framebuffers_offset_vkms() {
         "and so is the last"
     );
 }
+
+/// A CRTC that does not exist is the kernel's `ENOENT`, with the errno kept,
+/// as the reference reports it -- id 0 included, which names no object
+/// rather than a CRTC without a mode.
+#[test]
+#[ignore = "needs a DRM device"]
+fn an_unknown_crtc_is_enoent_vkms() {
+    let Some(device) = card() else { return };
+    for crtc_id in [0, 0x7fff_fff0] {
+        match snapshot(&device, crtc_id) {
+            Err(CaptureError::Io(error)) => assert_eq!(
+                error.raw_os_error(),
+                Some(rustix::io::Errno::NOENT.raw_os_error()),
+                "crtc {crtc_id}: {error}"
+            ),
+            other => panic!("crtc {crtc_id}: expected ENOENT, got {other:?}"),
+        }
+    }
+}

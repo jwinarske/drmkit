@@ -51,6 +51,10 @@ minor version may break the API and a patch version does not.
 - `drmkit-capture`: `snapshot` exports each plane's buffer close-on-exec, as
   the reference does, so a child spawned on another thread during a capture
   does not inherit the descriptor (P-87).
+- `drmkit-capture`: `snapshot` reports a CRTC that does not exist as
+  `CaptureError::Io` carrying `ENOENT`, as the reference does. Id 0 was
+  reported as `NoMode`, and an unknown id as an I/O error with its errno
+  turned into text (P-88).
 
 ## [0.1.2] - 2026-10-15
 

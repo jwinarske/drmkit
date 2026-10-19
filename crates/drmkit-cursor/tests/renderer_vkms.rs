@@ -778,3 +778,57 @@ fn a_cursor_off_the_top_left_corner_commits_vkms() {
         Some(result) => result.expect("a cursor hanging off the corner commits"),
     }
 }
+
+/// Dropping a legacy renderer takes its cursor off the CRTC, as the
+/// reference's destructor does.
+///
+/// Freeing the cursor buffers does not: `drmModeSetCursor` gives the kernel
+/// its own framebuffer for the sprite, which stays on the CRTC's cursor plane
+/// until something clears it. So a client that exits leaves its pointer on
+/// screen for whoever comes next.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn dropping_a_legacy_renderer_takes_its_cursor_off_vkms() {
+    use drm::control::Device as _;
+
+    let _guard = card_guard();
+    let Some((device, registry, crtc_id, crtc_index)) = fixture() else {
+        return;
+    };
+    let Some(cursor_plane) = registry
+        .all()
+        .iter()
+        .find(|p| p.plane_type == PlaneType::Cursor && p.possible_crtcs & (1 << crtc_index) != 0)
+        .map(|p| p.id)
+    else {
+        drmkit_testkit::skipped("no cursor plane to watch");
+        return;
+    };
+    let legacy_only = primary_only(&registry, crtc_index);
+    let Ok(mut renderer) = Renderer::create(&device, &legacy_only, &config(crtc_id, crtc_index))
+    else {
+        drmkit_testkit::skipped("this driver has no legacy cursor");
+        return;
+    };
+    renderer.set_cursor(square()).expect("set cursor");
+    renderer.move_to(10, 10);
+    renderer.commit().expect("install");
+
+    let shown = |device: &Device| {
+        let handle = drm::control::plane::Handle::from(
+            core::num::NonZeroU32::new(cursor_plane).expect("non-zero"),
+        );
+        device
+            .get_plane(handle)
+            .expect("plane")
+            .framebuffer()
+            .is_some()
+    };
+    assert!(
+        shown(&device),
+        "the install put a sprite on the cursor plane"
+    );
+
+    drop(renderer);
+    assert!(!shown(&device), "the sprite outlived its renderer");
+}

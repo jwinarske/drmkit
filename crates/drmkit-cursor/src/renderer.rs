@@ -112,6 +112,42 @@ pub struct Renderer<'a> {
     installed: bool,
 }
 
+impl Drop for Renderer<'_> {
+    /// Take the cursor off the CRTC, as the reference's destructor does, so
+    /// the next client does not inherit the sprite.
+    ///
+    /// Only once something was installed: a plane the kernel never saw this
+    /// use can refuse being cleared. On the legacy path, freeing the buffers
+    /// does not do it -- the kernel holds its own reference to the cursor's
+    /// framebuffer -- so without this the sprite stays on screen.
+    #[allow(
+        deprecated,
+        reason = "the legacy path installed the cursor with drmModeSetCursor, \
+                  so that is what takes it off"
+    )]
+    fn drop(&mut self) {
+        use drm::control::Device as _;
+
+        if !self.installed {
+            return;
+        }
+        if self.plane.path == PlanePath::Legacy {
+            if let Some(crtc) = crtc_handle(self.crtc_id) {
+                let _ = self.device.set_cursor::<LegacyCursor>(crtc, None);
+            }
+            return;
+        }
+        let mut request = AtomicRequest::new();
+        let plane_id = self.plane.plane_id;
+        for name in ["FB_ID", "CRTC_ID"] {
+            if let Ok(property) = self.props.property_id(plane_id, name) {
+                let _ = request.add_property(plane_id, property, 0);
+            }
+        }
+        let _ = request.commit(self.device, AtomicCommitFlags::empty());
+    }
+}
+
 impl<'a> Renderer<'a> {
     /// Set up a cursor on `config.crtc_id`.
     ///
@@ -528,12 +564,15 @@ impl<'a> Renderer<'a> {
         for buffer in &mut self.buffers {
             buffer.forget();
         }
+        // The descriptor is going, so dropping must not try to hide the
+        // cursor through it, as the reference skips that while paused.
+        self.installed = false;
         Paused {
             crtc_id: self.crtc_id,
             plane: self.plane,
             rotation_mask: self.rotation_mask,
             rotation: self.rotation,
-            cursor: self.cursor,
+            cursor: self.cursor.take(),
             drawn_frame: self.drawn_frame,
             position: self.position,
             visible: self.visible,

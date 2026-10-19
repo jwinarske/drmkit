@@ -522,43 +522,115 @@ fn a_truncated_buffer_is_survived_rather_than_indexed_past() {
     assert_ne!(pixel_at(&image, 0, 0), 0);
 }
 
+/// A `Blit` over `bytes` with a tight pitch, landing at `(x, y)` scaled to
+/// `w` x `h`.
+fn scaled(bytes: &[u8], width: u32, height: u32, x: i32, y: i32, w: u32, h: u32) -> Blit<'_> {
+    Blit {
+        crtc_w: w,
+        crtc_h: h,
+        ..at(bytes, width, height, x, y)
+    }
+}
+
+/// Pack premultiplied pixels into framebuffer bytes.
+fn framebuffer(pixels: &[u32]) -> Vec<u8> {
+    pixels.iter().flat_map(|p| p.to_ne_bytes()).collect()
+}
+
 #[test]
-fn scaling_up_repeats_source_pixels() {
-    // Nearest-neighbor: a 2x2 scaled to 4x4 is each pixel doubled. This is
-    // where the reference resamples and this does not, which is the one
-    // documented divergence in the capture path.
-    let mut bytes = Vec::new();
-    let colors = [
+fn scaling_up_filters_bilinearly_as_blend2d_does() {
+    // Every value here is the C++ reference's own output for the same plane,
+    // through the same `Blend2D` `blit_image` call. Pixel centers sit at .5,
+    // so the corners are the source corners exactly and the blend between
+    // them goes in quarters; weights truncate, so a quarter of 255 is 0x3f.
+    let bytes = framebuffer(&[
         argb(255, 255, 0, 0),
         argb(255, 0, 255, 0),
         argb(255, 0, 0, 255),
         argb(255, 255, 255, 255),
-    ];
-    for color in colors {
-        bytes.extend_from_slice(&color.to_ne_bytes());
-    }
-
+    ]);
     let mut image = Image::new(4, 4);
+    blit(&mut image, &scaled(&bytes, 2, 2, 0, 0, 4, 4));
+
+    let want: [[u32; 4]; 4] = [
+        [0xffff_0000, 0xffbf_3f00, 0xff3f_bf00, 0xff00_ff00],
+        [0xffbf_003f, 0xff9f_3f3f, 0xff5f_bf3f, 0xff3f_ff3f],
+        [0xff3f_00bf, 0xff5f_3fbf, 0xff9f_bfbf, 0xffbf_ffbf],
+        [0xff00_00ff, 0xff3f_3fff, 0xffbf_bfff, 0xffff_ffff],
+    ];
+    for (y, row) in (0..).zip(want) {
+        for (x, pixel) in (0..).zip(row) {
+            assert_eq!(pixel_at(&image, x, y), pixel, "at ({x}, {y})");
+        }
+    }
+}
+
+#[test]
+fn scaling_down_filters_rather_than_skips() {
+    // An 8x8 ramp, red across and green down, to 3x3: each output pixel blends
+    // the two-by-two about its center rather than taking one source pixel, as
+    // nearest-neighbor would (0x00, 0x40 and 0xa0). Again the reference's
+    // values.
+    let ramp: Vec<u32> = (0..8u32)
+        .flat_map(|y| (0..8u32).map(move |x| 0xff00_0000 | (x * 32) << 16 | (y * 32) << 8))
+        .collect();
+    let bytes = framebuffer(&ramp);
+    let mut image = Image::new(4, 4);
+    blit(&mut image, &scaled(&bytes, 8, 8, 0, 0, 3, 3));
+
+    assert_eq!(pixel_at(&image, 0, 0), 0xff1a_1a00);
+    assert_eq!(pixel_at(&image, 1, 1), 0xff6f_6f00);
+    assert_eq!(pixel_at(&image, 2, 1), 0xffc5_6f00);
+    assert_eq!(pixel_at(&image, 2, 2), 0xffc5_c500);
+    assert_eq!(pixel_at(&image, 3, 3), 0, "nothing outside the 3x3");
+}
+
+#[test]
+fn a_scaled_translucent_plane_off_the_left_edge_blends_where_it_lands() {
+    // Half-white beside transparent, two pixels stretched to five starting one
+    // left of the output, over opaque black. The reference's values once
+    // more: the first visible pixel is already part-way down the ramp,
+    // because the column off the edge took its share of the source.
+    let under = solid(4, 1, argb(255, 0, 0, 0));
+    let over = framebuffer(&[argb(128, 128, 128, 128), 0]);
+    let mut image = Image::new(4, 1);
+    blit(&mut image, &at(&under, 4, 1, 0, 0));
+    blit(&mut image, &scaled(&over, 2, 1, -1, 0, 5, 1));
+
+    assert_eq!(
+        image.pixels(),
+        [0xff73_7373, 0xff40_4040, 0xff0d_0d0d, 0xff00_0000]
+    );
+}
+
+#[test]
+fn a_scaled_xrgb_plane_is_opaque_whatever_its_top_byte_says() {
+    // The one place this departs from the reference on purpose: `Blend2D`'s
+    // JIT bilinear fetch interpolates XRGB's undefined byte into alpha, so
+    // the reference captures this plane transparent (drm-cxx#376).
+    let bytes = solid(2, 2, 0x0000_00ff);
+    let mut image = Image::new(4, 4);
+    let mut src = scaled(&bytes, 2, 2, 0, 0, 4, 4);
+    src.format = SourceFormat::Xrgb8888;
+    blit(&mut image, &src);
+    assert!(image.pixels().iter().all(|p| *p == 0xff00_00ff));
+}
+
+#[test]
+fn a_scaled_truncated_buffer_is_survived_rather_than_indexed_past() {
+    // As the unscaled case, through the filtering path, whose taps reach a
+    // row further.
+    let bytes = solid(2, 1, argb(255, 255, 0, 0));
+    let mut image = Image::new(4, 8);
     blit(
         &mut image,
         &Blit {
-            bytes: &bytes,
-            width: 2,
-            height: 2,
-            pitch: 8,
-            format: SourceFormat::Argb8888,
-            crtc_x: 0,
-            crtc_y: 0,
-            crtc_w: 4,
-            crtc_h: 4,
+            height: 4, // claims four rows, has one
+            ..scaled(&bytes, 2, 4, 0, 0, 4, 8)
         },
     );
-
-    assert_eq!(pixel_at(&image, 0, 0), colors[0]);
-    assert_eq!(pixel_at(&image, 1, 1), colors[0], "top-left doubled");
-    assert_eq!(pixel_at(&image, 2, 0), colors[1]);
-    assert_eq!(pixel_at(&image, 0, 2), colors[2]);
-    assert_eq!(pixel_at(&image, 3, 3), colors[3]);
+    assert_eq!(pixel_at(&image, 0, 0), argb(255, 255, 0, 0));
+    assert_eq!(pixel_at(&image, 0, 7), 0, "unreadable rows are skipped");
 }
 
 #[test]

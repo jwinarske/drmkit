@@ -361,3 +361,114 @@ fn a_snapshot_leaves_no_handle_open_vkms() {
         after.saturating_sub(before)
     );
 }
+
+/// A framebuffer whose image starts partway into its buffer object.
+struct OffsetFramebuffer {
+    handle: drm::buffer::Handle,
+    size: (u32, u32),
+    pitch: u32,
+    offset: u32,
+}
+
+impl drm::buffer::PlanarBuffer for OffsetFramebuffer {
+    fn size(&self) -> (u32, u32) {
+        self.size
+    }
+    fn format(&self) -> drm::buffer::DrmFourcc {
+        drm::buffer::DrmFourcc::Xrgb8888
+    }
+    fn modifier(&self) -> Option<drm::buffer::DrmModifier> {
+        None
+    }
+    fn pitches(&self) -> [u32; 4] {
+        [self.pitch, 0, 0, 0]
+    }
+    fn handles(&self) -> [Option<drm::buffer::Handle>; 4] {
+        [Some(self.handle), None, None, None]
+    }
+    fn offsets(&self) -> [u32; 4] {
+        [self.offset, 0, 0, 0]
+    }
+}
+
+/// The image is read from where the framebuffer says it starts.
+///
+/// A framebuffer's first plane need not begin at byte 0 of its buffer
+/// object: `offsets[0]` says where it does, as a sub-allocated or cropped
+/// buffer has it. Reading from byte 0 shifts the capture by that many rows and
+/// stops short of the last ones. Here each buffer row is painted with its own
+/// row number, and the framebuffer starts sixteen rows in.
+#[test]
+#[ignore = "needs a DRM device and DRM master"]
+fn the_image_starts_at_the_framebuffers_offset_vkms() {
+    const SKIP_ROWS: u32 = 16;
+
+    let _guard = card_guard();
+    let Some(device) = ready() else { return };
+    let resources = device.resource_handles().expect("resources");
+    let Some((crtc, connector, mode)) = resources.connectors().iter().find_map(|handle| {
+        let info = device.get_connector(*handle, false).ok()?;
+        if info.state() != drm::control::connector::State::Connected {
+            return None;
+        }
+        let mode = *info.modes().first()?;
+        info.encoders().iter().find_map(|encoder| {
+            let encoder = device.get_encoder(*encoder).ok()?;
+            let crtc = *resources.filter_crtcs(encoder.possible_crtcs()).first()?;
+            Some((crtc, *handle, mode))
+        })
+    }) else {
+        drmkit_testkit::skipped("no connected connector with a usable CRTC");
+        return;
+    };
+    let (width, height) = (u32::from(mode.size().0), u32::from(mode.size().1));
+
+    let mut buffer = device
+        .create_dumb_buffer(
+            (width, height + SKIP_ROWS),
+            drm::buffer::DrmFourcc::Xrgb8888,
+            32,
+        )
+        .expect("dumb buffer");
+    let pitch = drm::buffer::Buffer::pitch(&buffer);
+    {
+        let mut mapping = device.map_dumb_buffer(&mut buffer).expect("map");
+        for (row, bytes) in mapping.chunks_exact_mut(pitch as usize).enumerate() {
+            let color = 0xff00_0000 | u32::try_from(row).expect("small");
+            for pixel in bytes[..width as usize * 4].chunks_exact_mut(4) {
+                pixel.copy_from_slice(&color.to_ne_bytes());
+            }
+        }
+    }
+    let framebuffer = OffsetFramebuffer {
+        handle: drm::buffer::Buffer::handle(&buffer),
+        size: (width, height),
+        pitch,
+        offset: SKIP_ROWS * pitch,
+    };
+    let fb = device
+        .add_planar_framebuffer(&framebuffer, drm::control::FbCmd2Flags::empty())
+        .expect("a framebuffer with an offset");
+    device
+        .set_crtc(crtc, Some(fb), (0, 0), &[connector], Some(mode))
+        .expect("set_crtc");
+
+    let image = snapshot(&device, crtc.into());
+
+    let _ = device.set_crtc(crtc, None, (0, 0), &[], None);
+    let _ = device.destroy_framebuffer(fb);
+    let _ = device.destroy_dumb_buffer(buffer);
+
+    let image = image.expect("snapshot");
+    let row_of = |y: u32| image.pixels()[(y * image.width()) as usize] & 0x00ff_ffff;
+    assert_eq!(
+        row_of(0),
+        SKIP_ROWS,
+        "the first row is the framebuffer's, not the buffer's"
+    );
+    assert_eq!(
+        row_of(height - 1),
+        height - 1 + SKIP_ROWS,
+        "and so is the last"
+    );
+}

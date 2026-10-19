@@ -43,6 +43,11 @@ minor version may break the API and a patch version does not.
   which the kernel range-checks as a 64-bit signed value and refuses, so the
   layer was left unassigned and did not appear. It is now sign-extended, as
   the reference does (P-85).
+- `drmkit-capture`: `snapshot` reads a plane from where its framebuffer
+  starts. It read from byte 0 of the buffer object and ignored the
+  framebuffer's offset, so a framebuffer starting partway in came out shifted
+  and short of its last rows. The reference has the same bug, filed as
+  drm-cxx#374 (P-86).
 
 ## [0.1.2] - 2026-10-15
 

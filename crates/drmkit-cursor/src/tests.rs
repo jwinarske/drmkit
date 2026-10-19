@@ -159,6 +159,32 @@ fn resolve_walks_the_chain_transitively() {
 }
 
 #[test]
+fn an_index_that_is_not_utf8_still_names_its_parents() {
+    // `index.theme` is a desktop-entry file, and older themes carry a
+    // translated `Comment=` in Latin-1. The reference reads it as bytes and
+    // finds `Inherits=` regardless; refusing the whole file for one accented
+    // comment loses the theme's parents and resolves somewhere else.
+    let fixture = Fixture::new("latin1-index");
+    let child = fixture.root.join("Child");
+    std::fs::create_dir_all(child.join("cursors")).expect("theme dir");
+    std::fs::write(
+        child.join("index.theme"),
+        b"[Icon Theme]\nName=Child\nComment=Th\xe8me\nInherits=Base\n",
+    )
+    .expect("index.theme");
+    let base = fixture.theme("Base", &[]);
+    Fixture::cursor(&base, "left_ptr");
+    // Another theme with the cursor, which a lost parent would fall back to.
+    let other = fixture.theme("Aaa", &[]);
+    Fixture::cursor(&other, "left_ptr");
+
+    let theme = fixture.discover().expect("discover");
+    let found = theme.resolve("left_ptr", "Child").expect("resolve");
+    assert_eq!(found.theme_name, "Base");
+    assert_eq!(found.chain, vec!["Child", "Base"]);
+}
+
+#[test]
 fn an_alias_finds_the_legacy_name() {
     // The caller asks for the modern name; the theme ships the old one.
     let fixture = Fixture::new("alias-legacy");

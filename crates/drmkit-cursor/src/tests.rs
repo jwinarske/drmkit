@@ -2383,3 +2383,34 @@ fn shifting_moves_pixels_up_and_left_and_clears_behind_them() {
     crate::sprite::shift_up_left(&mut unchanged, 2, 2, 2, (0, 0));
     assert_eq!(unchanged, vec![1, 2, 3, 4]);
 }
+
+// --- where the cursor stacks ------------------------------------------------
+
+#[test]
+fn the_cursor_stacks_at_the_top_of_what_the_crtc_can_blend() {
+    use crate::renderer::cursor_zpos;
+    let with_range = |min: Option<u64>, max: Option<u64>| PlaneCapabilities {
+        zpos_min: min,
+        zpos_max: max,
+        ..PlaneCapabilities::default()
+    };
+
+    // The SA8155P: every plane offers 0 to 10, the CRTC blends nine.
+    assert_eq!(
+        cursor_zpos(&with_range(Some(0), Some(10)), Some(9)),
+        Some(8)
+    );
+    // No limit: the top of the plane's own range.
+    assert_eq!(
+        cursor_zpos(&with_range(Some(1), Some(255)), None),
+        Some(255)
+    );
+    // A limit below the plane's range cannot take it under its minimum.
+    assert_eq!(
+        cursor_zpos(&with_range(Some(3), Some(10)), Some(2)),
+        Some(3)
+    );
+    // Nothing to write: no zpos, or a fixed one.
+    assert_eq!(cursor_zpos(&with_range(None, None), Some(9)), None);
+    assert_eq!(cursor_zpos(&with_range(Some(2), Some(2)), None), None);
+}

@@ -1261,7 +1261,7 @@ impl LayerScene {
         committer: &mut C,
     ) -> Result<drmkit_planes::Allocation, SceneError> {
         let reserved = canvas_reservation(
-            self.canvas.is_some(),
+            self.canvas_fourcc(),
             refs,
             registry,
             crtc_index,
@@ -2130,7 +2130,7 @@ struct Composition {
 /// Not reachable on vkms, which exposes no zpos property at all, so nothing
 /// in CI can show this. See P-26.
 pub(crate) fn canvas_reservation(
-    has_canvas: bool,
+    canvas_fourcc: Option<u32>,
     refs: &[LayerRef<'_>],
     registry: &PlaneRegistry,
     crtc_index: u32,
@@ -2138,9 +2138,17 @@ pub(crate) fn canvas_reservation(
 ) -> Vec<u32> {
     // Planes stacked by id: the allocator places the canvas itself, between
     // the layers it carries.
-    if !has_canvas || drmkit_planes::stacks_by_plane_id(registry, crtc_index) {
+    let Some(canvas_fourcc) = canvas_fourcc else {
+        return Vec::new();
+    };
+    if drmkit_planes::stacks_by_plane_id(registry, crtc_index) {
         return Vec::new();
     }
+    // A host scans the canvas out as it is: linear, in its own format, as the
+    // reference's `plane_hosts_canvas` asks. Any format the canvas could have
+    // been made in is not enough once it has been made.
+    let hosts_canvas =
+        |plane: &drmkit_planes::PlaneCapabilities| plane.scans_out_linear(canvas_fourcc);
     let candidates: Vec<&drmkit_planes::PlaneCapabilities> =
         registry.force_disable_candidates(crtc_index).collect();
     if candidates.is_empty() {
@@ -2154,7 +2162,7 @@ pub(crate) fn canvas_reservation(
             .iter()
             .find(|plane| plane.plane_type == drmkit_planes::PlaneType::Primary)
         && let Some(pin) = primary.zpos_min
-        && crate::canvas_format_for_plane(primary).is_some()
+        && hosts_canvas(primary)
     {
         let zposes: Vec<Option<u64>> = refs
             .iter()
@@ -2171,7 +2179,7 @@ pub(crate) fn canvas_reservation(
 
     let hosts: Vec<u32> = candidates
         .iter()
-        .filter(|plane| crate::canvas_format_for_plane(plane).is_some())
+        .filter(|plane| hosts_canvas(plane))
         .map(|plane| plane.id)
         .collect();
     // Not a multirect virtual plane: reserved, it stays armed through the

@@ -1149,6 +1149,7 @@ mod stride_tests {
         let formats = [fourcc::ARGB8888, fourcc::XRGB8888, fourcc::RGB565];
         let plane = PlaneCapabilities {
             format_table: drmkit_fmt::FormatTable::from_pairs(formats.map(|f| (f, afbc))),
+            has_format_modifiers: true,
             ..plane_with(&formats)
         };
         assert_eq!(canvas_format_for_plane(&plane), None);
@@ -1162,6 +1163,7 @@ mod stride_tests {
                 (fourcc::ARGB8888, afbc),
                 (fourcc::XRGB8888, drmkit_fmt::Modifier::LINEAR),
             ]),
+            has_format_modifiers: true,
             ..plane_with(&[fourcc::ARGB8888, fourcc::XRGB8888])
         };
         assert_eq!(canvas_format_for_plane(&plane), Some(fourcc::XRGB8888));

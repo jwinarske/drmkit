@@ -553,6 +553,7 @@ fn scans_out_reads_the_layout_from_in_formats() {
     let afbc = Modifier(0x0800_0000_0000_0001);
     let cluster = PlaneCapabilities {
         format_table: FormatTable::from_pairs([(fourcc::ARGB8888, afbc)]),
+        has_format_modifiers: true,
         ..plane(96, PlaneType::Overlay, 0b1, &[fourcc::ARGB8888])
     };
     assert!(
@@ -563,9 +564,12 @@ fn scans_out_reads_the_layout_from_in_formats() {
     assert!(!cluster.scans_out_linear(fourcc::ARGB8888));
     assert!(!cluster.scans_out(fourcc::ARGB8888, Modifier::INVALID));
 
-    // Without IN_FORMATS the bare list is all there is to go on.
+    // Without IN_FORMATS the bare list is all there is to go on, and it says
+    // linear only: upstream's `ScansOutWithoutInFormatsIsLinearOnly`.
     let bare = plane(56, PlaneType::Primary, 0b1, &[fourcc::ARGB8888]);
     assert!(bare.scans_out_linear(fourcc::ARGB8888));
+    assert!(bare.scans_out(fourcc::ARGB8888, Modifier::INVALID));
+    assert!(!bare.scans_out(fourcc::ARGB8888, afbc));
     assert!(!bare.scans_out_linear(fourcc::NV12));
 }
 

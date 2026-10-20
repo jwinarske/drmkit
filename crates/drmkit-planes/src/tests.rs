@@ -1947,6 +1947,29 @@ fn without_a_secure_ui_stage_every_stage_above_the_base_is_usable() {
     );
 }
 
+/// Upstream's `BlendLimit.BaseLayerUsableForAStage`, and a secure-UI stage of
+/// 0, which holds nothing back rather than leaving the CRTC unlimited.
+#[test]
+fn the_base_stage_counts_when_the_blob_says_planes_can_use_it() {
+    assert_eq!(
+        crate::parse_blend_stage_limit(b"max_blendstages=11\nuse_baselayer_for_stage=1\n"),
+        Some(11)
+    );
+    assert_eq!(
+        crate::parse_blend_stage_limit(b"max_blendstages=1\nuse_baselayer_for_stage=1\n"),
+        Some(1)
+    );
+    assert_eq!(
+        crate::parse_blend_stage_limit(b"max_blendstages=11\nsec_ui_blendstage=0\n"),
+        Some(10)
+    );
+    assert_eq!(
+        crate::parse_blend_stage_limit(b"max_blendstages=4294967296\n"),
+        None,
+        "a value past 32 bits is no number, as for the reference"
+    );
+}
+
 #[test]
 fn a_blob_that_does_not_say_sets_no_limit() {
     assert_eq!(crate::parse_blend_stage_limit(b""), None);

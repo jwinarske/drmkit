@@ -63,19 +63,24 @@ pub fn multirect_pairing_ok(parent: Option<u32>, in_use: impl Fn(u32) -> bool) -
 /// SA8155P publishes 11 and 10, so it stacks nine planes, zpos 0 to 8, while
 /// every plane advertises a zpos range of `[0, 10]`; a zpos of 9 or 10 is
 /// refused even on a lone plane (P-46).
+///
+/// As the reference's `parse_blend_limit` reads it: a `sec_ui_blendstage` of
+/// 0 holds nothing back, and `use_baselayer_for_stage=1` makes the base a
+/// stage a plane can use.
 #[must_use]
 pub fn parse_blend_stage_limit(caps_text: &[u8]) -> Option<usize> {
-    let max = key_value(caps_text, b"max_blendstages=")?;
-    let first_unusable = key_value(caps_text, b"sec_ui_blendstage=")
-        .filter(|stage| *stage < max)
+    let max = key_value(caps_text, b"max_blendstages=").filter(|max| *max != 0)?;
+    let top = key_value(caps_text, b"sec_ui_blendstage=")
+        .filter(|stage| *stage > 0 && *stage < max)
         .unwrap_or(max);
-    usize::try_from(first_unusable.checked_sub(1)?)
-        .ok()
-        .filter(|limit| *limit > 0)
+    let base_usable = key_value(caps_text, b"use_baselayer_for_stage=").unwrap_or(0) != 0;
+    let limit = if base_usable { top } else { top - 1 };
+    usize::try_from(limit).ok().filter(|limit| *limit > 0)
 }
 
-/// The unsigned number after `key` at the start of a line of `caps_text`.
-fn key_value(caps_text: &[u8], key: &[u8]) -> Option<u64> {
+/// The unsigned 32-bit number after `key` at the start of a line of
+/// `caps_text`. One that does not fit is no number, as for the reference.
+fn key_value(caps_text: &[u8], key: &[u8]) -> Option<u32> {
     let mut from = 0;
     while let Some(offset) = caps_text[from..]
         .windows(key.len())

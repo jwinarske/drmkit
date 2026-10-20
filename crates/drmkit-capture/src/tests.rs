@@ -422,6 +422,21 @@ fn argb_with_a_zero_alpha_really_is_invisible() {
 }
 
 #[test]
+fn a_color_above_its_alpha_is_clamped_to_it_as_the_reference_does() {
+    // Values from drm-cxx#375, over opaque white. Unclamped, the red add of
+    // the second carries past 255 and is left as 0x47; the first, fully
+    // transparent, must leave the white alone either way.
+    let white = solid(2, 2, 0xffff_ffff);
+    for (over, expected) in [(0x0000_ff00, 0xffff_ffff), (0x80c8_3748, 0xffff_b6c7)] {
+        let bytes = solid(2, 2, over);
+        let mut image = Image::new(2, 2);
+        blit(&mut image, &at(&white, 2, 2, 0, 0));
+        blit(&mut image, &at(&bytes, 2, 2, 0, 0));
+        assert_eq!(pixel_at(&image, 0, 0), expected, "{over:#010x} over white");
+    }
+}
+
+#[test]
 fn planes_stack_in_the_order_they_are_blitted() {
     let red = argb(255, 255, 0, 0);
     let blue = argb(255, 0, 0, 255);

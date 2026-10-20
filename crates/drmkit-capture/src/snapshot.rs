@@ -45,7 +45,9 @@ impl SourceFormat {
     /// which is invisible in isolation and obvious in a gradient.
     fn read(self, chunk: &[u8]) -> u32 {
         match self {
-            Self::Argb8888 => u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
+            Self::Argb8888 => {
+                clamp_to_alpha(u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            }
             // The top byte means nothing, so state that the plane is opaque:
             // a buffer that happens to hold zero there would otherwise vanish.
             Self::Xrgb8888 => {
@@ -63,6 +65,20 @@ impl SourceFormat {
             }
         }
     }
+}
+
+/// Clamp each color channel of an `ARGB8888` pixel to its alpha, as the
+/// reference does.
+///
+/// Scanout is premultiplied by KMS convention, but nothing stops a buffer
+/// holding a channel above its alpha: straight-alpha content, or a transparent
+/// pixel that keeps its color. `SRC_OVER` assumes otherwise, and its per-channel
+/// add would carry past 255 into the next channel, so an opaque layer under such
+/// a pixel could come out transparent.
+fn clamp_to_alpha(px: u32) -> u32 {
+    let a = px >> 24;
+    let channel = |shift: u32| ((px >> shift) & 0xff).min(a);
+    (a << 24) | (channel(16) << 16) | (channel(8) << 8) | channel(0)
 }
 
 /// One plane's pixels and where they land, with no ownership of either.

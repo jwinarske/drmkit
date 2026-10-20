@@ -34,24 +34,42 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
 
+      # vkms lives in linux-modules-extra, which has to match the kernel the
+      # guest boots. That is the runner's own kernel when the archive has its
+      # modules -- but a runner image can ship a kernel before its
+      # linux-modules-extra is published (7.0.0-1017-azure, 2026-10-20), and
+      # then the lane cannot load vkms at all. So fall back to the newest
+      # kernel whose modules the archive does have, and boot that one in the
+      # guest instead: nothing here needs the runner's own kernel, only a
+      # kernel with vkms.
       - name: install virtme-ng
         run: |
           sudo apt-get update
+          kver=$(uname -r)
+          if ! apt-cache show "linux-modules-extra-$kver" >/dev/null 2>&1; then
+            flavor=${kver##*-}
+            kver=$(apt-cache search --names-only "^linux-modules-extra-[0-9].*-$flavor\$" \
+              | awk '{print $1}' | sed 's/^linux-modules-extra-//' | sort -V | tail -n 1)
+            test -n "$kver" || { echo "::error::no linux-modules-extra for any $flavor kernel"; exit 1; }
+            echo "::notice::no linux-modules-extra for $(uname -r); booting $kver in the guest"
+            sudo apt-get install -y "linux-image-$kver"
+          fi
+          echo "KVER=$kver" >> "$GITHUB_ENV"
           # libgbm is named explicitly, though drmkit-gbm opens it at run time
           # and it arrives anyway as a transitive of the qemu/mesa stack:
           # depending on that is depending on someone else's dependency list
           # not changing.
-          sudo apt-get install -y virtme-ng qemu-system-x86 linux-modules-extra-$(uname -r) libgbm-dev libseat-dev libxkbcommon-dev xkb-data libinput-dev libudev-dev
+          sudo apt-get install -y virtme-ng qemu-system-x86 "linux-modules-extra-$kver" libgbm-dev libseat-dev libxkbcommon-dev xkb-data libinput-dev libudev-dev
 
       - name: confirm vkms is available
-        run: modinfo vkms
+        run: modinfo -k "$KVER" vkms
 
-      # virtme-ng boots the host kernel image directly, and GitHub runners ship
+      # virtme-ng boots the kernel image directly, and GitHub runners ship
       # /boot/vmlinuz-* readable only by root. Without this the lane fails with
       # "unable to access /boot/vmlinuz-... (check for read permissions)",
       # which reads like a virtme bug rather than a permissions one.
-      - name: make the host kernel image readable
-        run: sudo chmod +r "/boot/vmlinuz-$(uname -r)"
+      - name: make the guest kernel image readable
+        run: sudo chmod +r "/boot/vmlinuz-$KVER"
 
       # Build on the host, run the resulting binaries in the guest. The obvious
       # alternative -- calling cargo inside the VM -- means dragging the whole
@@ -138,7 +156,7 @@ jobs:
         # anything.
         run: |
           set -o pipefail
-          vng --run --verbose --cpus 2 --memory 2G --exec "$PWD/run-in-vm.sh" \
+          vng --run "/boot/vmlinuz-$KVER" --verbose --cpus 2 --memory 2G --exec "$PWD/run-in-vm.sh" \
             2>&1 | tee vkms-run.txt
 
       # Which cases actually asserted here, rather than how many reported ok.
@@ -196,7 +214,7 @@ jobs:
             echo 'exit "$rc"'
           } > run-gbm-shapes.sh
           chmod +x run-gbm-shapes.sh
-          vng --run --verbose --cpus 2 --memory 2G --exec "$PWD/run-gbm-shapes.sh"
+          vng --run "/boot/vmlinuz-$KVER" --verbose --cpus 2 --memory 2G --exec "$PWD/run-gbm-shapes.sh"
 
       - name: keep what the lane covered
         if: always()

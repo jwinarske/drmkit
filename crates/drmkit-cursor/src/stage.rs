@@ -25,6 +25,27 @@ pub fn plane_origin(pointer: (i32, i32), hotspot: (u32, u32)) -> (i32, i32) {
     (back(pointer.0, hotspot.0), back(pointer.1, hotspot.1))
 }
 
+/// How far to move the sprite up and left inside its buffer so the plane need
+/// not start above or left of the CRTC (drm-cxx#384).
+///
+/// Some drivers -- the SA8155P's -- refuse a negative `CRTC_X`/`CRTC_Y`, and
+/// the usual fix, trimming the source, is refused by others: i915 and amdgpu
+/// take no source offset on a cursor plane. Moving the pixels works on all of
+/// them. The plane goes to the edge and the sprite is drawn shifted by what
+/// would have hung off it.
+///
+/// At most the hotspot, so the hotspot never leaves the buffer: a pointer
+/// that is itself off the top or left of the CRTC keeps a negative position,
+/// as before.
+#[must_use]
+pub fn edge_shift(pointer: (i32, i32), hotspot: (u32, u32)) -> (u32, u32) {
+    let (x, y) = plane_origin(pointer, hotspot);
+    let shift = |origin: i32, hotspot: u32| {
+        u32::try_from(-i64::from(origin)).map_or(0, |overhang| overhang.min(hotspot))
+    };
+    (shift(x, hotspot.0), shift(y, hotspot.1))
+}
+
 /// What to write to the plane's `rotation` property.
 ///
 /// The requested rotation when the plane advertises it, and `ROTATE_0`

@@ -335,3 +335,33 @@ fn hotspot_in_buffer(
     };
     (place(hx, x_off), place(hy, y_off))
 }
+
+/// Move a composed buffer's pixels `shift` up and left, clearing what they
+/// leave behind.
+///
+/// For a cursor at the top or left edge: see
+/// [`edge_shift`](crate::edge_shift). The pixels moved past the edge
+/// are the ones that would have been off-screen anyway.
+pub(crate) fn shift_up_left(
+    dst: &mut [u32],
+    dst_w: u32,
+    dst_h: u32,
+    stride_px: usize,
+    shift: (u32, u32),
+) {
+    let (sx, sy) = (shift.0.min(dst_w) as usize, shift.1.min(dst_h) as usize);
+    if sx == 0 && sy == 0 {
+        return;
+    }
+    let (w, h) = (dst_w as usize, dst_h as usize);
+    for y in 0..h {
+        let row = y * stride_px;
+        if y + sy < h {
+            let from = (y + sy) * stride_px + sx;
+            dst.copy_within(from..from + (w - sx), row);
+            dst[row + w - sx..row + w].fill(0);
+        } else {
+            dst[row..row + w].fill(0);
+        }
+    }
+}

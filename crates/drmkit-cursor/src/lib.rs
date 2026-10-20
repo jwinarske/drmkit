@@ -34,7 +34,7 @@ pub use plane::{CURSOR_FORMATS, PlanePath, SelectedPlane, select_plane};
 pub use renderer::{Paused, Renderer, RendererConfig};
 pub use size::{preferred_size, probe_size};
 pub use sprite::{Placement, Rotation, compose};
-pub use stage::{PlaneState, hardware_rotation, plane_origin, stage};
+pub use stage::{PlaneState, edge_shift, hardware_rotation, plane_origin, stage};
 pub use theme::{Theme, ThemeResolution, default_search_paths};
 
 /// What can go wrong finding a cursor.

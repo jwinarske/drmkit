@@ -2351,3 +2351,35 @@ fn the_pair_returns_to_where_it_started() {
     }
     assert_eq!(buffers, PingPong::new());
 }
+
+// --- the top and left edges ------------------------------------------------
+
+#[test]
+fn a_cursor_at_the_edge_shifts_by_its_overhang() {
+    use crate::stage::edge_shift;
+
+    // drm-cxx#384: the plane would start 39 pixels off each edge.
+    assert_eq!(edge_shift((1, 1), (40, 40)), (39, 39));
+    assert_eq!(edge_shift((100, 1), (40, 40)), (0, 39), "only the top");
+    assert_eq!(edge_shift((100, 200), (40, 40)), (0, 0), "nowhere near");
+    assert_eq!(
+        edge_shift((40, 40), (40, 40)),
+        (0, 0),
+        "exactly at the edge"
+    );
+    // A pointer itself off the edge moves the sprite no further than its
+    // hotspot, which stays in the buffer.
+    assert_eq!(edge_shift((-5, 10), (8, 8)), (8, 0));
+}
+
+#[test]
+fn shifting_moves_pixels_up_and_left_and_clears_behind_them() {
+    // A 3x3 image in a stride of 4; the padding column must not be touched.
+    let mut pixels = vec![1, 2, 3, 99, 4, 5, 6, 99, 7, 8, 9, 99];
+    crate::sprite::shift_up_left(&mut pixels, 3, 3, 4, (1, 2));
+    assert_eq!(pixels, vec![8, 9, 0, 99, 0, 0, 0, 99, 0, 0, 0, 99]);
+
+    let mut unchanged = vec![1, 2, 3, 4];
+    crate::sprite::shift_up_left(&mut unchanged, 2, 2, 2, (0, 0));
+    assert_eq!(unchanged, vec![1, 2, 3, 4]);
+}

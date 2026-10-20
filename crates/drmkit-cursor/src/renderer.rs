@@ -26,7 +26,7 @@ use crate::pingpong::PingPong;
 use crate::plane::{PlanePath, SelectedPlane, select_plane};
 use crate::size::{preferred_size, probe_size};
 use crate::sprite::{self, Placement, Rotation};
-use crate::stage::{PlaneState, stage};
+use crate::stage::{PlaneState, edge_shift, stage};
 
 /// How to set a renderer up.
 #[derive(Debug, Clone, Copy)]
@@ -98,6 +98,10 @@ pub struct Renderer<'a> {
     /// The loaded cursor, and where its current frame landed in the buffer.
     cursor: Option<Cursor>,
     placement: Option<Placement>,
+    /// How far the drawn sprite was moved up and left, from
+    /// [`edge_shift`]. Subtracted from
+    /// `placement`'s hotspot wherever the hotspot is used.
+    shift: (u32, u32),
     /// Which animation frame is in the buffer, so a tick that does not change
     /// it does no work.
     drawn_frame: Option<usize>,
@@ -246,6 +250,7 @@ impl<'a> Renderer<'a> {
             which: PingPong::new(),
             cursor: None,
             placement: None,
+            shift: (0, 0),
             drawn_frame: None,
             position: (0, 0),
             visible: true,
@@ -313,6 +318,7 @@ impl<'a> Renderer<'a> {
             which: PingPong::single(),
             cursor: None,
             placement: None,
+            shift: (0, 0),
             drawn_frame: None,
             position: (0, 0),
             visible: true,
@@ -365,6 +371,25 @@ impl<'a> Renderer<'a> {
         }
     }
 
+    /// Whether the hardware turns the buffer as it scans it out.
+    ///
+    /// The edge shift is not drawn then: the buffer's top-left is not the
+    /// screen's, so moving the pixels up and left would move them the wrong
+    /// way. Such a cursor keeps its negative position at the edge.
+    const fn hardware_turns_the_sprite(&self) -> bool {
+        self.rotates_in_hardware() && !matches!(self.rotation, Rotation::None)
+    }
+
+    /// The hotspot in the buffer as drawn, after any edge shift.
+    fn drawn_hotspot(&self) -> Option<(u32, u32)> {
+        self.placement.map(|placed| {
+            (
+                placed.hotspot_x.saturating_sub(self.shift.0),
+                placed.hotspot_y.saturating_sub(self.shift.1),
+            )
+        })
+    }
+
     /// Change which way up the cursor is, redrawing it.
     ///
     /// # Errors
@@ -410,6 +435,42 @@ impl<'a> Renderer<'a> {
         self.visible = visible;
     }
 
+    /// Bring the buffer up to date with the pointer's position.
+    ///
+    /// Near the top or left edge of the CRTC the sprite is drawn moved up and
+    /// left inside its buffer, so the plane starts at the edge rather than
+    /// off it: some drivers refuse a negative position (drm-cxx#384). A move
+    /// into or out of that band, or within it, redraws the current frame.
+    /// [`Renderer::commit`] calls this; a caller coalescing through
+    /// [`Renderer::stage_into`] calls it first. Skipped, the commit carries
+    /// the negative position, as before.
+    ///
+    /// Returns whether the buffer changed.
+    ///
+    /// # Errors
+    ///
+    /// [`CursorError::Io`] if the buffer cannot be mapped.
+    pub fn prepare(&mut self) -> Result<bool, CursorError> {
+        let (Some(placement), Some(index)) = (self.placement, self.drawn_frame) else {
+            return Ok(false);
+        };
+        let wanted = if self.hardware_turns_the_sprite() {
+            (0, 0)
+        } else {
+            edge_shift(self.position, (placement.hotspot_x, placement.hotspot_y))
+        };
+        if wanted == self.shift {
+            return Ok(false);
+        }
+        self.draw(index)?;
+        // The legacy ioctls may upload the sprite only when handed a buffer,
+        // as for a new shape.
+        if self.plane.path == PlanePath::Legacy {
+            self.installed = false;
+        }
+        Ok(true)
+    }
+
     /// Advance an animation, drawing a new frame if one is due.
     ///
     /// Returns whether the buffer changed, so a caller can skip a commit that
@@ -435,7 +496,8 @@ impl<'a> Renderer<'a> {
 
     /// Write the cursor's current state into `request`.
     ///
-    /// For coalescing with the rest of a frame. The caller commits, and calls
+    /// For coalescing with the rest of a frame. The caller calls
+    /// [`Renderer::prepare`] first, commits, and calls
     /// [`Renderer::published`] afterwards.
     ///
     /// # Errors
@@ -460,9 +522,7 @@ impl<'a> Renderer<'a> {
             height: buffer.height(),
             pointer_x: self.position.0,
             pointer_y: self.position.1,
-            hotspot: self
-                .placement
-                .map(|placed| (placed.hotspot_x, placed.hotspot_y)),
+            hotspot: self.drawn_hotspot(),
             // What the hardware is asked for. When it cannot do the turn,
             // `draw` already did it and this must ask for none.
             rotation: if self.rotates_in_hardware() {
@@ -492,6 +552,7 @@ impl<'a> Renderer<'a> {
     /// [`CursorError::MissingProperty`] from staging, or [`CursorError::Io`]
     /// if the kernel refuses the commit.
     pub fn commit(&mut self) -> Result<(), CursorError> {
+        self.prepare()?;
         if self.plane.path == PlanePath::Legacy {
             return self.commit_legacy();
         }
@@ -524,9 +585,7 @@ impl<'a> Renderer<'a> {
         use drm::control::Device as _;
 
         let crtc = crtc_handle(self.crtc_id).ok_or(CursorError::Unsupported)?;
-        let hotspot = self
-            .placement
-            .map_or((0, 0), |placed| (placed.hotspot_x, placed.hotspot_y));
+        let hotspot = self.drawn_hotspot().unwrap_or((0, 0));
 
         if !self.visible {
             self.device
@@ -596,6 +655,8 @@ impl<'a> Renderer<'a> {
 
         // Read what depends on `self` before the buffer is borrowed mutably.
         let rotation = self.draw_rotation();
+        let hardware_turned = self.hardware_turns_the_sprite();
+        let position = self.position;
         let fourcc = self.plane.fourcc;
         let target = self.which.draw_target();
         let buffer = &mut self.buffers[target];
@@ -604,6 +665,12 @@ impl<'a> Renderer<'a> {
 
         let mut scratch = vec![0u32; height as usize * stride_px];
         let placement = sprite::compose(&frame, rotation, &mut scratch, width, height, stride_px);
+        let shift = if hardware_turned {
+            (0, 0)
+        } else {
+            edge_shift(position, (placement.hotspot_x, placement.hotspot_y))
+        };
+        sprite::shift_up_left(&mut scratch, width, height, stride_px, shift);
 
         {
             let mut mapping = buffer.map(MapAccess::Write);
@@ -620,6 +687,7 @@ impl<'a> Renderer<'a> {
         }
 
         self.placement = Some(placement);
+        self.shift = shift;
         self.drawn_frame = Some(index);
         self.which.mark_drawn();
         Ok(())
@@ -830,6 +898,7 @@ impl Paused {
             },
             cursor: self.cursor,
             placement: None,
+            shift: (0, 0),
             drawn_frame: None,
             position: self.position,
             visible: self.visible,

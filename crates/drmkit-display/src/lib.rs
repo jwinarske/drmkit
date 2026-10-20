@@ -77,7 +77,7 @@ pub use hdr_cache::HdrMetadataCache;
 #[cfg(feature = "hotplug")]
 pub use hotplug::{HotplugEvent, HotplugMonitor, Source};
 pub use modes::{ConnectorModes, Probe, query_connector_modes};
-pub use pipeline::{CrtcColorPipeline, PipelineError, Stage};
+pub use pipeline::{CrtcColorPipeline, PausedPipeline, PipelineError, Stage};
 pub use profile::{
     DriverProfile, PanelSelfRefresh, PrimeCaps, connector_type_self_refreshes, decode_prime_caps,
 };

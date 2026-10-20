@@ -8,6 +8,20 @@ minor version may break the API and a patch version does not.
 
 ## [Unreleased]
 
+### Added
+
+- `drmkit-display`: `CrtcColorPipeline::pause` and `PausedPipeline::resume`,
+  the port of the reference's `clear_for_session_loss` and new
+  `on_session_resumed`. A paused pipeline forgets its blobs and has no
+  setters; resumed on the new device, it keeps the CRTC's property ids and
+  stages there (drm-cxx#372, P-82).
+
+### Deprecated
+
+- `drmkit-display`: `CrtcColorPipeline::forget_for_session_loss`, which kept
+  the pipeline on the device whose session was lost. Use `pause` and
+  `PausedPipeline::resume`. It remains until 0.2.
+
 ### Fixed
 
 - `drmkit-display`: `DriverProfile::vrr_capable` is true only when a

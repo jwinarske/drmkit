@@ -257,3 +257,51 @@ fn an_apply_writes_only_what_was_staged() {
         + usize::from(capabilities.has_gamma_lut);
     assert_eq!(request.len(), expected);
 }
+
+#[test]
+#[ignore = "needs a DRM device"]
+fn a_paused_pipeline_resumes_on_the_new_device() {
+    // drm-cxx#372: after a session loss the pipeline has to stage on the
+    // resumed descriptor, with the property ids it already resolved.
+    let _guard = card_guard();
+    let Some(before) = open_card() else { return };
+    let Some(crtc_id) = any_pipeline(&before) else {
+        assert!(no_pipeline_anywhere(&before));
+        drmkit_testkit::skipped("no CRTC on this device has a color pipeline");
+        return;
+    };
+
+    let mut pipeline = CrtcColorPipeline::new(&before, crtc_id).expect("pipeline");
+    pipeline.set_identity().expect("identity");
+    let paused = pipeline.pause();
+    drop(before); // session loss: the descriptor closes
+
+    let Some(after) = open_card() else { return };
+    let mut pipeline = paused.resume(&after);
+    let mut request = drmkit_core::AtomicRequest::new();
+    pipeline.apply(&mut request).expect("apply");
+    assert_eq!(
+        request.len(),
+        0,
+        "a stage staged before the pause survived it"
+    );
+
+    pipeline
+        .set_identity()
+        .expect("identity on the resumed device");
+    let capabilities = *pipeline.capabilities();
+    let expected = usize::from(capabilities.has_degamma_lut)
+        + usize::from(capabilities.has_ctm)
+        + usize::from(capabilities.has_gamma_lut);
+    let mut request = drmkit_core::AtomicRequest::new();
+    pipeline.apply(&mut request).expect("apply");
+    assert_eq!(request.len(), expected, "the property ids were not kept");
+
+    for stage in [Stage::Degamma, Stage::Ctm, Stage::Gamma] {
+        if let Some(blob) = pipeline.blob_id(stage) {
+            after.property_blob(blob).unwrap_or_else(|error| {
+                panic!("{stage:?} blob {blob} is not on the resumed device: {error}")
+            });
+        }
+    }
+}

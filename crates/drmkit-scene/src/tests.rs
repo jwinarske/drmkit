@@ -629,7 +629,7 @@ fn lowering_input() -> LoweringInput {
             ..DisplayParams::default()
         },
         format: SourceFormat {
-            fourcc: 0x3234_5258, // XR24
+            fourcc: drmkit_fmt::fourcc::XRGB8888,
             modifier: 0,
             width: 1920,
             height: 1080,
@@ -749,7 +749,7 @@ fn format_and_modifier_reach_the_property_bag() {
     let mut plane_layer = PlaneLayer::new();
     lower_layer(&input, &mut plane_layer);
 
-    assert_eq!(plane_layer.format(), Some(0x3234_5258));
+    assert_eq!(plane_layer.format(), Some(drmkit_fmt::fourcc::XRGB8888));
     assert_eq!(plane_layer.modifier(), 0x0800_0000_0000_0001);
 }
 
@@ -817,13 +817,17 @@ fn alpha_is_written_only_when_requested() {
     assert_eq!(with_alpha.property(PropTag::Alpha), Some(0x8000));
 }
 
-/// A negative destination position round-trips: a plane may extend off-screen,
-/// and KMS carries `CRTC_X`/`CRTC_Y` as signed values in unsigned slots.
+/// A negative destination position that is not clipped round-trips: KMS
+/// carries `CRTC_X`/`CRTC_Y` as signed values in unsigned slots.
+///
+/// Rotated, so the position stays negative; an unrotated layer is clipped
+/// (see `a_layer_off_the_top_left_is_clipped_to_the_crtc`).
 #[test]
 fn a_negative_destination_position_round_trips() {
     let mut input = lowering_input();
     input.display.dst_rect.x = -64;
     input.display.dst_rect.y = -32;
+    input.display.rotation = 1 << 1; // DRM_MODE_ROTATE_90
 
     let mut plane_layer = PlaneLayer::new();
     lower_layer(&input, &mut plane_layer);
@@ -839,6 +843,137 @@ fn a_negative_destination_position_round_trips() {
     assert_eq!(
         plane_layer.property(PropTag::CrtcY),
         Some((-32_i64).cast_unsigned())
+    );
+}
+
+/// The six properties a clip touches, in order: `CRTC_X/Y/W/H`, then
+/// `SRC_X/Y/W/H` in 16.16.
+fn placed(plane_layer: &PlaneLayer) -> [Option<u64>; 8] {
+    [
+        PropTag::CrtcX,
+        PropTag::CrtcY,
+        PropTag::CrtcW,
+        PropTag::CrtcH,
+        PropTag::SrcX,
+        PropTag::SrcY,
+        PropTag::SrcW,
+        PropTag::SrcH,
+    ]
+    .map(|tag| plane_layer.property(tag))
+}
+
+/// drm-cxx#384: a destination starting above or left of the CRTC is clipped to
+/// it, and the source trimmed by the same amount, since the SA8155P's driver
+/// refuses a negative `CRTC_X`/`CRTC_Y` outright.
+#[test]
+fn a_layer_off_the_top_left_is_clipped_to_the_crtc() {
+    let mut input = lowering_input();
+    input.format.width = 64;
+    input.format.height = 64;
+    input.display.dst_rect = Rect {
+        x: -16,
+        y: -8,
+        w: 64,
+        h: 64,
+    };
+
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&input, &mut plane_layer);
+
+    assert_eq!(
+        placed(&plane_layer),
+        [0, 0, 48, 56, 16 << 16, 8 << 16, 48 << 16, 56 << 16].map(Some)
+    );
+}
+
+/// A scaled layer's source is trimmed in proportion, rounded as the kernel's
+/// `drm_rect_clip_scaled` rounds: up when upscaling, down otherwise, keeping
+/// the source's far edge where it was.
+#[test]
+fn a_scaled_layer_is_trimmed_in_proportion_as_the_kernel_would() {
+    let mut input = lowering_input();
+    input.format.width = 64;
+    input.format.height = 64;
+
+    // Upscaled 2x: ten destination pixels off the left are five of source.
+    input.display.dst_rect = Rect {
+        x: -10,
+        y: 0,
+        w: 128,
+        h: 128,
+    };
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&input, &mut plane_layer);
+    assert_eq!(
+        placed(&plane_layer),
+        [0, 0, 118, 128, 5 << 16, 0, 59 << 16, 64 << 16].map(Some)
+    );
+
+    // Downscaled by 30/64, an uneven ratio: 64 * 23 / 30 source pixels kept,
+    // rounded down in 16.16.
+    input.display.dst_rect = Rect {
+        x: 0,
+        y: -7,
+        w: 30,
+        h: 30,
+    };
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&input, &mut plane_layer);
+    let kept = (64_u64 << 16) * 23 / 30;
+    assert_eq!(
+        placed(&plane_layer),
+        [0, 0, 30, 23, 0, (64 << 16) - kept, 64 << 16, kept].map(Some)
+    );
+}
+
+/// What is not clipped: a rotated layer, whose trimmed edge would be a
+/// different one; a chroma-subsampled format, which an odd trim would start
+/// between chroma samples; and a layer with nothing on screen.
+#[test]
+fn a_layer_the_clip_cannot_serve_keeps_its_position() {
+    let off_corner = Rect {
+        x: -16,
+        y: -8,
+        w: 64,
+        h: 64,
+    };
+    let unclipped = [
+        (-16_i64).cast_unsigned(),
+        (-8_i64).cast_unsigned(),
+        64,
+        64,
+        0,
+        0,
+        64 << 16,
+        64 << 16,
+    ]
+    .map(Some);
+
+    let mut input = lowering_input();
+    input.format.width = 64;
+    input.format.height = 64;
+    input.display.dst_rect = off_corner;
+
+    let mut rotated = input;
+    rotated.display.rotation = 1 << 2; // DRM_MODE_ROTATE_180
+    let mut nv12 = input;
+    nv12.format.fourcc = drmkit_fmt::fourcc::NV12;
+    let mut yuyv = input;
+    yuyv.format.fourcc = drmkit_fmt::fourcc::YUYV;
+    for (what, case) in [("rotated", rotated), ("NV12", nv12), ("YUYV", yuyv)] {
+        let mut plane_layer = PlaneLayer::new();
+        lower_layer(&case, &mut plane_layer);
+        assert_eq!(placed(&plane_layer), unclipped, "{what}");
+    }
+
+    let mut gone = input;
+    gone.display.dst_rect.x = -64;
+    let mut plane_layer = PlaneLayer::new();
+    lower_layer(&gone, &mut plane_layer);
+    assert_eq!(
+        plane_layer.property(PropTag::CrtcX),
+        Some((-64_i64).cast_unsigned()),
+        "entirely off-screen"
     );
 }
 

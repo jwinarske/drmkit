@@ -111,6 +111,11 @@ minor version may break the API and a patch version does not.
   LUT blobs), as the reference now does. State another client left there,
   such as weston's scaler setup on the SA8155P, made every test commit
   placing a small layer on that plane fail (drm-cxx#382, P-99).
+- `drmkit-scene`: a layer whose destination starts above or left of the
+  CRTC is clipped to it, with its source trimmed to match as the kernel's own
+  clip would, instead of being written with a negative position. The SA8155P's
+  driver refuses a negative `CRTC_X`/`CRTC_Y`, so such a layer got no plane.
+  The reference has the same bug, drm-cxx#384 (P-100).
 
 ## [0.1.2] - 2026-10-15
 

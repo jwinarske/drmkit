@@ -63,6 +63,11 @@ pub struct LoweringInput {
 /// the kernel rejects with `EINVAL` — the C++ records this as the root cause of
 /// direct scanout failing on every controller it was tried on, sending every
 /// frame through composition instead.
+///
+/// One departure from the reference, drm-cxx#384: a destination starting above
+/// or left of the CRTC is clipped to it, with the source trimmed to match. The
+/// kernel would clip it the same way, but some drivers refuse a negative
+/// position before it can.
 pub fn lower_layer(input: &LoweringInput, dst: &mut PlaneLayer) {
     let display = &input.display;
     let format = input.format;
@@ -75,22 +80,7 @@ pub fn lower_layer(input: &LoweringInput, dst: &mut PlaneLayer) {
 
     dst.set_property(PropTag::CrtcId, u64::from(input.crtc_id));
 
-    // Destination is whole signed pixels; source is 16.16 fixed point. The
-    // position is sign-extended, as the reference's `static_cast` does: the
-    // kernel range-checks a signed property as an `i64`, so a 32-bit two's
-    // complement would read as a large positive number and be refused.
-    dst.set_property(
-        PropTag::CrtcX,
-        i64::from(display.dst_rect.x).cast_unsigned(),
-    );
-    dst.set_property(
-        PropTag::CrtcY,
-        i64::from(display.dst_rect.y).cast_unsigned(),
-    );
-    dst.set_property(PropTag::CrtcW, u64::from(display.dst_rect.w));
-    dst.set_property(PropTag::CrtcH, u64::from(display.dst_rect.h));
-
-    if let Some(fixed) = display.src_rect_fixed {
+    let mut source = if let Some(fixed) = display.src_rect_fixed {
         // Already 16.16: written as given, so a sub-pixel crop survives.
         let extent = |value: u32, full: u32| {
             if value == 0 {
@@ -99,10 +89,12 @@ pub fn lower_layer(input: &LoweringInput, dst: &mut PlaneLayer) {
                 u64::from(value)
             }
         };
-        dst.set_property(PropTag::SrcX, u64::from(fixed.x));
-        dst.set_property(PropTag::SrcY, u64::from(fixed.y));
-        dst.set_property(PropTag::SrcW, extent(fixed.w, format.width));
-        dst.set_property(PropTag::SrcH, extent(fixed.h, format.height));
+        Source {
+            x: u64::from(fixed.x),
+            y: u64::from(fixed.y),
+            w: extent(fixed.w, format.width),
+            h: extent(fixed.h, format.height),
+        }
     } else {
         let src_w = if display.src_rect.w == 0 {
             format.width
@@ -114,11 +106,35 @@ pub fn lower_layer(input: &LoweringInput, dst: &mut PlaneLayer) {
         } else {
             display.src_rect.h
         };
-        dst.set_property(PropTag::SrcX, to_16_16(display.src_rect.x.cast_unsigned()));
-        dst.set_property(PropTag::SrcY, to_16_16(display.src_rect.y.cast_unsigned()));
-        dst.set_property(PropTag::SrcW, to_16_16(src_w));
-        dst.set_property(PropTag::SrcH, to_16_16(src_h));
+        Source {
+            x: to_16_16(display.src_rect.x.cast_unsigned()),
+            y: to_16_16(display.src_rect.y.cast_unsigned()),
+            w: to_16_16(src_w),
+            h: to_16_16(src_h),
+        }
+    };
+
+    let mut dst_x = display.dst_rect.x;
+    let mut dst_y = display.dst_rect.y;
+    let mut dst_w = display.dst_rect.w;
+    let mut dst_h = display.dst_rect.h;
+    if clips_cleanly(display.rotation, format.fourcc) {
+        (dst_x, dst_w, source.x, source.w) = clip_leading(dst_x, dst_w, source.x, source.w);
+        (dst_y, dst_h, source.y, source.h) = clip_leading(dst_y, dst_h, source.y, source.h);
     }
+
+    // Destination is whole signed pixels; source is 16.16 fixed point. The
+    // position is sign-extended, as the reference's `static_cast` does: the
+    // kernel range-checks a signed property as an `i64`, so a 32-bit two's
+    // complement would read as a large positive number and be refused.
+    dst.set_property(PropTag::CrtcX, i64::from(dst_x).cast_unsigned());
+    dst.set_property(PropTag::CrtcY, i64::from(dst_y).cast_unsigned());
+    dst.set_property(PropTag::CrtcW, u64::from(dst_w));
+    dst.set_property(PropTag::CrtcH, u64::from(dst_h));
+    dst.set_property(PropTag::SrcX, source.x);
+    dst.set_property(PropTag::SrcY, source.y);
+    dst.set_property(PropTag::SrcW, source.w);
+    dst.set_property(PropTag::SrcH, source.h);
 
     // Format and modifier let the allocator screen planes statically before any
     // test commit. These are internal hints on the property bag, not KMS plane
@@ -135,4 +151,69 @@ pub fn lower_layer(input: &LoweringInput, dst: &mut PlaneLayer) {
     if let Some(alpha) = display.alpha {
         dst.set_property(PropTag::Alpha, u64::from(alpha));
     }
+}
+
+/// A source rectangle in 16.16 fixed point.
+#[derive(Debug, Clone, Copy)]
+struct Source {
+    x: u64,
+    y: u64,
+    w: u64,
+    h: u64,
+}
+
+/// Whether a destination starting off-screen can be clipped here.
+///
+/// Only unrotated: under a rotation or reflection the edge of the source to
+/// trim is a different one, and getting that wrong shows the wrong part of the
+/// buffer. Only formats whose every pixel stands alone: trimming a chroma-
+/// subsampled buffer by an odd number of pixels starts it between two chroma
+/// samples, which a driver may refuse or misdraw. Those layers keep their
+/// off-screen position, as before.
+const fn clips_cleanly(rotation: u64, fourcc: u32) -> bool {
+    const ROTATE_0: u64 = 1;
+    let unrotated = rotation == 0 || rotation == ROTATE_0;
+    let packed = drmkit_fmt::format_bpp(fourcc) != 0;
+    let subsampled = matches!(
+        fourcc,
+        drmkit_fmt::fourcc::YUYV
+            | drmkit_fmt::fourcc::YVYU
+            | drmkit_fmt::fourcc::UYVY
+            | drmkit_fmt::fourcc::VYUY
+            | drmkit_fmt::fourcc::Y210
+            | drmkit_fmt::fourcc::Y212
+            | drmkit_fmt::fourcc::Y216
+    );
+    unrotated && packed && !subsampled
+}
+
+/// Clip one axis of a destination that starts before the CRTC's origin, and
+/// trim the source to match (drm-cxx#384).
+///
+/// The core KMS check clips such a plane itself, but some drivers -- the
+/// SA8155P's -- refuse a negative destination before it gets the chance. The
+/// trim follows the kernel's `drm_rect_clip_scaled`, so on a driver that does
+/// clip, the plane shows exactly what it would have: the new source extent
+/// rounds up when the plane is upscaled and down otherwise, and the source
+/// keeps its far edge.
+///
+/// A destination entirely off-screen, or with no extent, is left alone: there
+/// is nothing of it to show, and whatever the driver does with that is what it
+/// did before.
+fn clip_leading(dst_pos: i32, dst_len: u32, src_pos: u64, src_len: u64) -> (i32, u32, u64, u64) {
+    let Ok(clip) = u32::try_from(-i64::from(dst_pos)) else {
+        return (dst_pos, dst_len, src_pos, src_len);
+    };
+    if clip == 0 || clip >= dst_len {
+        return (dst_pos, dst_len, src_pos, src_len);
+    }
+    let kept = dst_len - clip;
+    let product = src_len * u64::from(kept);
+    let dst_len_wide = u64::from(dst_len);
+    let new_src_len = if src_len < dst_len_wide << 16 {
+        product.div_ceil(dst_len_wide)
+    } else {
+        product / dst_len_wide
+    };
+    (0, kept, src_pos + (src_len - new_src_len), new_src_len)
 }

@@ -186,7 +186,7 @@ pub mod connector {
     /// `None` when unset, which keeps first-connected. Names are the kernel's
     /// `<type>-<n>` (`DP-4`, `HDMI-A-1`). For boards whose other connected
     /// outputs are not the test's to light: on the SA8155P the first one is
-    /// the platform's shared display. The scene fixture reads the same
+    /// the platform's shared display. The scene and cursor fixtures read the
     /// variable.
     #[must_use]
     pub fn wanted(device: &Device) -> Option<u32> {

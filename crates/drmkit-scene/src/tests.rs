@@ -1537,7 +1537,13 @@ fn a_pinned_primary_with_no_eligible_layer_is_reserved() {
         .collect();
 
     assert_eq!(
-        crate::scene::canvas_reservation(true, &refs, &registry, 0, None),
+        crate::scene::canvas_reservation(
+            Some(drmkit_fmt::fourcc::ARGB8888),
+            &refs,
+            &registry,
+            0,
+            None
+        ),
         vec![31],
         "the primary is held out of the disable pass"
     );
@@ -1561,7 +1567,16 @@ fn a_layer_matching_the_pin_makes_the_anchor_unnecessary() {
         })
         .collect();
 
-    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0, None).is_empty());
+    assert!(
+        crate::scene::canvas_reservation(
+            Some(drmkit_fmt::fourcc::ARGB8888),
+            &refs,
+            &registry,
+            0,
+            None
+        )
+        .is_empty()
+    );
 }
 
 /// So does a layer with no zpos at all: it is free to land on the pin, and
@@ -1582,7 +1597,16 @@ fn a_layer_with_no_zpos_makes_the_anchor_unnecessary() {
         })
         .collect();
 
-    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0, None).is_empty());
+    assert!(
+        crate::scene::canvas_reservation(
+            Some(drmkit_fmt::fourcc::ARGB8888),
+            &refs,
+            &registry,
+            0,
+            None
+        )
+        .is_empty()
+    );
 }
 
 /// A primary with no zpos property is not pinned, so there is nothing to
@@ -1603,7 +1627,16 @@ fn an_unpinned_primary_is_not_anchored() {
         })
         .collect();
 
-    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0, None).is_empty());
+    assert!(
+        crate::scene::canvas_reservation(
+            Some(drmkit_fmt::fourcc::ARGB8888),
+            &refs,
+            &registry,
+            0,
+            None
+        )
+        .is_empty()
+    );
 }
 
 /// The overflow trigger still works, and takes an overlay so the primary stays
@@ -1625,8 +1658,43 @@ fn overflow_reserves_an_overlay_for_the_canvas() {
         .collect();
 
     assert_eq!(
-        crate::scene::canvas_reservation(true, &refs, &registry, 0, None),
+        crate::scene::canvas_reservation(
+            Some(drmkit_fmt::fourcc::ARGB8888),
+            &refs,
+            &registry,
+            0,
+            None
+        ),
         vec![32]
+    );
+}
+
+/// A plane that does not take the canvas's own format is no host for it, as
+/// the reference's `plane_hosts_canvas` decides once the canvas exists. Here
+/// the canvas is `ARGB8888` and the first overlay takes only `XRGB8888`: it
+/// could have hosted a canvas made in that format, but not this one.
+#[test]
+fn overflow_reserves_only_a_plane_that_takes_the_canvas_as_it_is() {
+    let xrgb_only = drmkit_planes::PlaneCapabilities {
+        formats: vec![drmkit_fmt::fourcc::XRGB8888],
+        ..reservation_plane(32, drmkit_planes::PlaneType::Overlay, Some((1, 4)))
+    };
+    let registry = drmkit_planes::PlaneRegistry::from_capabilities(vec![
+        reservation_plane(31, drmkit_planes::PlaneType::Primary, Some((0, 0))),
+        xrgb_only,
+        reservation_plane(33, drmkit_planes::PlaneType::Overlay, Some((1, 4))),
+    ]);
+    let layers: Vec<drmkit_planes::Layer> = (0..4).map(|_| reservation_layer(None)).collect();
+
+    assert_eq!(
+        crate::scene::canvas_reservation(
+            Some(drmkit_fmt::fourcc::ARGB8888),
+            &refs_of(&layers),
+            &registry,
+            0,
+            None
+        ),
+        vec![33]
     );
 }
 
@@ -1657,7 +1725,13 @@ fn two_primaries() -> drmkit_planes::PlaneRegistry {
 fn with_two_primaries_overflow_reserves_the_first_overlay() {
     let layers: Vec<drmkit_planes::Layer> = (0..5).map(|_| reservation_layer(None)).collect();
     assert_eq!(
-        crate::scene::canvas_reservation(true, &refs_of(&layers), &two_primaries(), 0, None),
+        crate::scene::canvas_reservation(
+            Some(drmkit_fmt::fourcc::ARGB8888),
+            &refs_of(&layers),
+            &two_primaries(),
+            0,
+            None
+        ),
         vec![33]
     );
 }
@@ -1667,7 +1741,13 @@ fn with_two_primaries_overflow_reserves_the_first_overlay() {
 fn overflow_reserves_last_frames_canvas_plane() {
     let layers: Vec<drmkit_planes::Layer> = (0..5).map(|_| reservation_layer(None)).collect();
     assert_eq!(
-        crate::scene::canvas_reservation(true, &refs_of(&layers), &two_primaries(), 0, Some(34)),
+        crate::scene::canvas_reservation(
+            Some(drmkit_fmt::fourcc::ARGB8888),
+            &refs_of(&layers),
+            &two_primaries(),
+            0,
+            Some(34)
+        ),
         vec![34]
     );
 }
@@ -1687,7 +1767,13 @@ fn overflow_never_reserves_a_virtual_plane() {
     ]);
     let layers: Vec<drmkit_planes::Layer> = (0..5).map(|_| reservation_layer(None)).collect();
     let reserve = |previous| {
-        crate::scene::canvas_reservation(true, &refs_of(&layers), &registry, 0, previous)
+        crate::scene::canvas_reservation(
+            Some(drmkit_fmt::fourcc::ARGB8888),
+            &refs_of(&layers),
+            &registry,
+            0,
+            previous,
+        )
     };
     assert_eq!(reserve(None), vec![34]);
     assert_eq!(reserve(Some(33)), vec![34]);
@@ -1727,7 +1813,16 @@ fn overflow_reserves_nothing_where_planes_stack_by_id() {
         })
         .collect();
 
-    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0, None).is_empty());
+    assert!(
+        crate::scene::canvas_reservation(
+            Some(drmkit_fmt::fourcc::ARGB8888),
+            &refs,
+            &registry,
+            0,
+            None
+        )
+        .is_empty()
+    );
 }
 
 /// The acquire-fence close discipline, at the level the scene works at.
@@ -2269,7 +2364,16 @@ fn the_lowest_layer_above_a_fixed_slot_makes_the_anchor_unnecessary() {
         })
         .collect();
 
-    assert!(crate::scene::canvas_reservation(true, &refs, &registry, 0, None).is_empty());
+    assert!(
+        crate::scene::canvas_reservation(
+            Some(drmkit_fmt::fourcc::ARGB8888),
+            &refs,
+            &registry,
+            0,
+            None
+        )
+        .is_empty()
+    );
 }
 
 /// Which layer can take a fixed slot below everything else.

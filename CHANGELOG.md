@@ -133,6 +133,12 @@ minor version may break the API and a patch version does not.
   it. `use_baselayer_for_stage=1` now counts the base stage, and a
   `sec_ui_blendstage` of 0 no longer leaves the CRTC with no limit
   (drm-cxx#363, P-103).
+- `drmkit-scene`: the canvas is reserved only a plane that scans it out in
+  its own format, linear, as the reference asks. A plane that took only some
+  other canvas format could be reserved and then refuse the canvas
+  (drm-cxx#364, P-104).
+- `drmkit-planes`: `PlaneCapabilities::scans_out` reads a plane without
+  `IN_FORMATS` as linear only, as the reference does (drm-cxx#364, P-104).
 
 ## [0.1.2] - 2026-10-15
 

@@ -264,16 +264,17 @@ impl PlaneCapabilities {
     /// Whether the plane scans out `fourcc` in the `modifier` layout.
     ///
     /// By the plane's `IN_FORMATS` table, with `layer_fits_plane`'s
-    /// equivalences, or by the bare format list on a plane without one. The
-    /// RK3566's Cluster windows are why the list alone is not enough: they
-    /// list `ARGB8888` and take it only as AFBC, and refuse a linear buffer at
-    /// check time (P-48).
+    /// equivalences, or, on a plane without one, by the bare format list as
+    /// linear only, as the reference's does: such a plane says nothing about
+    /// any other layout. The RK3566's Cluster windows are why the list alone
+    /// is not enough: they list `ARGB8888` and take it only as AFBC, and
+    /// refuse a linear buffer at check time (P-48).
     #[must_use]
     pub fn scans_out(&self, fourcc: u32, modifier: Modifier) -> bool {
-        if self.format_table.is_empty() {
-            self.supports_format(fourcc)
-        } else {
+        if self.has_format_modifiers {
             drmkit_fmt::layer_fits_plane(&self.format_table, fourcc, modifier)
+        } else {
+            (modifier.is_linear() || modifier.is_invalid()) && self.supports_format(fourcc)
         }
     }
 

@@ -128,6 +128,17 @@ fn broadcom_describe(m: u64) -> String {
     }
 }
 
+/// Decode a `MediaTek` modifier (mainline vendor `0x0b`): its tile,
+/// compression and 10-bit layout fields, as the reference prints them.
+fn mtk_describe(value: u64) -> String {
+    format!(
+        "MTK(tile={}, compress={}, 10bit={})",
+        value & 0xf,
+        (value >> 8) & 0xff,
+        (value >> 16) & 0xff
+    )
+}
+
 /// Name for a `VeriSilicon` NORMAL (non-compressed) tile mode — the set the
 /// DC8200 advertises. Values from the `starfive-tech/linux` uapi
 /// `drm_fourcc.h`. `None` for reserved or unknown modes, so the caller falls
@@ -207,6 +218,7 @@ pub fn describe(m: Modifier) -> String {
         vendor::ARM => arm_describe(m.0),
         vendor::AMD => amd_describe(m.0),
         vendor::QCOM => String::from("QCOM_COMPRESSED(UBWC)"),
+        vendor::VS if crate::vendor_0b_is_mtk(m) => mtk_describe(m.0),
         vendor::VS => vs_describe(m.0),
         vendor::NVIDIA => String::from("NVIDIA_BLOCK_LINEAR"),
         vendor::BROADCOM => broadcom_describe(m.0),

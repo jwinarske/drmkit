@@ -278,6 +278,28 @@ fn classify_verisilicon() {
     );
 }
 
+/// drm-cxx#365: mainline gives vendor `0x0b` to `MediaTek` -- tile 16L32S
+/// (1), `COMPRESS_V1` at bit 8, a 10-bit layout at bits 16-23 -- and the body
+/// tells it apart from `VeriSilicon`. The cases are upstream's.
+#[test]
+fn vendor_0b_tells_mediatek_from_verisilicon() {
+    for mtk in [0x1, 0x101, 0x1_0001] {
+        assert!(vendor_0b_is_mtk(Modifier(VS_BASE | mtk)), "{mtk:#x}");
+    }
+    for vs in [0x00, 0x02, 0x0c, (1 << 54) | 0x02] {
+        assert!(!vendor_0b_is_mtk(Modifier(VS_BASE | vs)), "{vs:#x}");
+    }
+    assert_eq!(classify(Modifier(VS_BASE | 0x1)), BandwidthClass::Tiling);
+    assert_eq!(
+        classify(Modifier(VS_BASE | 0x101)),
+        BandwidthClass::Compression
+    );
+    assert_eq!(
+        describe(Modifier(VS_BASE | 0x101)),
+        "MTK(tile=1, compress=1, 10bit=0)"
+    );
+}
+
 #[test]
 fn classify_amd_dcc() {
     assert_eq!(classify(amd(1)), BandwidthClass::Compression);

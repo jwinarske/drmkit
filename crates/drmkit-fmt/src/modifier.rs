@@ -33,12 +33,13 @@ pub mod vendor {
     pub const ALLWINNER: u8 = 0x09;
     /// Amlogic.
     pub const AMLOGIC: u8 = 0x0a;
-    /// `StarFive` / `VeriSilicon` DC8200.
+    /// `StarFive` / `VeriSilicon` DC8200, out of tree (`starfive-tech/linux`).
     ///
-    /// Out-of-tree (`starfive-tech/linux`), and it collides with mainline:
-    /// `drm_fourcc.h` now assigns `0x0b` to `DRM_FORMAT_MOD_VENDOR_MTK`, so a
-    /// `MediaTek` modifier classifies and describes as VS. Carried, as upstream
-    /// carries it, because the `VisionFive` 2 is a first-class HIL target.
+    /// Mainline `drm_fourcc.h` assigns the same byte to `MediaTek`
+    /// (`DRM_FORMAT_MOD_VENDOR_MTK`). Both meanings ship, so a `0x0b`
+    /// modifier is told apart by its body: see [`vendor_0b_is_mtk`].
+    ///
+    /// [`vendor_0b_is_mtk`]: crate::vendor_0b_is_mtk
     pub const VS: u8 = 0x0b;
 }
 
@@ -275,6 +276,15 @@ pub const fn classify(m: Modifier) -> BandwidthClass {
                 BandwidthClass::Tiling
             }
         }
+        vendor::VS if vendor_0b_is_mtk(m) => {
+            // MediaTek: bits 15:8 are the compression type
+            // (`MTK_FMT_MOD_COMPRESS_*`).
+            if ((m.0 >> 8) & 0xff) != 0 {
+                BandwidthClass::Compression
+            } else {
+                BandwidthClass::Tiling
+            }
+        }
         vendor::VS => {
             // VS packs a 2-bit TYPE at bits 55:54 -- NORMAL (tiling) vs
             // COMPRESSED (`DEC400` lossless FB compression). VS_LINEAR is the
@@ -292,6 +302,33 @@ pub const fn classify(m: Modifier) -> BandwidthClass {
         // Unknown non-linear: assume tiled, never free.
         _ => BandwidthClass::Tiling,
     }
+}
+
+/// Whether a vendor-`0x0b` modifier is `MediaTek`'s rather than
+/// `VeriSilicon`'s, as the reference decides it.
+///
+/// Mainline gives `0x0b` to `MediaTek` and `StarFive`'s kernel gives it to
+/// `VeriSilicon` (DC8200), and both ship, so the body decides. `MediaTek`'s
+/// flags live in bits 0-23: tile in 0-3 (only 0 or 1), compression in 8-15,
+/// 10-bit layout in 16-23. `VeriSilicon` puts a type in bits 54-55 and a
+/// 5-bit tile mode, of which the DC8200 advertises `LINEAR` (0) and 2-12. So a
+/// `VeriSilicon` type, or none of `MediaTek`'s upper flags and a tile other
+/// than 1, reads as `VeriSilicon`.
+///
+/// Says nothing about a modifier of another vendor.
+///
+/// ```
+/// use drmkit_fmt::{Modifier, mod_code, vendor, vendor_0b_is_mtk};
+/// assert!(vendor_0b_is_mtk(Modifier(mod_code(vendor::VS, 0x101))));
+/// assert!(!vendor_0b_is_mtk(Modifier(mod_code(vendor::VS, 0x02))));
+/// ```
+#[must_use]
+pub const fn vendor_0b_is_mtk(m: Modifier) -> bool {
+    let body = m.body();
+    if ((body >> 54) & 0x3) != 0 {
+        return false;
+    }
+    (body & 0x00ff_ff00) != 0 || body == 0x1
 }
 
 /// Display-plane rotation. 90/270 transpose the scanout fetch order; 0/180 do

@@ -194,6 +194,7 @@ fn a_cursor_is_drawn_and_staged_vkms() {
 
     renderer.set_cursor(square()).expect("set cursor");
     renderer.move_to(100, 200);
+    renderer.prepare().expect("prepare");
 
     let mut request = AtomicRequest::new();
     let written = renderer.stage_into(&mut request).expect("stage");
@@ -226,15 +227,13 @@ fn a_cursor_is_drawn_and_staged_vkms() {
     };
     let (buffer_w, _) = renderer.size();
     let centering = i64::from(buffer_w - 16) / 2;
-    let expected_x = 100 - (8 + centering);
-    let expected_y = 200 - (8 + centering);
-    // CRTC_X/Y are signed-range properties, which the kernel checks as an
-    // `i64`, so a negative coordinate is a 64-bit two's complement in the
-    // property's u64 slot. The encoding was invisible while the cursor was
-    // 64px: centering kept the coordinate positive. At the driver's real cursor
-    // size it goes negative, and a 32-bit encoding is refused (P-84).
-    // `a_negative_position_is_written_as_twos_complement_vkms` pins the
-    // encoding itself.
+    //
+    // At the driver's real cursor size that corner can be off the left or
+    // top edge. The sprite is then drawn moved up and left by the overhang
+    // and the plane starts at the edge (drm-cxx#384), so the position never
+    // goes below zero.
+    let expected_x = (100 - (8 + centering)).max(0);
+    let expected_y = (200 - (8 + centering)).max(0);
     let as_property = |v: i64| Some(v.cast_unsigned());
     assert_eq!(value("CRTC_X"), as_property(expected_x));
     assert_eq!(value("CRTC_Y"), as_property(expected_y));
@@ -713,13 +712,13 @@ fn a_preferred_legacy_cursor_reserves_the_cursor_plane_vkms() {
 
 /// A cursor whose buffer hangs off the top-left corner still commits.
 ///
-/// `CRTC_X` and `CRTC_Y` are signed-range properties, and the kernel range
-/// checks the value as a 64-bit signed integer. A negative origin therefore
-/// has to be sign-extended into the property's slot: written as a 32-bit
-/// two's complement it reads as about four billion, past `INT_MAX`, and the
-/// whole commit is refused with `EINVAL`. With a buffer the driver's size, the
-/// origin is negative anywhere within half a buffer of the edge, so staging
-/// alone cannot show it -- the kernel has to see it.
+/// With a buffer the driver's size, the plane's origin would be negative
+/// anywhere within half a buffer of the edge. Some drivers -- the SA8155P's --
+/// refuse that outright (drm-cxx#384), so the sprite is drawn moved up and
+/// left inside the buffer and the plane starts at the edge. The kernel is read
+/// back to show it got no negative position. The encoding of one, still
+/// written for a hardware-rotated cursor, is pinned by
+/// `a_negative_position_is_written_as_twos_complement_vkms`.
 #[test]
 #[ignore = "needs a DRM device and DRM master"]
 fn a_cursor_off_the_top_left_corner_commits_vkms() {
@@ -767,7 +766,19 @@ fn a_cursor_off_the_top_left_corner_commits_vkms() {
             Renderer::create(&device, &registry, &config(crtc_id, crtc_index)).ok()?;
         renderer.set_cursor(square()).expect("set cursor");
         renderer.move_to(1, 1);
-        Some(renderer.commit())
+        let committed = renderer.commit();
+        let plane_id = renderer.plane().plane_id;
+        let mut store = drmkit_core::PropertyStore::new();
+        let origin = store
+            .cache_properties(&device, plane_id, drmkit_core::ObjectType::Plane)
+            .ok()
+            .and_then(|()| {
+                Some((
+                    store.property_value(plane_id, "CRTC_X").ok()?,
+                    store.property_value(plane_id, "CRTC_Y").ok()?,
+                ))
+            });
+        Some((committed, renderer.plane().path, origin))
     })();
 
     let _ = device.set_crtc(crtc, None, (0, 0), &[], None);
@@ -775,7 +786,12 @@ fn a_cursor_off_the_top_left_corner_commits_vkms() {
 
     match result {
         None => drmkit_testkit::skipped("no usable cursor path here"),
-        Some(result) => result.expect("a cursor hanging off the corner commits"),
+        Some((committed, path, origin)) => {
+            committed.expect("a cursor at the corner commits");
+            if path != drmkit_cursor::PlanePath::Legacy {
+                assert_eq!(origin, Some((0, 0)), "the plane was left off the corner");
+            }
+        }
     }
 }
 

@@ -10,6 +10,10 @@ minor version may break the API and a patch version does not.
 
 ### Added
 
+- `drmkit-cursor`: `Renderer::prepare`, which redraws the sprite when a move
+  near the top or left edge needs it shifted, and `edge_shift`, the shift
+  itself. `Renderer::commit` calls `prepare`; a caller coalescing through
+  `stage_into` calls it first (drm-cxx#384, P-101).
 - `drmkit-display`: `CrtcColorPipeline::pause` and `PausedPipeline::resume`,
   the port of the reference's `clear_for_session_loss` and new
   `on_session_resumed`. A paused pipeline forgets its blobs and has no
@@ -116,6 +120,11 @@ minor version may break the API and a patch version does not.
   clip would, instead of being written with a negative position. The SA8155P's
   driver refuses a negative `CRTC_X`/`CRTC_Y`, so such a layer got no plane.
   The reference has the same bug, drm-cxx#384 (P-100).
+- `drmkit-cursor`: a cursor near the top or left edge commits on drivers
+  that refuse a negative plane position, such as the SA8155P's. The sprite is
+  drawn moved up and left inside its buffer and the plane starts at the edge,
+  with no source offset, which i915 and amdgpu refuse on a cursor plane. The
+  reference has the same bug, drm-cxx#384 (P-101).
 
 ## [0.1.2] - 2026-10-15
 

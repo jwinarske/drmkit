@@ -911,11 +911,12 @@ impl Allocator {
         } else {
             self.canvas_plane = self.canvas_hold;
             self.arm_canvas(self.canvas_hold, committer);
+            let capped = self.cap_to_blend_limit(&placeable, layers);
             let searched = self
-                .full_search(&placeable, registry, crtc_index, committer)
+                .full_search(&capped, registry, crtc_index, committer)
                 .and_then(|searched| {
                     self.keep_canvas_bounds(
-                        searched, &placeable, layers, registry, crtc_index, committer,
+                        searched, &capped, layers, registry, crtc_index, committer,
                     )
                 });
             self.arm_canvas(None, committer);
@@ -1391,6 +1392,79 @@ impl Allocator {
     fn over_stage_limit(&self, planes: usize) -> bool {
         self.stage_limit
             .is_some_and(|limit| planes + usize::from(self.canvas_armed.is_some()) > limit)
+    }
+
+    /// The placeable layers most worth a plane on a CRTC that blends fewer
+    /// planes than it offers, as the reference's `cap_to_blend_limit` keeps
+    /// them (drm-cxx#363).
+    ///
+    /// Pinned and externally bound layers hold stages of their own, and one is
+    /// left for the canvas when anything composites -- a layer sent there, or
+    /// more layers than fit. The rest go by [`keep_priority`], highest first,
+    /// ties in the caller's order, and the layers past the budget are left out
+    /// of the search, to be composited. Without this the search learned the
+    /// limit only by having assignments refused, and the layers it dropped
+    /// were the most constrained rather than the least important: on the
+    /// SA8155P, high-priority layers were composited while low-priority ones
+    /// held planes.
+    ///
+    /// Only on a CRTC whose planes take a `zpos`: the full search is not run
+    /// where planes stack by id.
+    fn cap_to_blend_limit<'l>(
+        &self,
+        placeable: &[LayerRef<'l>],
+        layers: &[LayerRef<'l>],
+    ) -> Vec<LayerRef<'l>> {
+        let Some(limit) = self.stage_limit else {
+            return placeable.to_vec();
+        };
+        let mut held = 0;
+        let mut composites = false;
+        for entry in layers {
+            let layer = entry.layer;
+            if layer.is_composition_layer() {
+                continue;
+            }
+            if layer.is_pinned() || layer.is_externally_bound() {
+                held += 1;
+            } else if forced_composited(layer) {
+                composites = true;
+            }
+        }
+        // Layers the caller sent to composition are not candidates, as they
+        // are not in the reference's placeable set.
+        let candidates: Vec<LayerRef<'l>> = placeable
+            .iter()
+            .filter(|entry| !forced_composited(entry.layer))
+            .copied()
+            .collect();
+        if held + candidates.len() > limit {
+            composites = true;
+        }
+        let stages = limit.saturating_sub(held);
+        let budget = if composites {
+            stages.saturating_sub(1)
+        } else {
+            stages
+        };
+        if candidates.len() <= budget {
+            return placeable.to_vec();
+        }
+
+        let order = |entry: &LayerRef<'_>| {
+            layers
+                .iter()
+                .position(|other| other.id == entry.id)
+                .unwrap_or(usize::MAX)
+        };
+        let mut ranked = candidates;
+        ranked.sort_by_key(|entry| (core::cmp::Reverse(keep_priority(entry.layer)), order(entry)));
+        let over: Vec<LayerId> = ranked[budget..].iter().map(|entry| entry.id).collect();
+        placeable
+            .iter()
+            .filter(|entry| !over.contains(&entry.id))
+            .copied()
+            .collect()
     }
 
     /// Full search: split into independent groups, place each from a shared

@@ -1596,19 +1596,48 @@ fn no_test_arms_more_planes_than_the_crtc_can_stack() {
         .allocate(&refs(&layers), &registry, 0, &mut committer)
         .expect("allocate");
 
+    // Three stages, five layers: something composites, so one stage is the
+    // canvas's and two layers get planes, as the reference budgets it
+    // (drm-cxx#363).
     assert_eq!(
         allocation.assignment.len(),
-        3,
+        2,
         "{:?}",
         allocation.assignment
     );
-    assert_eq!(allocation.composited.len(), 2);
+    assert_eq!(allocation.composited.len(), 3);
     assert!(!committer.seen.is_empty());
     assert!(
         committer.seen.iter().all(|planes| planes.len() <= 3),
         "a test armed more than the CRTC stacks: {:?}",
         committer.seen
     );
+}
+
+/// Under the limit the layers most worth a plane keep one, whatever the
+/// search would have found first (drm-cxx#363). On the SA8155P, high-priority
+/// layers were composited while low-priority ones held planes.
+#[test]
+fn the_blend_limit_keeps_the_layers_most_worth_a_plane() {
+    let registry = stage_limited_registry();
+    let mut layers = stacked_layers(5);
+    for (id, layer) in &mut layers {
+        if id.0 == 1 || id.0 == 5 {
+            layer.set_app_priority(200);
+        }
+    }
+    let allocation = Allocator::new()
+        .allocate(&refs(&layers), &registry, 0, &mut Committer::default())
+        .expect("allocate");
+
+    let mut placed: Vec<u64> = allocation
+        .assignment
+        .entries()
+        .iter()
+        .map(|(_, id)| id.0)
+        .collect();
+    placed.sort_unstable();
+    assert_eq!(placed, vec![1, 5], "{:?}", allocation.assignment);
 }
 
 /// The canvas is a plane too: with it armed, two layers fill the CRTC.

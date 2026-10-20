@@ -42,20 +42,25 @@ fn fixture() -> Option<(Device, PlaneRegistry, u32, u32)> {
 
     let resources = device.resource_handles().expect("resources");
     let crtcs = resources.crtcs();
-    // Prefer a CRTC something is connected to; the first is often not it.
-    let index = resources
-        .connectors()
-        .iter()
-        .find_map(|handle| {
-            let connector = device.get_connector(*handle, false).ok()?;
-            if connector.state() != drm::control::connector::State::Connected {
-                return None;
-            }
-            let encoder = device.get_encoder(connector.current_encoder()?).ok()?;
-            let crtc = encoder.crtc()?;
-            crtcs.iter().position(|candidate| *candidate == crtc)
-        })
-        .unwrap_or(0);
+    // The output DRMKIT_TEST_CONNECTORS names, where it is set: a CRTC it can
+    // be driven from. Otherwise prefer a CRTC something is connected to; the
+    // first is often not it.
+    let index = match drmkit_testkit::connector::wanted(&device) {
+        Some(connector) => crtc_for(&device, &resources, connector)?,
+        None => resources
+            .connectors()
+            .iter()
+            .find_map(|handle| {
+                let connector = device.get_connector(*handle, false).ok()?;
+                if connector.state() != drm::control::connector::State::Connected {
+                    return None;
+                }
+                let encoder = device.get_encoder(connector.current_encoder()?).ok()?;
+                let crtc = encoder.crtc()?;
+                crtcs.iter().position(|candidate| *candidate == crtc)
+            })
+            .unwrap_or(0),
+    };
     let crtc_id: u32 = (*crtcs.get(index)?).into();
 
     let mut capabilities = Vec::new();
@@ -106,6 +111,35 @@ fn config(crtc_id: u32, crtc_index: u32) -> RendererConfig {
         crtc_index,
         ..RendererConfig::default()
     }
+}
+
+/// The index of a CRTC that can drive `connector`: the one it is on, else the
+/// first its encoders allow.
+fn crtc_for(
+    device: &Device,
+    resources: &drm::control::ResourceHandles,
+    connector: u32,
+) -> Option<usize> {
+    let handle = *resources
+        .connectors()
+        .iter()
+        .find(|handle| u32::from(**handle) == connector)?;
+    let info = device.get_connector(handle, false).ok()?;
+    let crtcs = resources.crtcs();
+    if let Some(crtc) = info
+        .current_encoder()
+        .and_then(|encoder| device.get_encoder(encoder).ok())
+        .and_then(|encoder| encoder.crtc())
+    {
+        return crtcs.iter().position(|candidate| *candidate == crtc);
+    }
+    info.encoders().iter().find_map(|encoder| {
+        let encoder = device.get_encoder(*encoder).ok()?;
+        let allowed = resources.filter_crtcs(encoder.possible_crtcs());
+        crtcs
+            .iter()
+            .position(|candidate| allowed.contains(candidate))
+    })
 }
 
 #[test]
@@ -732,7 +766,11 @@ fn a_cursor_off_the_top_left_corner_commits_vkms() {
     // Light the CRTC first, so the cursor has an output to sit on.
     let resources = device.resource_handles().expect("resources");
     let crtc = resources.crtcs()[crtc_index as usize];
+    let wanted = drmkit_testkit::connector::wanted(&device);
     let Some((connector, mode)) = resources.connectors().iter().find_map(|handle| {
+        if wanted.is_some_and(|id| id != u32::from(*handle)) {
+            return None;
+        }
         let info = device.get_connector(*handle, false).ok()?;
         if info.state() != drm::control::connector::State::Connected {
             return None;

@@ -146,6 +146,11 @@ minor version may break the API and a patch version does not.
   layers it kept were the ones its search happened to place first, so
   high-priority layers could be composited while low-priority ones held
   planes (drm-cxx#363, P-105).
+- `drmkit-cursor`: the cursor's plane is written with the top of its `zpos`
+  range, capped below the CRTC's blend-stage limit, as the reference's cursor
+  fix does. Left at an overlay's default of 0 it shared the primary's blend
+  stage, which the SA8155P refuses, so the cursor never committed there
+  (drm-cxx#384, P-106).
 
 ## [0.1.2] - 2026-10-15
 

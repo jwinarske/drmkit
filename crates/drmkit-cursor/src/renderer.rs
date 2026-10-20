@@ -110,6 +110,9 @@ pub struct Renderer<'a> {
     visible: bool,
     /// Which way up the cursor is drawn.
     rotation: Rotation,
+    /// The `zpos` the plane is written with, from [`cursor_zpos`]; `None`
+    /// where it has no settable one.
+    zpos: Option<u64>,
     /// Legacy only: whether the cursor has been handed to the CRTC yet.
     ///
     /// The first commit installs it; later ones are cheap moves.
@@ -196,6 +199,9 @@ impl<'a> Renderer<'a> {
         let rotation_mask = registry
             .by_id(plane.plane_id)
             .map_or(0, |caps| caps.rotation_bits);
+        let zpos = registry
+            .by_id(plane.plane_id)
+            .and_then(|caps| cursor_zpos(caps, registry.blend_stage_limit(config.crtc_index)));
 
         // The driver's own preference, asked of the device.
         //
@@ -220,7 +226,15 @@ impl<'a> Renderer<'a> {
                     // The kernel is asked about the real thing: a request that
                     // arms this plane with this framebuffer at this size.
                     let accepted = pair[0].fb_id().is_some_and(|fb_id| {
-                        test_plane(device, &props, &plane, config.crtc_id, fb_id, candidate)
+                        test_plane(
+                            device,
+                            &props,
+                            &plane,
+                            config.crtc_id,
+                            fb_id,
+                            candidate,
+                            zpos,
+                        )
                     });
                     if accepted {
                         buffers = Some(pair);
@@ -255,6 +269,7 @@ impl<'a> Renderer<'a> {
             position: (0, 0),
             visible: true,
             rotation: config.rotation,
+            zpos,
             installed: false,
         })
     }
@@ -323,6 +338,7 @@ impl<'a> Renderer<'a> {
             position: (0, 0),
             visible: true,
             rotation: Rotation::None,
+            zpos: None,
             installed: false,
         })
     }
@@ -532,7 +548,9 @@ impl<'a> Renderer<'a> {
             },
             rotation_mask: self.rotation_mask,
         };
-        stage(request, &self.props, &state)
+        let mut written = stage(request, &self.props, &state)?;
+        written += stage_zpos(request, &self.props, self.plane.plane_id, self.zpos)?;
+        Ok(written)
     }
 
     /// Note that a commit carrying [`Renderer::stage_into`]'s writes landed.
@@ -634,6 +652,7 @@ impl<'a> Renderer<'a> {
             plane: self.plane,
             rotation_mask: self.rotation_mask,
             rotation: self.rotation,
+            zpos: self.zpos,
             cursor: self.cursor.take(),
             drawn_frame: self.drawn_frame,
             position: self.position,
@@ -794,6 +813,7 @@ fn test_plane(
     crtc_id: u32,
     fb_id: u32,
     size: u32,
+    zpos: Option<u64>,
 ) -> bool {
     let mut request = AtomicRequest::new();
     let state = PlaneState {
@@ -809,10 +829,58 @@ fn test_plane(
         rotation: Rotation::None,
         rotation_mask: 0,
     };
-    if stage(&mut request, props, &state).is_err() {
+    if stage(&mut request, props, &state).is_err()
+        || stage_zpos(&mut request, props, plane.plane_id, zpos).is_err()
+    {
         return false;
     }
     request.test(device, AtomicCommitFlags::empty()).is_ok()
+}
+
+/// Where the cursor's plane stacks: the top of its `zpos` range, as the
+/// reference puts it, and no higher than the CRTC can blend.
+///
+/// Without it the plane keeps whatever `zpos` it had, which on a driver whose
+/// overlays all start at 0 is the primary's own stage: the SA8155P refuses
+/// two planes on one stage that overlap ("invalid coordinates, stage:0"), so
+/// the cursor never committed there. Its CRTC blends nine planes, zpos 0 to
+/// 8, while every plane advertises up to 10, hence the cap.
+///
+/// `None` where the plane has no `zpos` or a fixed one: there is nothing to
+/// write.
+pub(crate) fn cursor_zpos(
+    plane: &drmkit_planes::PlaneCapabilities,
+    blend_limit: Option<usize>,
+) -> Option<u64> {
+    let (Some(min), Some(max)) = (plane.zpos_min, plane.zpos_max) else {
+        return None;
+    };
+    if drmkit_planes::zpos_fixed(plane) {
+        return None;
+    }
+    let top = blend_limit
+        .and_then(|limit| u64::try_from(limit).ok())
+        .map_or(max, |limit| max.min(limit.saturating_sub(1)));
+    Some(top.max(min))
+}
+
+/// Write `zpos` to the plane, when there is one to write.
+fn stage_zpos(
+    request: &mut AtomicRequest,
+    props: &PropertyStore,
+    plane_id: u32,
+    zpos: Option<u64>,
+) -> Result<usize, CursorError> {
+    let Some(zpos) = zpos else {
+        return Ok(0);
+    };
+    let id = props
+        .property_id(plane_id, "zpos")
+        .map_err(|_| CursorError::MissingProperty)?;
+    request
+        .add_property(plane_id, id, zpos)
+        .map_err(|_| CursorError::MissingProperty)?;
+    Ok(1)
 }
 
 /// Whether a plane is driving a CRTC at all -- this one included.
@@ -854,6 +922,7 @@ pub struct Paused {
     plane: SelectedPlane,
     rotation_mask: u64,
     rotation: Rotation,
+    zpos: Option<u64>,
     cursor: Option<Cursor>,
     drawn_frame: Option<usize>,
     position: (i32, i32),
@@ -903,6 +972,7 @@ impl Paused {
             position: self.position,
             visible: self.visible,
             rotation: self.rotation,
+            zpos: self.zpos,
             // The new descriptor knows nothing of the old plane state, so the
             // next commit re-arms everything.
             installed: false,

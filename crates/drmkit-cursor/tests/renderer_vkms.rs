@@ -63,35 +63,10 @@ fn fixture() -> Option<(Device, PlaneRegistry, u32, u32)> {
     };
     let crtc_id: u32 = (*crtcs.get(index)?).into();
 
-    let mut capabilities = Vec::new();
-    for handle in device.plane_handles().expect("planes") {
-        let info = device.get_plane(handle).expect("plane info");
-        let mut mask = 0u32;
-        for allowed in resources.filter_crtcs(info.possible_crtcs()) {
-            if let Some(bit) = crtcs.iter().position(|c| *c == allowed) {
-                mask |= 1 << bit;
-            }
-        }
-        let mut store = drmkit_core::PropertyStore::new();
-        let plane_id: u32 = handle.into();
-        store
-            .cache_properties(&device, plane_id, drmkit_core::ObjectType::Plane)
-            .expect("plane properties");
-        let plane_type = match store.property_value(plane_id, "type") {
-            Ok(1) => PlaneType::Primary,
-            Ok(2) => PlaneType::Cursor,
-            _ => PlaneType::Overlay,
-        };
-        capabilities.push(PlaneCapabilities {
-            id: plane_id,
-            possible_crtcs: mask,
-            plane_type,
-            formats: info.formats().to_vec(),
-            ..PlaneCapabilities::default()
-        });
-    }
-
-    let registry = PlaneRegistry::from_capabilities(capabilities);
+    // The registry a compositor would have: zpos ranges, formats by
+    // layout and the CRTC's blend-stage limit, all of which the renderer
+    // reads.
+    let registry = PlaneRegistry::probe(&device).expect("plane registry");
     Some((
         device,
         registry,
@@ -422,12 +397,18 @@ fn rotation_is_asked_of_the_hardware_only_when_it_can_do_it_vkms() {
         .map(|w| w.value)
         .expect("rotation written");
 
-    // The registry this fixture builds carries no rotation bits, so the plane
-    // is treated as unable to turn: the pixels were turned in software and the
-    // hardware must be asked for none.
+    // A plane that can turn a quarter is asked to. One that cannot had the
+    // pixels turned in software, and must be asked for none.
+    let can_turn = registry
+        .by_id(plane_id)
+        .is_some_and(|plane| plane.rotation_bits & Rotation::Quarter.drm_mask() != 0);
+    let expected = if can_turn {
+        Rotation::Quarter.drm_mask()
+    } else {
+        Rotation::None.drm_mask()
+    };
     assert_eq!(
-        value,
-        Rotation::None.drm_mask(),
+        value, expected,
         "asking the hardware to turn pixels that are already turned turns them twice"
     );
 }

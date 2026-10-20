@@ -2,14 +2,14 @@
 
 Machine-checked mapping from every drm-cxx test file to its drmkit counterpart.
 
-**Upstream baseline:** `jwinarske/drm-cxx` @ `5e7047b` (v5.0.0+, PR #386)
-**Tracked tree:** `5e7047b` -- the test list below is upstream's current one, so
+**Upstream baseline:** `jwinarske/drm-cxx` @ `d7641ed` (v5.0.0+, PR #387)
+**Tracked tree:** `d7641ed` -- the test list below is upstream's current one, so
 new upstream tests surface as rows. The baseline above is the behavior drmkit
 claims to match, and moves when the behavior has caught up. It moved from
 `4a0b64a` to `2b260d0` once every upstream change to `src/` in between was
 ported or out of this port's scope: the GPU producers, the GL compositor, V4L2,
-and the build systems. It moved to `5e7047b` the same way: each of the twelve
-commits to `src/` in `2b260d0..5e7047b` is ported.
+and the build systems. It moved to `d7641ed` the same way: each of the thirteen
+commits to `src/` in `2b260d0..d7641ed` is ported.
 **Coverage:** 111 test files (77 unit + 34 integration)
 
 `cargo xtask parity --ref <drm-cxx>` fails when this table and the upstream

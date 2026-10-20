@@ -9,11 +9,11 @@ composition, and scanout.
 
 > **Status: phases 0–4 met, phase 5 (the v0.1.0-minimal ship gate) under way.**
 > The 0.1 releases ship ahead of that gate's last item, the smoke run on RK3588
-> and VisionFive 2 boards: 0.1.2 is current, on
+> and VisionFive 2 boards: 0.1.3 is current, on
 > [crates.io](https://crates.io/crates/drmkit) and
 > [docs.rs](https://docs.rs/drmkit), and [`CHANGELOG.md`](CHANGELOG.md) says
-> what is in each. Twenty-one published crates and a test kit; 1,071 unit and
-> integration tests plus 29 doctests on the host, 236 more that need a card,
+> what is in each. Twenty-one published crates and a test kit; 1,103 unit and
+> integration tests plus 28 doctests on the host, 247 more that need a card,
 > and the host suite again under qemu on the aarch64 and riscv64 cross lanes.
 > All six [`INVARIANTS.md`](INVARIANTS.md) contracts are pinned against a real
 > device. A scene can build a frame, allocate planes,
@@ -23,7 +23,7 @@ composition, and scanout.
 >
 > The present spine, cross-output orchestration, GBM surface sources and
 > client-side decorations have since landed. The port matches drm-cxx at
-> `5e7047b` (v5.0.0 and twelve fixes since): of the 111 test files upstream has
+> `d7641ed` (v5.0.0 and thirteen fixes since): of the 111 test files upstream has
 > there, 78 are ported, 14 partial and 3 not applicable. Each of the 16 pending waits on hardware or a
 > library this tree does not have: a working GPU render node, the `vgem`,
 > `vivid` or `vicodec` modules, NVIDIA silicon for EGL streams, or the GL,
@@ -166,7 +166,7 @@ that sat open for want of hardware (P-6, on two Allwinner boards) and found a
 live defect on hardware nobody here owns (P-23, Tegra's cursor plane). See
 [`docs/validation.md`](docs/validation.md).
 
-**Upstream baseline:** `jwinarske/drm-cxx` @ `5e7047b` (v5.0.0+, PR #386).
+**Upstream baseline:** `jwinarske/drm-cxx` @ `d7641ed` (v5.0.0+, PR #387).
 
 ## What this is
 

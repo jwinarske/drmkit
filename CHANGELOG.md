@@ -8,10 +8,7 @@ minor version may break the API and a patch version does not.
 
 ## [Unreleased]
 
-### Changed
-
-- The upstream baseline moves to drm-cxx `5e7047b` (v5.0.0 and twelve fixes
-  since). Every upstream change to `src/` in `2b260d0..5e7047b` is ported.
+## [0.1.3] - 2026-10-20
 
 ### Added
 
@@ -24,6 +21,11 @@ minor version may break the API and a patch version does not.
   `on_session_resumed`. A paused pipeline forgets its blobs and has no
   setters; resumed on the new device, it keeps the CRTC's property ids and
   stages there (drm-cxx#372, P-82).
+
+### Changed
+
+- The upstream baseline moves to drm-cxx `d7641ed` (v5.0.0 and thirteen fixes
+  since). Every upstream change to `src/` in `2b260d0..d7641ed` is ported.
 
 ### Deprecated
 
@@ -363,7 +365,8 @@ What the port leaves out, and why, is recorded per test file in
 [`TEST_PARITY.md`](TEST_PARITY.md) and per divergence in
 [`docs/parity-findings.md`](docs/parity-findings.md).
 
-[Unreleased]: https://github.com/jwinarske/drmkit/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/jwinarske/drmkit/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/jwinarske/drmkit/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/jwinarske/drmkit/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/jwinarske/drmkit/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/jwinarske/drmkit/releases/tag/v0.1.0

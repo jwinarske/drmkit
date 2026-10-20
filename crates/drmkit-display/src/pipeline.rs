@@ -281,7 +281,36 @@ impl<'a> CrtcColorPipeline<'a> {
     /// on -- the kernel reclaimed them at that moment, and destroying through
     /// the replacement descriptor would at best fail and at worst free a
     /// different blob that happens to have the same id there.
+    ///
+    /// The pipeline stays bound to the same [`Device`], so it is only of use
+    /// if that descriptor is still live; after a real session loss nothing
+    /// staged on it would reach the resumed one.
+    #[deprecated(
+        since = "0.1.3",
+        note = "use `pause` and `PausedPipeline::resume`, which rebind to the resumed device"
+    )]
     pub fn forget_for_session_loss(&mut self) {
+        self.forget_blobs();
+    }
+
+    /// Give up the device for a session pause, as the reference's
+    /// `clear_for_session_loss` does.
+    ///
+    /// Every blob is forgotten, not destroyed: the pause revoked the
+    /// descriptor they were made on, and the kernel reclaimed them then. What
+    /// comes back has no setters: the reference's refuse with `EBADF` until
+    /// it is rebound, and here there is nothing to call.
+    #[must_use]
+    pub fn pause(mut self) -> PausedPipeline {
+        self.forget_blobs();
+        PausedPipeline {
+            crtc_id: self.crtc_id,
+            capabilities: self.capabilities,
+            properties: self.properties,
+        }
+    }
+
+    fn forget_blobs(&mut self) {
         for slot in [&mut self.degamma, &mut self.ctm, &mut self.gamma] {
             if let Some(blob) = slot.take() {
                 blob.forget();
@@ -356,5 +385,44 @@ impl<'a> CrtcColorPipeline<'a> {
         let blob = self.device.create_property_blob(&ctm)?;
         self.replace(Stage::Ctm, blob);
         Ok(())
+    }
+}
+
+/// A color pipeline whose device has gone away.
+///
+/// What [`CrtcColorPipeline::pause`] leaves: the CRTC, its capabilities and
+/// its property ids, and no blobs. A type rather than a flag, so that nothing
+/// can be staged on a descriptor that no longer exists.
+#[derive(Debug, Clone)]
+pub struct PausedPipeline {
+    crtc_id: u32,
+    capabilities: CrtcCapabilities,
+    properties: StageProperties,
+}
+
+impl PausedPipeline {
+    /// Rebind to the resumed device, as the reference's
+    /// `on_session_resumed` does.
+    ///
+    /// The property ids are kept: the CRTC is the same object on the new
+    /// descriptor. The staged stages are gone, so set them again before the
+    /// next [`apply`](CrtcColorPipeline::apply).
+    #[must_use]
+    pub const fn resume(self, device: &Device) -> CrtcColorPipeline<'_> {
+        CrtcColorPipeline {
+            device,
+            crtc_id: self.crtc_id,
+            capabilities: self.capabilities,
+            properties: self.properties,
+            degamma: None,
+            ctm: None,
+            gamma: None,
+        }
+    }
+
+    /// What this CRTC can do.
+    #[must_use]
+    pub const fn capabilities(&self) -> &CrtcCapabilities {
+        &self.capabilities
     }
 }

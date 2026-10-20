@@ -125,6 +125,10 @@ minor version may break the API and a patch version does not.
   drawn moved up and left inside its buffer and the plane starts at the edge,
   with no source offset, which i915 and amdgpu refuse on a cursor plane. The
   reference has the same bug, drm-cxx#384 (P-101).
+- `drmkit-fmt`: a vendor-`0x0b` modifier is told apart as MediaTek's or
+  VeriSilicon's by its body, as the reference now does. Every one was read as
+  VeriSilicon, so a MediaTek modifier was classified and described as a VS
+  tile mode. `vendor_0b_is_mtk` is new (drm-cxx#365, P-102).
 
 ## [0.1.2] - 2026-10-15
 

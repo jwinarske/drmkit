@@ -74,7 +74,7 @@ pub use family::{ModifierFamily, sand_col_height, sand128_col_height};
 pub use fourcc::{format_bpp, format_name};
 pub use modifier::{
     ARM_16X16_BLOCK_U_INTERLEAVED, BandwidthClass, Modifier, Rotation, afbc_block, afbc_flag,
-    arm_type, broadcom, classify, mod_code, rotation_compatible, vendor,
+    arm_type, broadcom, classify, mod_code, rotation_compatible, vendor, vendor_0b_is_mtk,
 };
 pub use probe::{ModifierProbeCache, Verdict};
 pub use table::{FormatMod, FormatTable, layer_fits_plane};

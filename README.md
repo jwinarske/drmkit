@@ -22,9 +22,9 @@ composition, and scanout.
 > tested.
 >
 > The present spine, cross-output orchestration, GBM surface sources and
-> client-side decorations have since landed. The port matches drm-cxx v5.0.0
-> (`2b260d0`): of the 108 test files upstream has there, 75 are ported, 14
-> partial and 3 not applicable. Each of the 16 pending waits on hardware or a
+> client-side decorations have since landed. The port matches drm-cxx at
+> `5e7047b` (v5.0.0 and twelve fixes since): of the 111 test files upstream has
+> there, 78 are ported, 14 partial and 3 not applicable. Each of the 16 pending waits on hardware or a
 > library this tree does not have: a working GPU render node, the `vgem`,
 > `vivid` or `vicodec` modules, NVIDIA silicon for EGL streams, or the GL,
 > Vulkan, V4L2 and `GStreamer` producers that sit on top of them.
@@ -166,7 +166,7 @@ that sat open for want of hardware (P-6, on two Allwinner boards) and found a
 live defect on hardware nobody here owns (P-23, Tegra's cursor plane). See
 [`docs/validation.md`](docs/validation.md).
 
-**Upstream baseline:** `jwinarske/drm-cxx` @ `2b260d0` (v5.0.0, PR #362).
+**Upstream baseline:** `jwinarske/drm-cxx` @ `5e7047b` (v5.0.0+, PR #386).
 
 ## What this is
 

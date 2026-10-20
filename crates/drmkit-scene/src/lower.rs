@@ -162,29 +162,54 @@ struct Source {
     h: u64,
 }
 
-/// Whether a destination starting off-screen can be clipped here.
+/// Whether a destination starting off-screen can be clipped here, as the
+/// reference's `clip_applies` decides it.
 ///
 /// Only unrotated: under a rotation or reflection the edge of the source to
 /// trim is a different one, and getting that wrong shows the wrong part of the
-/// buffer. Only formats whose every pixel stands alone: trimming a chroma-
-/// subsampled buffer by an odd number of pixels starts it between two chroma
-/// samples, which a driver may refuse or misdraw. Those layers keep their
-/// off-screen position, as before.
-const fn clips_cleanly(rotation: u64, fourcc: u32) -> bool {
+/// buffer. Not a chroma-subsampled format: trimming one by an odd number of
+/// pixels starts it between two chroma samples, which a driver may refuse or
+/// misdraw. Those layers keep their off-screen position, as before.
+pub(crate) const fn clips_cleanly(rotation: u64, fourcc: u32) -> bool {
     const ROTATE_0: u64 = 1;
-    let unrotated = rotation == 0 || rotation == ROTATE_0;
-    let packed = drmkit_fmt::format_bpp(fourcc) != 0;
-    let subsampled = matches!(
+    (rotation == 0 || rotation == ROTATE_0) && !chroma_subsampled(fourcc)
+}
+
+/// Formats whose chroma is subsampled: the reference's list. Anything else,
+/// 4:4:4 YUV included, has a sample for every pixel and can be trimmed by any
+/// amount.
+const fn chroma_subsampled(fourcc: u32) -> bool {
+    use drmkit_fmt::fourcc::{
+        NV12, NV15, NV16, NV20, NV21, NV61, P010, P012, P016, P210, UYVY, VYUY, Y210, Y212, Y216,
+        YUV410, YUV411, YUV420, YUV422, YUYV, YVU410, YVU411, YVU420, YVU422, YVYU,
+    };
+    matches!(
         fourcc,
-        drmkit_fmt::fourcc::YUYV
-            | drmkit_fmt::fourcc::YVYU
-            | drmkit_fmt::fourcc::UYVY
-            | drmkit_fmt::fourcc::VYUY
-            | drmkit_fmt::fourcc::Y210
-            | drmkit_fmt::fourcc::Y212
-            | drmkit_fmt::fourcc::Y216
-    );
-    unrotated && packed && !subsampled
+        NV12 | NV21
+            | NV16
+            | NV61
+            | NV15
+            | NV20
+            | P010
+            | P012
+            | P016
+            | P210
+            | YUV410
+            | YVU410
+            | YUV411
+            | YVU411
+            | YUV420
+            | YVU420
+            | YUV422
+            | YVU422
+            | YUYV
+            | YVYU
+            | UYVY
+            | VYUY
+            | Y210
+            | Y212
+            | Y216
+    )
 }
 
 /// Clip one axis of a destination that starts before the CRTC's origin, and
@@ -200,11 +225,18 @@ const fn clips_cleanly(rotation: u64, fourcc: u32) -> bool {
 /// A destination entirely off-screen, or with no extent, is left alone: there
 /// is nothing of it to show, and whatever the driver does with that is what it
 /// did before.
-fn clip_leading(dst_pos: i32, dst_len: u32, src_pos: u64, src_len: u64) -> (i32, u32, u64, u64) {
+pub(crate) fn clip_leading(
+    dst_pos: i32,
+    dst_len: u32,
+    src_pos: u64,
+    src_len: u64,
+) -> (i32, u32, u64, u64) {
     let Ok(clip) = u32::try_from(-i64::from(dst_pos)) else {
         return (dst_pos, dst_len, src_pos, src_len);
     };
-    if clip == 0 || clip >= dst_len {
+    // A source extent past 32 bits is no property value; the driver refuses
+    // it either way, and the reference leaves it as given.
+    if clip == 0 || clip >= dst_len || src_len > u64::from(u32::MAX) {
         return (dst_pos, dst_len, src_pos, src_len);
     }
     let kept = dst_len - clip;

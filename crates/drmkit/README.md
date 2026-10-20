@@ -29,7 +29,7 @@ display surface are not.
 See the [crate documentation](https://docs.rs/drmkit) for which member crate
 does what, or <https://github.com/jwinarske/drmkit> for the porting plan.
 
-Upstream baseline: `jwinarske/drm-cxx` @ `2b260d0` (v5.0.0).
+Upstream baseline: `jwinarske/drm-cxx` @ `5e7047b` (v5.0.0+).
 
 ## License
 

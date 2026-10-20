@@ -2453,3 +2453,63 @@ mod ycbcr_fallback {
         assert_eq!(range_value(&only_full, ColorRange::Limited), Some(21));
     }
 }
+
+// --- upstream's PlaneClip cases (drm-cxx `696a285`) ---------------------------
+
+/// 16.16 fixed point, as upstream's `fp`.
+const fn fp(pixels: u64) -> u64 {
+    pixels << 16
+}
+
+#[test]
+fn plane_clip_leaves_an_on_screen_span_alone() {
+    use crate::lower::clip_leading;
+    assert_eq!(clip_leading(0, 64, fp(4), fp(64)), (0, 64, fp(4), fp(64)));
+}
+
+#[test]
+fn plane_clip_trims_unscaled_upscaled_and_downscaled_spans() {
+    use crate::lower::clip_leading;
+    assert_eq!(
+        clip_leading(-16, 64, fp(0), fp(64)),
+        (0, 48, fp(16), fp(48))
+    );
+    // 10 px shown over 30: 655360 * 29 / 30 = 633514.67, rounded up, and the
+    // far edge stays put.
+    let (_, kept, src, src_len) = clip_leading(-1, 30, fp(0), fp(10));
+    assert_eq!((kept, src_len, src + src_len), (29, 633_515, fp(10)));
+    // 100 px shown over 30: 6553600 * 29 / 30 = 6335146.67, rounded down.
+    let (_, kept, src, src_len) = clip_leading(-1, 30, fp(8), fp(100));
+    assert_eq!((kept, src_len, src + src_len), (29, 6_335_146, fp(108)));
+}
+
+#[test]
+fn plane_clip_leaves_spans_it_cannot_serve() {
+    use crate::lower::clip_leading;
+    // Entirely off-screen.
+    assert_eq!(
+        clip_leading(-64, 64, fp(0), fp(64)),
+        (-64, 64, fp(0), fp(64))
+    );
+    // A source extent past 32 bits.
+    assert_eq!(
+        clip_leading(-1, 30, fp(0), fp(0x1_0000)),
+        (-1, 30, fp(0), fp(0x1_0000))
+    );
+}
+
+#[test]
+fn plane_clip_applies_only_unrotated_and_unsubsampled() {
+    use crate::lower::clips_cleanly;
+    use drmkit_fmt::fourcc::{ARGB8888, NV12, NV24, XRGB8888, YUYV};
+    const ROTATE_0: u64 = 1;
+    const ROTATE_90: u64 = 1 << 1;
+    const REFLECT_X: u64 = 1 << 4;
+    assert!(clips_cleanly(0, ARGB8888));
+    assert!(clips_cleanly(ROTATE_0, XRGB8888));
+    assert!(!clips_cleanly(ROTATE_90, ARGB8888));
+    assert!(!clips_cleanly(ROTATE_0 | REFLECT_X, ARGB8888));
+    assert!(!clips_cleanly(0, NV12));
+    assert!(!clips_cleanly(0, YUYV));
+    assert!(clips_cleanly(0, NV24), "4:4:4 has no subsampling");
+}

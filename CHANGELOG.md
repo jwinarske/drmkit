@@ -139,6 +139,13 @@ minor version may break the API and a patch version does not.
   (drm-cxx#364, P-104).
 - `drmkit-planes`: `PlaneCapabilities::scans_out` reads a plane without
   `IN_FORMATS` as linear only, as the reference does (drm-cxx#364, P-104).
+- `drmkit-planes`: on a CRTC that blends fewer planes than it offers, the
+  allocator keeps the layers with the highest `keep_priority` within the
+  limit, counting pinned and externally bound layers and leaving one stage
+  for the canvas when anything composites, as the reference now does. The
+  layers it kept were the ones its search happened to place first, so
+  high-priority layers could be composited while low-priority ones held
+  planes (drm-cxx#363, P-105).
 
 ## [0.1.2] - 2026-10-15
 

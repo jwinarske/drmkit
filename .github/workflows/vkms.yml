@@ -24,7 +24,10 @@ env:
 jobs:
   vkms:
     name: vkms (virtme-ng)
-    runs-on: ubuntu-latest
+    # Pinned, not `ubuntu-latest`: the lane needs vkms from the archive's
+    # linux-modules-extra for an Azure kernel, and the 26.04 image that
+    # `ubuntu-latest` moved to on 2026-10-20 publishes none at all.
+    runs-on: ubuntu-24.04
     # The lane takes about three minutes. A guest that wedges in a blocking
     # kernel call otherwise holds the job for GitHub's six-hour default: on
     # 2026-10-08 one sat in rebind_vkms for three and a half hours, with no

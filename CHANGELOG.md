@@ -82,6 +82,11 @@ minor version may break the API and a patch version does not.
   reference reads it. One that is not UTF-8, such as an older theme with a
   Latin-1 `Comment=`, lost its `Inherits=` line and resolved through the
   wrong theme (P-95).
+- `drmkit-capture`: each color channel of an `ARGB8888` plane is clamped to
+  its alpha before the blend, as the reference now does. A pixel with color
+  above its alpha, such as a transparent pixel that kept its color, carried
+  past 255 into the next channel and came out the wrong color (drm-cxx#375,
+  P-96).
 - `drmkit-capture`: a scaled plane is resampled as the reference's Blend2D
   resamples it, bilinearly and to the bit, rather than nearest-neighbor.
   One deliberate exception: a scaled `XRGB8888` plane stays opaque, where the

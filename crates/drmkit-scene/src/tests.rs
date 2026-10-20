@@ -2067,6 +2067,44 @@ fn a_steady_frame_does_not_rewrite_rescaled_alpha() {
     );
 }
 
+/// Driver-private state another client left on a plane is zeroed whenever the
+/// plane is written in full, and only then (drm-cxx#382).
+///
+/// On the SA8155P weston leaves `scaler_v2` set for its own 1280x720 buffer,
+/// and every `TEST_ONLY` that put a small layer on that plane failed. A test,
+/// a first use and the canvas carry no baseline, so they all clear it; a
+/// steady frame on a plane this already wrote leaves it alone.
+#[test]
+fn a_full_write_zeroes_the_state_another_client_left() {
+    let mut map = eight_bit_alpha_plane();
+    map.reset_on_arm.insert(7, vec![201, 202]);
+    let layer = alpha_layer(0xFFFF);
+
+    let mut full = drmkit_core::AtomicRequest::with_capacity(8);
+    emit_layer(&mut full, &map, 7, &layer, None).expect("emit");
+    for property_id in [201, 202] {
+        assert_eq!(
+            full.writes()
+                .iter()
+                .find(|write| write.property_id == property_id)
+                .map(|write| write.value),
+            Some(0),
+            "property {property_id} is zeroed on a full write"
+        );
+    }
+
+    let baseline = layer.snapshot();
+    let mut steady = drmkit_core::AtomicRequest::with_capacity(8);
+    emit_layer(&mut steady, &map, 7, &layer, Some(&baseline)).expect("emit");
+    assert!(
+        steady
+            .writes()
+            .iter()
+            .all(|write| write.property_id != 201 && write.property_id != 202),
+        "a diffed frame does not restate them"
+    );
+}
+
 /// A plane advertising no alpha range gets the layer's value as it stands.
 #[test]
 fn alpha_on_a_plane_without_a_range_is_left_alone() {

@@ -87,6 +87,11 @@ minor version may break the API and a patch version does not.
   One deliberate exception: a scaled `XRGB8888` plane stays opaque, where the
   reference's alpha comes from the undefined top byte, filed as drm-cxx#376
   (P-98).
+- `drmkit-scene`: a plane written in full has the downstream SDE driver's
+  private state zeroed first (`scaler_v2`, `csc_v1`, `excl_rect_v1` and the
+  LUT blobs), as the reference now does. State another client left there,
+  such as weston's scaler setup on the SA8155P, made every test commit
+  placing a small layer on that plane fail (drm-cxx#382, P-99).
 
 ## [0.1.2] - 2026-10-15
 

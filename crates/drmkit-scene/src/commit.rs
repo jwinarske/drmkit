@@ -119,7 +119,32 @@ pub struct PlanePropertyMap {
     /// works to avoid. A frame that [restates](crate::FrameBuild::restates_sticky)
     /// writes them regardless.
     color_committed: HashMap<u32, ResolvedColor>,
+    /// Driver-private properties each plane exposes that drmkit does not
+    /// drive and zeroes whenever it writes the plane in full. See
+    /// [`RESET_ON_ARM`].
+    pub(crate) reset_on_arm: HashMap<u32, Vec<u32>>,
 }
+
+/// Plane properties whose 0 means "no configuration", which drmkit drives
+/// none of: the downstream SDE driver's scaler and color-conversion setups,
+/// its exclusion rectangle and its LUT blobs.
+///
+/// Another client that used a plane leaves them set, and they persist. On the
+/// SA8155P a `scaler_v2` sized for weston's 1280x720 buffer made every
+/// `TEST_ONLY` that put a small layer on that plane fail, and a stale
+/// `excl_rect_v1` alters what a plane fetches. So they are written 0 whenever
+/// a plane is written in full, as the reference does (drm-cxx `f72c5ad`).
+/// `blend_op` is left alone, as there.
+const RESET_ON_ARM: [&str; 8] = [
+    "scaler_v2",
+    "csc_v1",
+    "excl_rect_v1",
+    "lut_ed",
+    "lut_cir",
+    "lut_sep",
+    "SDE_VIG_3D_LUT_GAMUT_V5",
+    "SDE_VIG_1D_LUT_IGC_V5",
+];
 
 impl PlanePropertyMap {
     /// An empty map.
@@ -186,6 +211,14 @@ impl PlanePropertyMap {
 
         if let Ok(id) = store.property_id(plane_id, "FB_DAMAGE_CLIPS") {
             self.damage.insert(plane_id, id);
+        }
+
+        let reset: Vec<u32> = RESET_ON_ARM
+            .iter()
+            .filter_map(|name| writable(name))
+            .collect();
+        if !reset.is_empty() {
+            self.reset_on_arm.insert(plane_id, reset);
         }
 
         let mut ids = HashMap::new();
@@ -273,6 +306,12 @@ impl PlanePropertyMap {
 /// the kernel never sees, `FB_ID` on an externally bound layer, and values
 /// unchanged from `baseline`. Returns what was written, as [`LayerWrites`].
 ///
+/// With no `baseline` -- a plane written in full, which is every `TEST_ONLY`,
+/// a plane's first use or a new layer on it, and the composition canvas -- the
+/// driver-private state another client may have left on the plane is zeroed
+/// first: the downstream SDE driver's scaler, color-conversion,
+/// exclusion-rectangle and LUT properties, which drmkit does not drive.
+///
 /// # Errors
 ///
 /// [`CoreError`] if a property write is rejected before the commit — which
@@ -285,6 +324,12 @@ pub fn emit_layer(
     baseline: Option<&drmkit_planes::PropertySnapshot>,
 ) -> Result<LayerWrites, CoreError> {
     let mut written = LayerWrites::default();
+    if baseline.is_none() {
+        for property_id in map.reset_on_arm.get(&plane_id).into_iter().flatten() {
+            request.add_property(plane_id, *property_id, 0)?;
+            written.properties += 1;
+        }
+    }
     for (tag, value) in layer.properties() {
         let Some(property_id) = map.property_id(plane_id, tag) else {
             continue;

@@ -1759,6 +1759,24 @@ fn a_cursor_plane_that_cannot_do_alpha_is_not_a_cursor_plane() {
     assert_eq!(chosen.path, PlanePath::AtomicOverlay);
 }
 
+/// A multirect virtual plane is never the cursor's: the driver refuses it
+/// unless its parent is armed too, which the SA8155P reports as "r1 only virt
+/// plane" (drm-cxx#387). The real overlay after it is taken instead.
+#[test]
+fn a_multirect_virtual_plane_is_not_picked_for_the_cursor() {
+    let virtual_plane = PlaneCapabilities {
+        multirect_parent: Some(32),
+        ..plane(143, PlaneType::Overlay)
+    };
+    let registry = registry_of(vec![
+        plane(31, PlaneType::Primary),
+        virtual_plane,
+        plane(34, PlaneType::Overlay),
+    ]);
+    let chosen = select_plane(&registry, 0, None, true, false, &all_free).expect("select");
+    assert_eq!(chosen.plane_id, 34);
+}
+
 #[test]
 fn a_free_overlay_is_preferred_to_a_busy_one() {
     // Overlays are shared on many parts, and taking one another output is

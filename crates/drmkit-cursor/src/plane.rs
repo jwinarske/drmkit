@@ -156,10 +156,13 @@ pub fn select_plane(
     }
 
     // Otherwise an overlay, preferring one no other CRTC is using. Some parts
-    // expose only a handful, and a compositor wants the rest for layers.
+    // expose only a handful, and a compositor wants the rest for layers. A
+    // multirect virtual plane is skipped, as the reference skips it
+    // (drm-cxx#387): the driver refuses it unless its parent is armed too,
+    // which the SA8155P reports as "r1 only virt plane".
     let mut fallback: Option<(&PlaneCapabilities, u32)> = None;
     for plane in registry.for_crtc(crtc_index) {
-        if plane.plane_type != PlaneType::Overlay {
+        if plane.plane_type != PlaneType::Overlay || plane.multirect_parent.is_some() {
             continue;
         }
         let Some(fourcc) = usable(plane) else {

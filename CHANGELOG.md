@@ -8,6 +8,11 @@ minor version may break the API and a patch version does not.
 
 ## [Unreleased]
 
+### Changed
+
+- The upstream baseline moves to drm-cxx `5e7047b` (v5.0.0 and twelve fixes
+  since). Every upstream change to `src/` in `2b260d0..5e7047b` is ported.
+
 ### Added
 
 - `drmkit-cursor`: `Renderer::prepare`, which redraws the sprite when a move
@@ -151,6 +156,13 @@ minor version may break the API and a patch version does not.
   fix does. Left at an overlay's default of 0 it shared the primary's blend
   stage, which the SA8155P refuses, so the cursor never committed there
   (drm-cxx#384, P-106).
+- `drmkit-scene`: the off-screen clip skips the formats the reference skips,
+  a list of chroma-subsampled ones, and nothing else, so a 4:4:4 YUV layer
+  such as `NV24` is clipped too. A source extent past 32 bits is left as
+  given (drm-cxx#384, P-107).
+- `drmkit-cursor`: an overlay picked for the cursor is never a multirect
+  virtual plane, which the driver refuses unless its parent is armed too
+  (drm-cxx#387, P-108).
 
 ## [0.1.2] - 2026-10-15
 

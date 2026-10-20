@@ -131,12 +131,12 @@ member!("time", drmkit_time as time);
 ///
 /// Kept as a constant so a consumer — and the port's own tooling — can tell at
 /// a glance which C++ baseline a given drmkit build claims parity with.
-pub const UPSTREAM_BASELINE: &str = "2b260d0";
+pub const UPSTREAM_BASELINE: &str = "5e7047b";
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn baseline_is_recorded() {
-        assert_eq!(super::UPSTREAM_BASELINE, "2b260d0");
+        assert_eq!(super::UPSTREAM_BASELINE, "5e7047b");
     }
 }

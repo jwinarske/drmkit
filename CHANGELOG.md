@@ -129,6 +129,10 @@ minor version may break the API and a patch version does not.
   VeriSilicon's by its body, as the reference now does. Every one was read as
   VeriSilicon, so a MediaTek modifier was classified and described as a VS
   tile mode. `vendor_0b_is_mtk` is new (drm-cxx#365, P-102).
+- `drmkit-planes`: a CRTC's blend-stage limit is read as the reference reads
+  it. `use_baselayer_for_stage=1` now counts the base stage, and a
+  `sec_ui_blendstage` of 0 no longer leaves the CRTC with no limit
+  (drm-cxx#363, P-103).
 
 ## [0.1.2] - 2026-10-15
 

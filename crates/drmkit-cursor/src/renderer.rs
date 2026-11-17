@@ -318,8 +318,14 @@ impl<'a> Renderer<'a> {
             });
         }
 
-        // One buffer: the legacy ioctls take one handle and have no flip to
-        // alternate on.
+        // Two buffers, as on the atomic paths. The legacy ioctls have no flip
+        // to alternate on, but a sprite is still redrawn while it is shown
+        // -- an animation's next frame, and the shift near the top and left
+        // edges on every move there -- and a display controller that reads
+        // the buffer as it scans shows the redraw half done. A VisionFive
+        // 2's did: the cursor broke up near those two edges and came back
+        // away from them. Each redraw goes into the buffer that is not
+        // installed, and installing it is the switch.
         let size = preferred_size(config.preferred_size, PlanePath::Legacy, None);
         let buffers = allocate_pair(device, size, plane.fourcc)?;
 
@@ -330,7 +336,7 @@ impl<'a> Renderer<'a> {
             rotation_mask: 0,
             props: PropertyStore::new(),
             buffers,
-            which: PingPong::single(),
+            which: PingPong::new(),
             cursor: None,
             placement: None,
             shift: (0, 0),
@@ -507,6 +513,11 @@ impl<'a> Renderer<'a> {
             return Ok(false);
         }
         self.draw(wanted)?;
+        // The frame is in the buffer that is not installed: the next commit
+        // installs it, as for a new shape.
+        if self.plane.path == PlanePath::Legacy {
+            self.installed = false;
+        }
         Ok(true)
     }
 
@@ -614,18 +625,23 @@ impl<'a> Renderer<'a> {
         }
 
         if !self.installed {
+            // The buffer last drawn, which is not the one on screen.
+            let drawn = &self.buffers[self.which.commit_target()];
             let buffer = LegacyCursor {
-                handle: self.buffers[0]
+                handle: drawn
                     .gem_handle()
                     .ok_or_else(|| CursorError::Io("cursor buffer has no handle".to_owned()))?,
-                width: self.buffers[0].width(),
-                height: self.buffers[0].height(),
-                pitch: self.buffers[0].stride(),
+                width: drawn.width(),
+                height: drawn.height(),
+                pitch: drawn.stride(),
             };
             self.device
                 .set_cursor(crtc, Some(&buffer))
                 .map_err(|error| CursorError::Io(error.to_string()))?;
             self.installed = true;
+            // It is the one on screen now, and the next redraw takes the
+            // other.
+            self.which.published();
         }
 
         let (x, y) = crate::stage::plane_origin(self.position, hotspot);
@@ -960,11 +976,7 @@ impl Paused {
             rotation_mask: self.rotation_mask,
             props,
             buffers: allocate_pair(device, self.size, self.plane.fourcc)?,
-            which: if self.plane.path == PlanePath::Legacy {
-                PingPong::single()
-            } else {
-                PingPong::new()
-            },
+            which: PingPong::new(),
             cursor: self.cursor,
             placement: None,
             shift: (0, 0),

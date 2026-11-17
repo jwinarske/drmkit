@@ -34,10 +34,12 @@ impl PingPong {
         }
     }
 
-    /// A single buffer, for the legacy path.
+    /// A single buffer, drawn into where it is shown.
     ///
-    /// The legacy ioctls take one buffer handle and have no flip to alternate
-    /// on, so a second buffer buys nothing there.
+    /// For a caller with one buffer and no way to switch. [`crate::Renderer`]
+    /// used this on the legacy path and no longer does: a redraw into the
+    /// buffer on screen showed half done on a display controller that reads
+    /// it as it scans.
     #[must_use]
     pub const fn single() -> Self {
         Self {

@@ -8,6 +8,17 @@ minor version may break the API and a patch version does not.
 
 ## [Unreleased]
 
+### Fixed
+
+- `drmkit-cursor`: on the legacy path the cursor broke up near the top and
+  left edges of a display whose controller reads the cursor's buffer as it
+  scans, a VisionFive 2's. The sprite is redrawn there on every move, and
+  for an animation on every frame, and it was redrawn into the one buffer
+  on screen. The legacy path draws into a second buffer now and installs
+  it, as the atomic paths flip to theirs. An animated cursor's next frame
+  is installed too; before, a driver that copies the buffer when it is set
+  kept showing the first.
+
 ## [0.1.5] - 2026-11-17
 
 ### Added

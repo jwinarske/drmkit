@@ -9,7 +9,7 @@ composition, and scanout.
 
 > **Status: phases 0–4 met, phase 5 (the v0.1.0-minimal ship gate) under way.**
 > The 0.1 releases ship ahead of that gate's last item, the smoke run on RK3588
-> and VisionFive 2 boards: 0.1.5 is current, on
+> and VisionFive 2 boards: 0.1.6 is current, on
 > [crates.io](https://crates.io/crates/drmkit) and
 > [docs.rs](https://docs.rs/drmkit), and [`CHANGELOG.md`](CHANGELOG.md) says
 > what is in each. Twenty-one published crates and a test kit; 1,105 unit and

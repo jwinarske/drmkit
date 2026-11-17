@@ -9,10 +9,10 @@ composition, and scanout.
 
 > **Status: phases 0–4 met, phase 5 (the v0.1.0-minimal ship gate) under way.**
 > The 0.1 releases ship ahead of that gate's last item, the smoke run on RK3588
-> and VisionFive 2 boards: 0.1.4 is current, on
+> and VisionFive 2 boards: 0.1.5 is current, on
 > [crates.io](https://crates.io/crates/drmkit) and
 > [docs.rs](https://docs.rs/drmkit), and [`CHANGELOG.md`](CHANGELOG.md) says
-> what is in each. Twenty-one published crates and a test kit; 1,104 unit and
+> what is in each. Twenty-one published crates and a test kit; 1,105 unit and
 > integration tests plus 28 doctests on the host, 247 more that need a card,
 > and the host suite again under qemu on the aarch64 and riscv64 cross lanes.
 > All six [`INVARIANTS.md`](INVARIANTS.md) contracts are pinned against a real

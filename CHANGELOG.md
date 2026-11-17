@@ -8,6 +8,8 @@ minor version may break the API and a patch version does not.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-16
+
 ### Added
 
 - `drmkit-input`: touchpad gestures. `Seat::dispatch` reports a swipe, a
@@ -380,7 +382,8 @@ What the port leaves out, and why, is recorded per test file in
 [`TEST_PARITY.md`](TEST_PARITY.md) and per divergence in
 [`docs/parity-findings.md`](docs/parity-findings.md).
 
-[Unreleased]: https://github.com/jwinarske/drmkit/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/jwinarske/drmkit/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/jwinarske/drmkit/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/jwinarske/drmkit/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/jwinarske/drmkit/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/jwinarske/drmkit/compare/v0.1.0...v0.1.1

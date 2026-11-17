@@ -26,13 +26,29 @@ pub(crate) enum SourceFormat {
     /// 16-bit 5:6:5, opaque. What a Linux console is on much embedded
     /// hardware, including a Raspberry Pi's.
     Rgb565,
+    /// 32-bit, ten bits a channel and two of premultiplied alpha, red
+    /// highest.
+    Argb2101010,
+    /// The same with its top two bits undefined, treated as opaque. What
+    /// Vulkan's `A2R10G10B10` surfaces scan out as, which is what a
+    /// Raspberry Pi 5's V3D prefers.
+    Xrgb2101010,
+    /// Ten bits a channel and two of premultiplied alpha, blue highest.
+    Abgr2101010,
+    /// The same, opaque.
+    Xbgr2101010,
 }
 
 impl SourceFormat {
     /// Bytes per pixel.
     const fn bytes(self) -> usize {
         match self {
-            Self::Argb8888 | Self::Xrgb8888 => 4,
+            Self::Argb8888
+            | Self::Xrgb8888
+            | Self::Argb2101010
+            | Self::Xrgb2101010
+            | Self::Abgr2101010
+            | Self::Xbgr2101010 => 4,
             Self::Rgb565 => 2,
         }
     }
@@ -43,6 +59,10 @@ impl SourceFormat {
     /// the low ones, so full-scale stays full-scale: 0b11111 becomes 0xFF and
     /// not 0xF8. Shifting alone would darken every bright pixel by up to 3%,
     /// which is invisible in isolation and obvious in a gradient.
+    ///
+    /// Ten-bit channels are narrowed by dropping their low two bits, which
+    /// keeps full-scale full-scale the other way: 0x3FF becomes 0xFF. Two
+    /// bits of alpha widen by replication, to 0, 0x55, 0xAA and 0xFF.
     fn read(self, chunk: &[u8]) -> u32 {
         match self {
             Self::Argb8888 => {
@@ -62,6 +82,22 @@ impl SourceFormat {
                 let g = (g << 2) | (g >> 4);
                 let b = (b << 3) | (b >> 2);
                 0xff00_0000 | (r << 16) | (g << 8) | b
+            }
+            Self::Argb2101010 | Self::Xrgb2101010 | Self::Abgr2101010 | Self::Xbgr2101010 => {
+                let v = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                // The eight high bits of each ten-bit field.
+                let (high, mid, low) = ((v >> 22) & 0xff, (v >> 12) & 0xff, (v >> 2) & 0xff);
+                let (r, b) = match self {
+                    Self::Abgr2101010 | Self::Xbgr2101010 => (low, high),
+                    _ => (high, low),
+                };
+                let color = (r << 16) | (mid << 8) | b;
+                match self {
+                    Self::Argb2101010 | Self::Abgr2101010 => {
+                        clamp_to_alpha((((v >> 30) * 0x55) << 24) | color)
+                    }
+                    _ => 0xff00_0000 | color,
+                }
             }
         }
     }
@@ -180,7 +216,9 @@ impl Drop for Mapping {
 ///
 /// - **Non-linear modifiers** -- tiled, AFBC, DCC. Untiling them on the CPU is
 ///   a per-vendor job and reading them correctly is not guessable.
-/// - **Anything but `ARGB8888`, `XRGB8888` and `RGB565`.** YUV in particular: a video
+/// - **Anything but `ARGB8888`, `XRGB8888`, `RGB565` and the four packed
+///   ten-bit formats** (`ARGB2101010`, `XRGB2101010` and their `BGR`
+///   twins, read at eight bits a channel). YUV in particular: a video
 ///   overlay is usually both tiled and YUV, so covering it means GPU-assisted
 ///   readback.
 /// - **Buffers that cannot be mapped**, which includes VRAM with no
@@ -316,6 +354,10 @@ fn map_plane(
         fourcc::ARGB8888 => SourceFormat::Argb8888,
         fourcc::XRGB8888 => SourceFormat::Xrgb8888,
         fourcc::RGB565 => SourceFormat::Rgb565,
+        fourcc::ARGB2101010 => SourceFormat::Argb2101010,
+        fourcc::XRGB2101010 => SourceFormat::Xrgb2101010,
+        fourcc::ABGR2101010 => SourceFormat::Abgr2101010,
+        fourcc::XBGR2101010 => SourceFormat::Xbgr2101010,
         other => {
             return Err(format!(
                 "unsupported format {}",

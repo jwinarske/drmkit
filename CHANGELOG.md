@@ -8,6 +8,14 @@ minor version may break the API and a patch version does not.
 
 ## [Unreleased]
 
+### Added
+
+- `drmkit-capture`: `snapshot` reads the four packed ten-bit formats,
+  `XRGB2101010`, `ARGB2101010` and their `BGR` twins, at eight bits a
+  channel. A Vulkan client's scanout buffer is often one of them, a
+  Raspberry Pi 5's among those, and such a plane was skipped: a capture of
+  it showed the cursor on nothing. The reference reads none of them.
+
 ## [0.1.4] - 2026-11-16
 
 ### Added

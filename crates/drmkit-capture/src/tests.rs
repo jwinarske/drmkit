@@ -713,6 +713,97 @@ fn rgb565_widens_by_replication_not_by_shifting() {
 }
 
 #[test]
+fn ten_bit_formats_are_read_at_eight_bits_a_channel() {
+    // Found on a Raspberry Pi 5: a Vulkan client's scanout buffer is
+    // XRGB2101010, so a capture that reads only the 8-bit formats shows the
+    // cursor on nothing. Each case is the packed word, how it is laid out,
+    // and the pixel it should read as.
+    let x = SourceFormat::Xrgb2101010;
+    let a = SourceFormat::Argb2101010;
+    let xb = SourceFormat::Xbgr2101010;
+    let ab = SourceFormat::Abgr2101010;
+    let cases = [
+        (
+            0x3fff_ffff_u32,
+            x,
+            argb(255, 255, 255, 255),
+            "white, X bits clear",
+        ),
+        (
+            0xc000_0000,
+            x,
+            argb(255, 0, 0, 0),
+            "black, X bits set, still opaque",
+        ),
+        (
+            0x3ff0_0000,
+            x,
+            argb(255, 255, 0, 0),
+            "full red is the high field",
+        ),
+        (0x000f_fc00, x, argb(255, 0, 255, 0), "full green"),
+        (
+            0x0000_03ff,
+            x,
+            argb(255, 0, 0, 255),
+            "full blue is the low field",
+        ),
+        (
+            0x2000_0000,
+            x,
+            argb(255, 128, 0, 0),
+            "the low two bits are dropped",
+        ),
+        (
+            0x3ff0_0000,
+            xb,
+            argb(255, 0, 0, 255),
+            "BGR: the high field is blue",
+        ),
+        (
+            0x0000_03ff,
+            xb,
+            argb(255, 255, 0, 0),
+            "BGR: the low field is red",
+        ),
+        (0xffff_ffff, a, argb(255, 255, 255, 255), "opaque white"),
+        (
+            0x3fff_ffff,
+            a,
+            argb(0, 0, 0, 0),
+            "no alpha: color clamped away",
+        ),
+        (
+            0x9550_0000,
+            a,
+            argb(170, 85, 0, 0),
+            "two bits of alpha widen to 0xAA",
+        ),
+        (0x4000_0155, ab, argb(85, 85, 0, 0), "BGR with alpha 0x55"),
+    ];
+    for (packed, format, want, what) in cases {
+        let bytes = packed.to_ne_bytes().repeat(4);
+        let mut image = Image::new(2, 2);
+        blit(
+            &mut image,
+            &Blit {
+                bytes: &bytes,
+                width: 2,
+                height: 2,
+                pitch: 8,
+                format,
+                crtc_x: 0,
+                crtc_y: 0,
+                crtc_w: 0,
+                crtc_h: 0,
+            },
+        );
+        assert_eq!(pixel_at(&image, 0, 0), want, "{what}");
+        assert_eq!(pixel_at(&image, 1, 1), want, "{what}, second row");
+    }
+}
+
+#[test]
 fn rgb565_is_always_opaque() {
     // There is no alpha channel to misread, and a 565 plane that composited as
     // transparent would simply not appear.

@@ -8,6 +8,8 @@ minor version may break the API and a patch version does not.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-11-17
+
 ### Fixed
 
 - `drmkit-cursor`: on the legacy path the cursor broke up near the top and
@@ -403,7 +405,8 @@ What the port leaves out, and why, is recorded per test file in
 [`TEST_PARITY.md`](TEST_PARITY.md) and per divergence in
 [`docs/parity-findings.md`](docs/parity-findings.md).
 
-[Unreleased]: https://github.com/jwinarske/drmkit/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/jwinarske/drmkit/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/jwinarske/drmkit/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/jwinarske/drmkit/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/jwinarske/drmkit/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/jwinarske/drmkit/compare/v0.1.2...v0.1.3

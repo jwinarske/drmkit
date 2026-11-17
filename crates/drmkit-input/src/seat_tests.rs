@@ -157,3 +157,13 @@ fn a_seat_error_says_what_failed() {
     );
     assert!(!message.contains("no such seat"), "{message}");
 }
+
+/// libinput ends a gesture with one event and a flag; a consumer keeps what
+/// an ended gesture did and undoes what a canceled one did, so the two must
+/// not read alike.
+#[test]
+fn a_canceled_gesture_does_not_read_as_ended() {
+    use crate::event::GesturePhase;
+    assert_eq!(crate::seat::ended(false), GesturePhase::End);
+    assert_eq!(crate::seat::ended(true), GesturePhase::Cancel);
+}

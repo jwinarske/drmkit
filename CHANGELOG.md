@@ -8,6 +8,21 @@ minor version may break the API and a patch version does not.
 
 ## [Unreleased]
 
+### Added
+
+- `drmkit-input`: touchpad gestures. `Seat::dispatch` reports a swipe, a
+  pinch and a hold as `InputEvent::Gesture`, each a `GestureEvent` with its
+  `GestureKind`, its `GesturePhase`, the finger count, and for a pinch the
+  scale and the turn. A gesture libinput cancels ends as
+  `GesturePhase::Cancel`, apart from one that ends. The reference carries
+  none of these.
+- `drmkit-input`: devices arriving and leaving. `Seat::dispatch` reports
+  each as `InputEvent::Device`, in order with the device's own events: a
+  `DeviceEvent` with the kernel's node name, the device's name and ids, and
+  its `DeviceCapabilities`. The devices on the seat when it opens are
+  reported by the first dispatch. `dispatch` kept these to itself before,
+  as the reference does.
+
 ## [0.1.3] - 2026-10-20
 
 ### Added

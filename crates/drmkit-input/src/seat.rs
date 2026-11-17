@@ -6,18 +6,24 @@
 use std::os::fd::{AsFd, BorrowedFd};
 use std::path::Path;
 
+use input::event::gesture::{
+    GestureEndEvent as _, GestureEventCoordinates as _, GestureEventTrait as _, GestureHoldEvent,
+    GesturePinchEvent, GesturePinchEventTrait as _, GestureSwipeEvent,
+};
 use input::event::keyboard::{KeyState, KeyboardEventTrait as _};
 use input::event::pointer::{Axis, ButtonState, PointerEventTrait, PointerScrollEvent};
 use input::event::switch::{Switch as LibinputSwitch, SwitchEventTrait as _, SwitchState};
 use input::event::touch::{TouchEventPosition as _, TouchEventSlot as _, TouchEventTrait as _};
 use input::event::{
-    DeviceEvent, EventTrait, KeyboardEvent as LibinputKeyboard, PointerEvent as LibinputPointer,
+    DeviceEvent as LibinputDevice, EventTrait, GestureEvent as LibinputGesture,
+    KeyboardEvent as LibinputKeyboard, PointerEvent as LibinputPointer,
     SwitchEvent as LibinputSwitchEvent, TouchEvent as LibinputTouch,
 };
 use input::{AsRaw as _, Device, DeviceCapability, Led, Libinput, LibinputInterface};
 
 use crate::InputError;
 use crate::event::{
+    DeviceCapabilities, DeviceChange, DeviceEvent, GestureEvent, GestureKind, GesturePhase,
     InputEvent, KeyEvent, PointerAbsolute, PointerAxis, PointerButton, PointerEvent, PointerMotion,
     ScrollSource, Switch, SwitchEvent, TouchEvent, TouchPhase,
 };
@@ -136,9 +142,10 @@ impl Seat {
 
     /// Read whatever the devices have to say, appending to `out`.
     ///
-    /// Device arrivals and departures are handled here and not reported: they
-    /// are this type's bookkeeping, and a consumer that wants to know which
-    /// devices exist has udev for it.
+    /// A device arriving or leaving is an event like any other, in order
+    /// with the rest: an [`InputEvent::Device`] comes before the first thing
+    /// the device says and after the last. The devices already on the seat
+    /// are reported by the first dispatch.
     ///
     /// # Errors
     ///
@@ -147,7 +154,7 @@ impl Seat {
         self.libinput.dispatch().map_err(InputError::Dispatch)?;
         while let Some(event) = self.libinput.next() {
             match event {
-                input::Event::Device(event) => self.on_device(event),
+                input::Event::Device(event) => out.extend(self.on_device(&event)),
                 other => out.extend(convert(other)),
             }
         }
@@ -200,27 +207,30 @@ impl Seat {
         self.keyboards.len()
     }
 
-    fn on_device(&mut self, event: DeviceEvent) {
-        match event {
-            DeviceEvent::Added(added) => {
-                let mut device = added.device();
-                if !device.has_capability(DeviceCapability::Keyboard) {
-                    return;
+    /// Keep the keyboard list in step, and say what happened.
+    fn on_device(&mut self, event: &LibinputDevice) -> Option<InputEvent> {
+        let mut device = event.device();
+        let change = match event {
+            LibinputDevice::Added(_) => {
+                if device.has_capability(DeviceCapability::Keyboard) {
+                    if let Some(leds) = self.leds {
+                        // A keyboard that turns up mid-session, or every one
+                        // of them after a resume, otherwise comes up dark
+                        // while xkb goes on saying Caps Lock is held.
+                        device.led_update(mask(leds));
+                    }
+                    self.keyboards.push(device.clone());
                 }
-                if let Some(leds) = self.leds {
-                    // A keyboard that turns up mid-session, or every one of
-                    // them after a resume, otherwise comes up dark while xkb
-                    // goes on saying Caps Lock is held.
-                    device.led_update(mask(leds));
-                }
-                self.keyboards.push(device);
+                DeviceChange::Added
             }
-            DeviceEvent::Removed(removed) => {
-                let device = removed.device();
+            LibinputDevice::Removed(_) => {
                 self.keyboards.retain(|held| *held != device);
+                DeviceChange::Removed
             }
-            _ => {}
-        }
+            // A device event a newer libinput has and this does not know.
+            _ => return None,
+        };
+        Some(InputEvent::Device(describe(change, &device)))
     }
 }
 
@@ -266,6 +276,30 @@ fn device_name(event: &impl EventTrait) -> Option<String> {
     Some(event.device().name().into_owned()).filter(|name| !name.is_empty())
 }
 
+/// What a device says about itself.
+///
+/// Read while the event is in hand: libinput keeps a removed device only as
+/// long as something refers to it.
+fn describe(change: DeviceChange, device: &Device) -> DeviceEvent {
+    let has = |capability| device.has_capability(capability);
+    DeviceEvent {
+        change,
+        sysname: device.sysname().to_owned(),
+        name: Some(device.name().into_owned()).filter(|name| !name.is_empty()),
+        vendor: device.id_vendor(),
+        product: device.id_product(),
+        capabilities: DeviceCapabilities {
+            keyboard: has(DeviceCapability::Keyboard),
+            pointer: has(DeviceCapability::Pointer),
+            touch: has(DeviceCapability::Touch),
+            gesture: has(DeviceCapability::Gesture),
+            switch: has(DeviceCapability::Switch),
+            tablet_tool: has(DeviceCapability::TabletTool),
+            tablet_pad: has(DeviceCapability::TabletPad),
+        },
+    }
+}
+
 fn convert(event: input::Event) -> Option<InputEvent> {
     match event {
         input::Event::Keyboard(LibinputKeyboard::Key(key)) => Some(InputEvent::Key(KeyEvent {
@@ -292,8 +326,9 @@ fn convert(event: input::Event) -> Option<InputEvent> {
                 active: toggle.switch_state() == SwitchState::On,
             }))
         }
-        // Tablet tools, tablet pads and gestures are not carried. Nothing in
-        // the reference carries them either, and inventing an event shape for
+        input::Event::Gesture(gesture) => convert_gesture(&gesture).map(InputEvent::Gesture),
+        // Tablet tools and tablet pads are not carried. Nothing in the
+        // reference carries them either, and inventing an event shape for
         // hardware there is nothing here to test against would be worse than
         // the gap.
         _ => None,
@@ -353,6 +388,65 @@ fn axis(event: &impl PointerScrollEvent, axis: Axis) -> f64 {
     } else {
         0.0
     }
+}
+
+/// How a gesture's last event reads: libinput has one end event and a flag
+/// on it, where a consumer has two different things to do.
+pub(crate) const fn ended(cancelled: bool) -> GesturePhase {
+    if cancelled {
+        GesturePhase::Cancel
+    } else {
+        GesturePhase::End
+    }
+}
+
+fn convert_gesture(event: &LibinputGesture) -> Option<GestureEvent> {
+    // The same everywhere a gesture is not moving: no travel, no turn, and
+    // fingers as far apart as they began.
+    let still = |kind, phase, scale| GestureEvent {
+        time_ms: event.time(),
+        kind,
+        phase,
+        fingers: u32::try_from(event.finger_count()).unwrap_or(0),
+        dx: 0.0,
+        dy: 0.0,
+        scale,
+        rotation: 0.0,
+        device: device_name(event),
+    };
+
+    Some(match event {
+        LibinputGesture::Swipe(swipe) => match swipe {
+            GestureSwipeEvent::Begin(_) => still(GestureKind::Swipe, GesturePhase::Begin, 1.0),
+            GestureSwipeEvent::Update(update) => GestureEvent {
+                dx: update.dx(),
+                dy: update.dy(),
+                ..still(GestureKind::Swipe, GesturePhase::Update, 1.0)
+            },
+            GestureSwipeEvent::End(end) => still(GestureKind::Swipe, ended(end.cancelled()), 1.0),
+            _ => return None,
+        },
+        LibinputGesture::Pinch(pinch) => match pinch {
+            GesturePinchEvent::Begin(_) => still(GestureKind::Pinch, GesturePhase::Begin, 1.0),
+            GesturePinchEvent::Update(update) => GestureEvent {
+                dx: update.dx(),
+                dy: update.dy(),
+                rotation: update.angle_delta(),
+                ..still(GestureKind::Pinch, GesturePhase::Update, update.scale())
+            },
+            GesturePinchEvent::End(end) => {
+                still(GestureKind::Pinch, ended(end.cancelled()), end.scale())
+            }
+            _ => return None,
+        },
+        LibinputGesture::Hold(hold) => match hold {
+            GestureHoldEvent::Begin(_) => still(GestureKind::Hold, GesturePhase::Begin, 1.0),
+            GestureHoldEvent::End(end) => still(GestureKind::Hold, ended(end.cancelled()), 1.0),
+            _ => return None,
+        },
+        // A gesture a newer libinput recognizes and this does not.
+        _ => return None,
+    })
 }
 
 fn convert_touch(event: &LibinputTouch) -> Option<TouchEvent> {

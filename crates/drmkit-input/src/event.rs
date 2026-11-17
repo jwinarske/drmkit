@@ -214,6 +214,156 @@ pub struct SwitchEvent {
     pub active: bool,
 }
 
+/// Which gesture a touchpad recognized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum GestureKind {
+    /// Fingers moving together in one direction. Three or more: two fingers
+    /// moving together are a scroll, and arrive as a
+    /// [`PointerAxis`] from [`ScrollSource::Finger`].
+    Swipe,
+    /// Fingers moving apart, together, or around each other.
+    Pinch,
+    /// Fingers resting without moving.
+    ///
+    /// What ends a kinetic scroll: the fingers come back down and the
+    /// content should stop where it is.
+    Hold,
+}
+
+/// Where a gesture is in its sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum GesturePhase {
+    /// The gesture was recognized.
+    Begin,
+    /// The fingers moved. A [`GestureKind::Hold`] has none of these.
+    Update,
+    /// The fingers lifted, and what the gesture did stands.
+    End,
+    /// The gesture was abandoned -- more fingers landed and it became a
+    /// different one, or the device went away -- and what it did should be
+    /// undone.
+    Cancel,
+}
+
+/// A step of a touchpad gesture.
+///
+/// One sequence at a time per device: a `Begin`, any number of `Update`s,
+/// then an `End` or a `Cancel`, with [`kind`](Self::kind) and
+/// [`fingers`](Self::fingers) the same throughout.
+#[derive(Debug, Clone, PartialEq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
+pub struct GestureEvent {
+    /// libinput's timestamp, in milliseconds.
+    pub time_ms: u32,
+    /// Which gesture.
+    pub kind: GestureKind,
+    /// Where in its sequence.
+    pub phase: GesturePhase,
+    /// How many fingers are making it.
+    pub fingers: u32,
+    /// Horizontal movement of the fingers' center since the last event, in
+    /// the accelerated units [`PointerMotion`] uses. Zero unless this is the
+    /// `Update` of a swipe or a pinch.
+    pub dx: f64,
+    /// Vertical movement, likewise.
+    pub dy: f64,
+    /// How far apart the fingers are against where they began: `1.0` at the
+    /// start, `2.0` at twice the distance, `0.5` at half.
+    ///
+    /// Absolute, not a step. `1.0` for anything that is not a pinch; a
+    /// pinch's `End` and `Cancel` repeat its last `Update`'s.
+    pub scale: f64,
+    /// How far the fingers turned around their center since the last event,
+    /// in degrees, clockwise positive. Zero unless this is a pinch's
+    /// `Update`.
+    ///
+    /// A step, where [`scale`](Self::scale) is a total: that is how libinput
+    /// reports the two, and adding the steps up is the consumer's to do.
+    pub rotation: f64,
+    /// The device this came from, if libinput named it.
+    pub device: Option<String>,
+}
+
+/// What a device can produce.
+///
+/// One device is often several of these: a keyboard with a built-in
+/// trackpoint is a keyboard and a pointer, and a touchpad is a pointer that
+/// also has gestures -- which is how to tell it from a mouse.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_structs,
+    clippy::struct_excessive_bools,
+    reason = "built by callers with `..Default::default()`, which a new field does not break; \
+              and each is an independent capability, not a state"
+)]
+pub struct DeviceCapabilities {
+    /// Keys.
+    pub keyboard: bool,
+    /// Motion, buttons and scrolling.
+    pub pointer: bool,
+    /// Touch points on a screen.
+    pub touch: bool,
+    /// Touchpad gestures.
+    pub gesture: bool,
+    /// A lid or tablet-mode switch.
+    pub switch: bool,
+    /// A tablet's pen or other tool. Its events are not carried.
+    pub tablet_tool: bool,
+    /// A tablet's own buttons, rings and strips. Not carried either.
+    pub tablet_pad: bool,
+}
+
+/// Whether a device arrived or left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DeviceChange {
+    /// The device is on the seat and its events will follow.
+    Added,
+    /// The device is gone, and nothing more will come from it.
+    Removed,
+}
+
+/// A device arriving on the seat or leaving it.
+///
+/// Every device present when the seat opens is reported as added by the
+/// first dispatch, so a consumer that tracks these from the start always
+/// knows what is there. A suspend removes every device and a resume adds
+/// them again; the removals are reported by the first dispatch after the
+/// resume, ahead of the additions.
+///
+/// libinput has already tidied up by the time a removal arrives: keys and
+/// buttons the device held are released and its touch points canceled, each
+/// as an ordinary event ahead of this one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(
+    clippy::exhaustive_structs,
+    reason = "built by callers, with no default to fill a new field from"
+)]
+pub struct DeviceEvent {
+    /// Arrived, or left.
+    pub change: DeviceChange,
+    /// The kernel's name for the device node: `event5`.
+    ///
+    /// What identifies one device between its arrival and its departure.
+    /// [`name`](Self::name) does not: two of the same mouse share one. The
+    /// kernel hands the node name to the next device once this one is gone.
+    pub sysname: String,
+    /// The device's description of itself, if it gave one. What the
+    /// `device` field of the other events carries.
+    pub name: Option<String>,
+    /// The USB or Bluetooth vendor id; zero where the bus has none.
+    pub vendor: u32,
+    /// The product id, likewise.
+    pub product: u32,
+    /// What the device can produce.
+    pub capabilities: DeviceCapabilities,
+}
+
 /// Anything an input device produces.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -226,4 +376,8 @@ pub enum InputEvent {
     Touch(TouchEvent),
     /// A switch.
     Switch(SwitchEvent),
+    /// A touchpad gesture.
+    Gesture(GestureEvent),
+    /// A device arriving or leaving.
+    Device(DeviceEvent),
 }

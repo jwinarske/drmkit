@@ -106,7 +106,7 @@ by quietly doing nothing.
 | `plane_stress` measurement tool | done — `benches/plane-stress`, CSV per frame |
 | `drmkit-display`: `DriverProfile` | done — capability probe, never the driver name |
 | `drmkit-display`: HDR metadata and cache | done — byte-identical to the reference's serializer over twelve vectors |
-| `drmkit-capture`: plane readback and PNG | done — including RGB565, which the reference cannot read ([#243](https://github.com/jwinarske/drm-cxx/issues/243)) |
+| `drmkit-capture`: plane readback and PNG | done — including RGB565 and the packed ten-bit formats, which the reference cannot read ([#243](https://github.com/jwinarske/drm-cxx/issues/243)) |
 | `drmkit-cursor` | done — own `.xcursor` parser, hardware probe, ping-pong buffers |
 | `drmkit-session` | done — sequencing over a `Backend` trait, libseat behind a feature |
 | `drmkit-input` | done — xkb keyboard, auto-repeat, libinput seat with its log routed into drmkit's, touchpad gestures, devices arriving and leaving |

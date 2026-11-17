@@ -79,6 +79,7 @@ pub use repeater::KeyRepeater;
 pub use seat::{Seat, SeatOptions};
 
 pub use event::{
+    DeviceCapabilities, DeviceChange, DeviceEvent, GestureEvent, GestureKind, GesturePhase,
     InputEvent, KeyEvent, PointerAbsolute, PointerAxis, PointerButton, PointerEvent, PointerMotion,
     ScrollSource, Switch, SwitchEvent, TouchEvent, TouchPhase,
 };

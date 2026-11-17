@@ -109,7 +109,7 @@ by quietly doing nothing.
 | `drmkit-capture`: plane readback and PNG | done — including RGB565, which the reference cannot read ([#243](https://github.com/jwinarske/drm-cxx/issues/243)) |
 | `drmkit-cursor` | done — own `.xcursor` parser, hardware probe, ping-pong buffers |
 | `drmkit-session` | done — sequencing over a `Backend` trait, libseat behind a feature |
-| `drmkit-input` | done — xkb keyboard, auto-repeat, libinput seat with its log routed into drmkit's |
+| `drmkit-input` | done — xkb keyboard, auto-repeat, libinput seat with its log routed into drmkit's, touchpad gestures, devices arriving and leaving |
 | `drmkit-display`: connector and CRTC capabilities | done — measured on vkms and amdgpu |
 | `drmkit-display`: mode lists, hotplug watch, color pipeline, scanout discovery | done |
 | `drmkit-planes`: reading planes off a device | done — behind a feature, so the crate stays device-free without it |
